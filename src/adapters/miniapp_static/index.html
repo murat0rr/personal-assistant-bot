@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Задачи</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, "Segoe UI", sans-serif;
+      background: var(--tg-theme-bg-color, #fff);
+      color: var(--tg-theme-text-color, #111);
+    }
+    h1 { font-size: 18px; margin: 0 0 16px; }
+    .task {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px;
+      margin-bottom: 8px;
+      border-radius: 10px;
+      background: var(--tg-theme-secondary-bg-color, #f2f2f2);
+    }
+    .task .info { flex: 1; }
+    .task .title { font-weight: 600; }
+    .task .meta { font-size: 13px; opacity: 0.7; margin-top: 2px; }
+    button {
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      background: var(--tg-theme-button-color, #2481cc);
+      color: var(--tg-theme-button-text-color, #fff);
+      font-size: 14px;
+    }
+    button:disabled { opacity: 0.5; }
+    #empty, #error { opacity: 0.6; padding: 12px 0; }
+  </style>
+</head>
+<body>
+  <h1>Мои задачи</h1>
+  <div id="list"></div>
+  <div id="empty" hidden>Задач нет 🎉</div>
+  <div id="error" hidden>Не удалось загрузить задачи.</div>
+
+  <script>
+    const tg = window.Telegram?.WebApp;
+    tg?.ready();
+    tg?.expand();
+
+    const initData = tg?.initData || "";
+
+    async function api(path, options = {}) {
+      const res = await fetch(path, {
+        ...options,
+        headers: {
+          ...(options.headers || {}),
+          "X-Telegram-Init-Data": initData,
+        },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    }
+
+    function renderTask(task) {
+      const el = document.createElement("div");
+      el.className = "task";
+
+      const info = document.createElement("div");
+      info.className = "info";
+      const title = document.createElement("div");
+      title.className = "title";
+      title.textContent = task.title;
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const parts = [];
+      if (task.due_date) parts.push(task.due_date);
+      if (task.priority) parts.push(task.priority);
+      meta.textContent = parts.join(" · ");
+      info.append(title, meta);
+
+      const btn = document.createElement("button");
+      btn.textContent = "Готово";
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          await api(`/miniapp/api/tasks/${encodeURIComponent(task.notion_page_id)}/done`, {
+            method: "POST",
+          });
+          el.remove();
+          tg?.HapticFeedback?.notificationOccurred("success");
+        } catch (e) {
+          btn.disabled = false;
+        }
+      };
+
+      el.append(info, btn);
+      return el;
+    }
+
+    async function load() {
+      const list = document.getElementById("list");
+      try {
+        const tasks = await api("/miniapp/api/tasks");
+        if (tasks.length === 0) {
+          document.getElementById("empty").hidden = false;
+          return;
+        }
+        tasks.forEach((t) => list.append(renderTask(t)));
+      } catch (e) {
+        document.getElementById("error").hidden = false;
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>

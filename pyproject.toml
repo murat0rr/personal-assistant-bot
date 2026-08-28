@@ -11,6 +11,10 @@ dependencies = [
     "notion-client>=2.2",
     "groq>=0.13",
     "anthropic>=0.40",
+    "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.13",
+    "asyncpg>=0.29",
+    "apscheduler>=3.10",
 ]
 
 [dependency-groups]

@@ -7,7 +7,9 @@ from aiogram.types import Message
 
 from src.core.auth import is_authorized
 from src.core.config import settings
+from src.core.notion_sync import sync_tasks_from_notion
 from src.core.orchestrator import router as orchestrator_router
+from src.scheduler.jobs import setup_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,15 @@ async def handle_start(message: Message) -> None:
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     bot = Bot(token=settings.telegram_bot_token)
+
+    if settings.notion_tasks_db_id:
+        # Разовый синк сразу при старте (без уведомлений — иначе каждый
+        # рестарт контейнера спамил бы про "изменившиеся" статусы), плюс
+        # плановая ежедневная джоба с уведомлениями.
+        await sync_tasks_from_notion(notify_on_change=False)
+        scheduler = setup_scheduler()
+        scheduler.start()
+
     await dp.start_polling(bot)
 
 
