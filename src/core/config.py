@@ -9,7 +9,8 @@ class Settings(BaseSettings):
 
     claude_api_key: str = ""
     claude_base_url: str | None = None
-    claude_model_haiku: str = "claude-haiku-4-5-20251001"
+    claude_model_haiku: str = "claude-haiku-4-5"
+    claude_model_sonnet: str = "claude-sonnet-5"
     groq_api_key: str = ""
     notion_api_key: str = ""
     notion_webhook_secret: str = ""

@@ -30,7 +30,7 @@ _EXTRACT_TASK_TOOL = {
     },
 }
 
-_client = AsyncAnthropic(
+client = AsyncAnthropic(
     api_key=settings.claude_api_key,
     base_url=settings.claude_base_url or None,
 )
@@ -43,7 +43,7 @@ class TaskFields(BaseModel):
 
 
 async def extract_task_fields(text: str, today: date) -> TaskFields:
-    response = await _client.messages.create(
+    response = await client.messages.create(
         model=settings.claude_model_haiku,
         max_tokens=300,
         system=(

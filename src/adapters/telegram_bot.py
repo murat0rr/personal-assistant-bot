@@ -7,12 +7,12 @@ from aiogram.types import Message
 
 from src.core.auth import is_authorized
 from src.core.config import settings
-from src.handlers.f1_task_note import router as f1_router
+from src.core.orchestrator import router as orchestrator_router
 
 logger = logging.getLogger(__name__)
 
 dp = Dispatcher()
-dp.include_router(f1_router)
+dp.include_router(orchestrator_router)
 
 
 @dp.message(CommandStart())
