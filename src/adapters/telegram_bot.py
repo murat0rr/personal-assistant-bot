@@ -5,15 +5,14 @@ from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
+from src.core.auth import is_authorized
 from src.core.config import settings
+from src.handlers.f1_task_note import router as f1_router
 
 logger = logging.getLogger(__name__)
 
 dp = Dispatcher()
-
-
-def is_authorized(user_id: int) -> bool:
-    return user_id == settings.telegram_user_id
+dp.include_router(f1_router)
 
 
 @dp.message(CommandStart())

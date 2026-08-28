@@ -1,4 +1,4 @@
-from src.adapters.telegram_bot import is_authorized
+from src.core.auth import is_authorized
 from src.core.config import settings
 
 
