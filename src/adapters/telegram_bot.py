@@ -3,17 +3,27 @@ import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import Message
 
 from src.core.auth import is_authorized
 from src.core.config import settings
 from src.core.notion_sync import sync_tasks_from_notion
 from src.core.orchestrator import router as orchestrator_router
+from src.handlers.f4_diary import router as diary_router
 from src.scheduler.jobs import setup_scheduler
 
 logger = logging.getLogger(__name__)
 
-dp = Dispatcher()
+# RedisStorage переживает рестарт контейнера (важно — вечерний опрос может
+# идти как раз в момент деплоя); без REDIS_URL откатываемся на память.
+storage = RedisStorage.from_url(settings.redis_url) if settings.redis_url else MemoryStorage()
+dp = Dispatcher(storage=storage)
+
+# diary_router — раньше orchestrator_router: пока активен FSM-опрос,
+# текстовые ответы должны ловиться по state, а не падать в общий capture.
+dp.include_router(diary_router)
 dp.include_router(orchestrator_router)
 
 
@@ -32,9 +42,9 @@ async def main() -> None:
     if settings.notion_tasks_db_id:
         # Разовый синк сразу при старте (без уведомлений — иначе каждый
         # рестарт контейнера спамил бы про "изменившиеся" статусы), плюс
-        # плановая ежедневная джоба с уведомлениями.
+        # плановые джобы: дневной синк, утренняя сводка, вечерний дневник.
         await sync_tasks_from_notion(notify_on_change=False)
-        scheduler = setup_scheduler()
+        scheduler = setup_scheduler(bot, dp.storage)
         scheduler.start()
 
     await dp.start_polling(bot)

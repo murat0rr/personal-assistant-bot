@@ -50,6 +50,22 @@ def test_parse_task_page_full():
     }
 
 
+def test_parse_task_page_date_property_named_date():
+    # Реальный случай: база использует "Date", а не "Due date".
+    page = {
+        "id": "abc123",
+        "properties": {
+            "Name": {"title": [{"plain_text": "купить хлеб"}]},
+            "Date": {"date": {"start": "2026-08-29"}},
+            "Status": {"select": {"name": "to-do"}},
+        },
+    }
+
+    parsed = parse_task_page(page)
+
+    assert parsed["due_date"] == date(2026, 8, 29)
+
+
 def test_parse_task_page_minimal():
     page = {
         "id": "xyz",

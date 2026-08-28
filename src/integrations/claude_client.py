@@ -59,3 +59,16 @@ async def extract_task_fields(text: str, today: date) -> TaskFields:
     if tool_use is None:
         raise ValueError(f"Claude не вернул структурированный ответ на текст: {text!r}")
     return TaskFields.model_validate(tool_use.input)
+
+
+async def summarize_diary(answers_text: str) -> str:
+    response = await client.messages.create(
+        model=settings.claude_model_haiku,
+        max_tokens=300,
+        system=(
+            "Кратко (2-3 предложения) обобщи дневниковую запись пользователя "
+            "за день. Дружелюбный тон, на русском, без воды."
+        ),
+        messages=[{"role": "user", "content": answers_text}],
+    )
+    return "".join(block.text for block in response.content if block.type == "text")

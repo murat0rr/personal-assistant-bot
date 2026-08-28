@@ -9,6 +9,13 @@ _client = AsyncClient(auth=settings.notion_api_key)
 
 _NEW_TASK_STATUS_CANDIDATES = ("to-do", "to do", "not started")
 DONE_STATUS_CANDIDATES = ("done", "complete", "completed")
+# Название свойства с датой срока варьируется от базы к базе (в реальной
+# базе оказалось "Date", а не "Due date", как в первоначальной инструкции).
+_DATE_PROPERTY_CANDIDATES = ("Due date", "Date")
+
+
+def _find_date_property(schema: dict[str, Any]) -> str | None:
+    return next((name for name in _DATE_PROPERTY_CANDIDATES if name in schema), None)
 
 
 def _resolve_status_value(
@@ -41,8 +48,9 @@ def _build_task_properties(
     if "Priority" in schema:
         properties["Priority"] = {"select": {"name": priority}}
 
-    if "Due date" in schema and due_date is not None:
-        properties["Due date"] = {"date": {"start": due_date.isoformat()}}
+    date_property = _find_date_property(schema)
+    if date_property is not None and due_date is not None:
+        properties[date_property] = {"date": {"start": due_date.isoformat()}}
 
     status_prop = schema.get("Status")
     if status_prop is not None:
@@ -61,7 +69,7 @@ def parse_task_page(page: dict[str, Any]) -> dict[str, Any]:
     title_parts = props.get("Name", {}).get("title", [])
     title = "".join(part["plain_text"] for part in title_parts) or "(без названия)"
 
-    due = props.get("Due date", {}).get("date")
+    due = props.get("Due date", {}).get("date") or props.get("Date", {}).get("date")
     due_date = date.fromisoformat(due["start"][:10]) if due else None
 
     priority_prop = props.get("Priority", {}).get("select")
@@ -99,6 +107,26 @@ async def create_task(
 ) -> str:
     data_source_id, schema = await _get_data_source(settings.notion_tasks_db_id)
     properties = _build_task_properties(title, due_date, priority, source, schema)
+    page = await _client.pages.create(
+        parent={"type": "data_source_id", "data_source_id": data_source_id},
+        properties=properties,
+    )
+    return page["url"]
+
+
+async def create_diary_entry(entry_date: date, answers_text: str, summary_text: str) -> str:
+    """Записать вечерний дневник. Поля заполняются, только если реально
+    есть в схеме базы — тот же адаптивный паттерн, что у create_task."""
+    data_source_id, schema = await _get_data_source(settings.notion_diary_db_id)
+    properties: dict[str, Any] = {
+        "Name": {"title": [{"text": {"content": entry_date.isoformat()}}]},
+    }
+    if "Date" in schema:
+        properties["Date"] = {"date": {"start": entry_date.isoformat()}}
+    if "Answers" in schema:
+        properties["Answers"] = {"rich_text": [{"text": {"content": answers_text[:2000]}}]}
+    if "Summary" in schema:
+        properties["Summary"] = {"rich_text": [{"text": {"content": summary_text[:2000]}}]}
     page = await _client.pages.create(
         parent={"type": "data_source_id", "data_source_id": data_source_id},
         properties=properties,

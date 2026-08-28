@@ -46,3 +46,17 @@ def test_build_task_properties_native_status_and_missing_source():
     assert props["Status"] == {"status": {"name": "Not started"}}
     assert "Source" not in props
     assert "Due date" not in props
+
+
+def test_build_task_properties_date_property_named_date():
+    # Реальный случай: база использует "Date", а не "Due date".
+    schema = {
+        "Name": {"type": "title"},
+        "Date": {"type": "date"},
+        "Priority": {"type": "select"},
+        "Status": {"type": "select"},
+    }
+    props = _build_task_properties("купить хлеб", date(2026, 8, 29), "высокий", "F1", schema)
+
+    assert props["Date"] == {"date": {"start": "2026-08-29"}}
+    assert "Due date" not in props
