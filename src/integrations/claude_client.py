@@ -76,12 +76,14 @@ _PARSE_REMINDER_TOOL = {
             },
             "schedule_kind": {
                 "type": "string",
-                "enum": ["once", "monthly_day", "weekly_day", "interval_days"],
+                "enum": ["once", "monthly_day", "weekly_day", "interval_days", "location"],
                 "description": (
                     "'once' — конкретная дата, разово. 'monthly_day' — определённое "
                     "число каждого месяца (day=32 означает 'последний день месяца'). "
                     "'weekly_day' — определённый день недели каждую неделю. "
-                    "'interval_days' — каждые N дней начиная с сегодня."
+                    "'interval_days' — каждые N дней начиная с сегодня. "
+                    "'location' — упоминание места, а не времени/даты (например "
+                    "'когда буду у магазина', 'рядом с домом')."
                 ),
             },
             "reminder_date": {
@@ -100,6 +102,13 @@ _PARSE_REMINDER_TOOL = {
                 "type": ["integer", "null"],
                 "description": "Для 'interval_days' — раз в сколько дней",
             },
+            "place_name": {
+                "type": ["string", "null"],
+                "description": (
+                    "Для 'location' — описание места: адрес, название заведения, "
+                    "район, город. Иначе null."
+                ),
+            },
         },
         "required": ["text", "schedule_kind"],
     },
@@ -108,11 +117,12 @@ _PARSE_REMINDER_TOOL = {
 
 class ReminderPlan(BaseModel):
     text: str
-    schedule_kind: Literal["once", "monthly_day", "weekly_day", "interval_days"]
+    schedule_kind: Literal["once", "monthly_day", "weekly_day", "interval_days", "location"]
     reminder_date: date | None = None
     day_of_month: int | None = None
     weekday: int | None = None
     interval_days: int | None = None
+    place_name: str | None = None
 
 
 async def parse_reminder(text: str, today: date) -> ReminderPlan:

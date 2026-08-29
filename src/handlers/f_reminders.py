@@ -1,6 +1,7 @@
 import calendar
 import logging
 from datetime import date, datetime
+from math import asin, cos, radians, sin, sqrt
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
@@ -12,7 +13,10 @@ from src.core.auth import is_authorized
 from src.core.config import settings
 from src.core.db import async_session
 from src.integrations.claude_client import ReminderPlan, parse_reminder
+from src.integrations.geocoding import geocode
 from src.models.reminder import Reminder
+
+_DEFAULT_RADIUS_M = 200
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +40,10 @@ def _plan_to_value(plan: ReminderPlan) -> dict:
         return {"day": plan.day_of_month}
     if plan.schedule_kind == "weekly_day":
         return {"weekday": plan.weekday}
+    if plan.schedule_kind == "location":
+        # Координаты подставляются отдельно в handle_new_reminder — здесь
+        # только place_name, геокодирование асинхронное и может не найти место.
+        return {"place_name": plan.place_name}
     return {"interval_days": plan.interval_days}
 
 
@@ -51,7 +59,26 @@ def _describe_schedule(kind: str, value: dict) -> str:
         return f"каждую неделю в {name}"
     if kind == "interval_days":
         return f"раз в {value.get('interval_days')} дн."
+    if kind == "location":
+        return f"когда буду рядом с {value.get('place_name')}"
     return kind
+
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Расстояние между двумя точками на сфере (формула гаверсинуса), в метрах."""
+    earth_radius_m = 6_371_000
+    d_lat = radians(lat2 - lat1)
+    d_lon = radians(lon2 - lon1)
+    a = sin(d_lat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(d_lon / 2) ** 2
+    return 2 * earth_radius_m * asin(sqrt(a))
+
+
+def _is_within_radius(reminder: Reminder, lat: float, lon: float) -> bool:
+    value = reminder.schedule_value
+    if "lat" not in value or "lon" not in value:
+        return False
+    distance = _haversine_m(value["lat"], value["lon"], lat, lon)
+    return distance <= value.get("radius_m", _DEFAULT_RADIUS_M)
 
 
 def _is_due(reminder: Reminder, today: date) -> bool:
@@ -89,6 +116,15 @@ async def handle_new_reminder(message: Message, text: str) -> None:
         return
 
     value = _plan_to_value(plan)
+
+    if plan.schedule_kind == "location":
+        coords = await geocode(plan.place_name or "")
+        if coords is None:
+            await message.answer("Не нашёл такое место, опиши точнее (адрес, район, город).")
+            return
+        lat, lon = coords
+        value = {**value, "lat": lat, "lon": lon, "radius_m": _DEFAULT_RADIUS_M}
+
     async with async_session() as session:
         session.add(
             Reminder(
@@ -122,6 +158,22 @@ async def check_reminders(bot: Bot) -> None:
         await session.commit()
 
     logger.info("Проверка напоминаний: сработало %s", len(due))
+
+
+async def check_location_reminders(bot: Bot, lat: float, lon: float) -> None:
+    async with async_session() as session:
+        result = await session.execute(select(Reminder).where(Reminder.schedule_kind == "location"))
+        matched = [r for r in result.scalars().all() if _is_within_radius(r, lat, lon)]
+
+        for reminder in matched:
+            await bot.send_message(chat_id=settings.telegram_user_id, text=f"🔔 {reminder.text}")
+            # Гео-напоминания одноразовые — сработало и удалилось, как "once".
+            await session.delete(reminder)
+
+        await session.commit()
+
+    if matched:
+        logger.info("Гео-напоминания: сработало %s", len(matched))
 
 
 @router.message(Command("reminders"))
