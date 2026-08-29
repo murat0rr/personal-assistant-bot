@@ -8,16 +8,6 @@ from src.models.task import Task
 # случай, и уже существующая сортировка/фильтрация по priority работает
 # без изменений).
 _PRIORITY_ORDER = {"высокий": 0, "event": 0, "средний": 1, "низкий": 2}
-_PRIORITY_CYCLE = ["низкий", "средний", "высокий", "event"]
-
-
-def next_priority(current: str | None) -> str:
-    """Порядок цикла для кнопки-приоритета в свайп-панели Mini App."""
-    try:
-        index = _PRIORITY_CYCLE.index(current)
-    except ValueError:
-        index = -1
-    return _PRIORITY_CYCLE[(index + 1) % len(_PRIORITY_CYCLE)]
 
 
 def _sort_key(task: Task) -> int:

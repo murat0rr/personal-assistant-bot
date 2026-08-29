@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from src.handlers.miniapp_tasks import build_task_board, next_priority
+from src.handlers.miniapp_tasks import build_task_board
 from src.models.task import Task
 
 # 2026-08-29 — суббота.
@@ -93,11 +93,3 @@ def test_due_time_shown_only_when_not_midnight():
     assert by_title["встреча"]["due_time"] == "14:30"
     assert by_title["встреча"]["due_date"] == "2026-08-29"
     assert by_title["обычная"]["due_time"] is None
-
-
-def test_next_priority_cycles_through_all_four_and_wraps():
-    assert next_priority(None) == "низкий"
-    assert next_priority("низкий") == "средний"
-    assert next_priority("средний") == "высокий"
-    assert next_priority("высокий") == "event"
-    assert next_priority("event") == "низкий"

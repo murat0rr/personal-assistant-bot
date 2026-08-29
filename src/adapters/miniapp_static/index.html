@@ -209,6 +209,7 @@
       padding: 0;
     }
     .swipe-btn-archive { color: var(--accent); }
+    .swipe-btn.active { color: var(--accent); }
     .swipe-content {
       position: relative;
       display: flex;
@@ -216,9 +217,22 @@
       gap: 10px;
       padding: 12px 14px;
       background: var(--card-bg);
-      touch-action: pan-y;
+      /* Без pan-y здесь — жест вне зоны (см. .swipe-zone) должен спокойно
+         уходить внешней карусели вчера/сегодня/неделя, как и на любом
+         другом месте страницы. */
     }
     .swipe-wrap.pending .swipe-content { background: var(--pending-bg); }
+    /* Единственное место, откуда стартует свайп самой задачи — узкая
+       полоса у правого края (там же едва заметная ручка-подсказка). Только
+       здесь touch-action:pan-y отбирает горизонтальный жест у страницы. */
+    .swipe-zone {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 72px;
+      touch-action: pan-y;
+    }
     .swipe-handle {
       position: absolute;
       right: 4px;
@@ -465,16 +479,6 @@
     const pendingIds = new Set();
 
     const PRIORITY_ORDER = { высокий: 0, event: 0, средний: 1, низкий: 2 };
-    const PRIORITY_CYCLE = ["низкий", "средний", "высокий", "event"];
-    function nextPriority(current) {
-      const index = PRIORITY_CYCLE.indexOf(current);
-      return PRIORITY_CYCLE[(index + 1) % PRIORITY_CYCLE.length];
-    }
-    function priorityGlyph(priority) {
-      if (priority === "event") return eventPinIcon();
-      const opacity = priority === "высокий" ? "1" : priority === "низкий" ? ".35" : ".65";
-      return `<span style="display:flex;opacity:${opacity}">${flagIcon()}</span>`;
-    }
 
     // Порядок внутри списка фиксируется один раз при загрузке доски
     // (assignTaskOrder, вызывается из loadBoard) и больше не пересчитывается
@@ -606,15 +610,48 @@
       return row;
     }
 
-    const SWIPE_MAX_REVEAL = 176; // 4 кнопки по 44px
+    const SWIPE_MAX_REVEAL = 220; // 5 кнопок по 44px
+    const SWIPE_OPEN_THRESHOLD = SWIPE_MAX_REVEAL * 0.4; // открыть — нужен заметный протяг
+    const SWIPE_CLOSE_THRESHOLD = 28; // закрыть — хватит лёгкого движения
+
+    // Одна открытая шторка на всё приложение — открытие любой другой её
+    // закрывает (см. setupSwipeDrag), плюс общий обработчик клика ниже.
+    let openSwipeRow = null;
+
+    function closeOpenSwipeRow() {
+      if (openSwipeRow) {
+        openSwipeRow.close();
+        openSwipeRow = null;
+      }
+    }
+
+    // Клик где угодно, пока шторка открыта, закрывает её — включая клик по
+    // левой (неподвижной) части этой же задачи вместо её обычного действия.
+    // Кнопки внутри самой шторки и активный пикер даты/времени — исключение,
+    // у них своя обработка. Слушаем на фазе перехвата и глушим событие, иначе
+    // первый тап и закрыл бы шторку, и дошёл бы до чекбокса/т.п. под ней.
+    document.addEventListener(
+      "click",
+      (e) => {
+        if (!openSwipeRow) return;
+        if (e.target.closest(".swipe-actions")) return;
+        if (e.target.closest(".swipe-zone")) return;
+        if (e.target.matches('input[type="date"], input[type="datetime-local"]')) return;
+        closeOpenSwipeRow();
+        e.stopPropagation();
+        e.preventDefault();
+      },
+      true
+    );
 
     // Палец двигает не саму строку, а ширину шторки с кнопками — строка
     // (.swipe-content) неподвижна, шторка (.swipe-actions) наезжает поверх
-    // справа. Возвращает { close() } — им пользуются кнопки внутри шторки,
-    // чтобы закрыться после действия (кроме архивации — там схлопывается
-    // вся строка).
-    function setupSwipeDrag(actions, content) {
+    // справа. Жест стартует только в узкой зоне у правого края (.swipe-zone,
+    // см. CSS) — за её пределами палец достаётся внешней карусели
+    // вчера/сегодня/неделя, как и на любом другом месте страницы.
+    function setupSwipeDrag(zone, actions) {
       let startX = 0;
+      let startY = 0;
       let curX = 0;
       let dragging = false;
       let open = false;
@@ -624,17 +661,34 @@
         actions.style.width = px + "px";
       }
 
-      content.addEventListener("pointerdown", (e) => {
+      const self = {
+        close: () => {
+          setReveal(0, true);
+          open = false;
+          if (openSwipeRow === self) openSwipeRow = null;
+        },
+      };
+
+      zone.addEventListener("pointerdown", (e) => {
         startX = e.clientX;
+        startY = e.clientY;
         curX = startX;
         dragging = false;
       });
-      content.addEventListener("pointermove", (e) => {
+      zone.addEventListener("pointermove", (e) => {
         const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
         if (!dragging) {
-          if (Math.abs(dx) < 6) return;
+          // Жест больше вертикальный, чем горизонтальный — это скролл
+          // страницы, не свайп задачи, не перехватываем.
+          if (Math.abs(dx) < 6 || Math.abs(dy) > Math.abs(dx)) return;
           dragging = true;
-          content.setPointerCapture(e.pointerId);
+          try {
+            zone.setPointerCapture(e.pointerId);
+          } catch (err) {
+            // Не критично — жест продолжит работать и без захвата, просто
+            // менее надёжно, если палец уйдёт далеко за пределы зоны.
+          }
         }
         curX = e.clientX;
         let reveal = open ? SWIPE_MAX_REVEAL - dx : -dx;
@@ -646,19 +700,20 @@
         if (!dragging) return;
         const dx = curX - startX;
         const wasOpen = open;
-        open = wasOpen ? dx > -SWIPE_MAX_REVEAL / 2 : dx < -SWIPE_MAX_REVEAL / 2;
+        open = wasOpen ? dx < SWIPE_CLOSE_THRESHOLD : dx < -SWIPE_OPEN_THRESHOLD;
         setReveal(open ? SWIPE_MAX_REVEAL : 0, true);
+        if (open && openSwipeRow !== self) {
+          closeOpenSwipeRow();
+          openSwipeRow = self;
+        } else if (!open && openSwipeRow === self) {
+          openSwipeRow = null;
+        }
         dragging = false;
       }
-      content.addEventListener("pointerup", endDrag);
-      content.addEventListener("pointercancel", endDrag);
+      zone.addEventListener("pointerup", endDrag);
+      zone.addEventListener("pointercancel", endDrag);
 
-      return {
-        close: () => {
-          setReveal(0, true);
-          open = false;
-        },
-      };
+      return self;
     }
 
     // Строка задачи со свайп-шторкой — Вчера/Сегодня/календарь. Инбокс
@@ -674,14 +729,29 @@
       const actions = document.createElement("div");
       actions.className = "swipe-actions";
 
-      const priorityBtn = document.createElement("button");
-      priorityBtn.className = "swipe-btn";
-      priorityBtn.disabled = isPending;
-      priorityBtn.setAttribute("aria-label", "Изменить приоритет");
-      priorityBtn.innerHTML = priorityGlyph(task.priority);
-      priorityBtn.onclick = () => {
+      // Важность и событие — два независимых значка-переключателя вместо
+      // одной кнопки-цикла: нажал один — стал ярким, нажал другой — первый
+      // гаснет (оба значения живут в одном и том же поле priority, поэтому
+      // взаимоисключающие). Повторный тап по уже активному — снятие,
+      // возврат к нейтральному приоритету.
+      const importantBtn = document.createElement("button");
+      importantBtn.className = "swipe-btn" + (task.priority === "высокий" ? " active" : "");
+      importantBtn.disabled = isPending;
+      importantBtn.setAttribute("aria-label", "Важная задача");
+      importantBtn.innerHTML = flagIcon();
+      importantBtn.onclick = () => {
         swipeHandle.close();
-        cycleTaskPriority(task);
+        setTaskPriority(task, task.priority === "высокий" ? "средний" : "высокий");
+      };
+
+      const eventBtn = document.createElement("button");
+      eventBtn.className = "swipe-btn" + (task.priority === "event" ? " active" : "");
+      eventBtn.disabled = isPending;
+      eventBtn.setAttribute("aria-label", "Событие");
+      eventBtn.innerHTML = eventPinIcon();
+      eventBtn.onclick = () => {
+        swipeHandle.close();
+        setTaskPriority(task, task.priority === "event" ? "средний" : "event");
       };
 
       const dateBtn = document.createElement("button");
@@ -718,7 +788,7 @@
       archiveBtn.innerHTML = archiveIcon();
       archiveBtn.onclick = () => archiveTask(task);
 
-      actions.append(priorityBtn, dateBtn, editBtn, archiveBtn);
+      actions.append(importantBtn, eventBtn, dateBtn, editBtn, archiveBtn);
 
       const content = document.createElement("div");
       content.className = "swipe-content";
@@ -774,8 +844,15 @@
       handle.className = "swipe-handle";
       content.append(handle);
 
+      // Узкая зона у правого края — единственное место, откуда стартует
+      // свайп этой задачи (см. .swipe-zone в CSS). Вне её палец отдаём
+      // внешней карусели вчера/сегодня/неделя, как везде на странице.
+      const zone = document.createElement("span");
+      zone.className = "swipe-zone";
+      content.append(zone);
+
       wrap.append(actions, content);
-      swipeHandle = setupSwipeDrag(actions, content);
+      swipeHandle = setupSwipeDrag(zone, actions);
       return wrap;
     }
 
@@ -1036,10 +1113,10 @@
       }
     }
 
-    async function cycleTaskPriority(task) {
+    async function setTaskPriority(task, newPriority) {
       const id = task.id;
       const prevPriority = task.priority;
-      task.priority = nextPriority(task.priority);
+      task.priority = newPriority;
       pendingIds.add(id);
       render();
       try {
