@@ -7,7 +7,7 @@ _TODAY = date(2026, 8, 29)
 
 
 def _task(title: str, due_date: date | None) -> Task:
-    return Task(notion_page_id=title, title=title, due_date=due_date, status="Not started")
+    return Task(title=title, due_date=due_date, done=False)
 
 
 def test_empty_when_no_active_tasks():

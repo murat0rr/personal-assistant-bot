@@ -1,6 +1,5 @@
-from src.core.config import settings
+from src.core.habits import list_habits
 from src.handlers.f5_morning_digest import build_morning_digest
-from src.integrations.notion import list_habits
 from src.integrations.weather import get_weather_summary
 
 
@@ -21,6 +20,6 @@ def build_briefing_text(tasks_text: str, weather_line: str | None, habits: list[
 async def build_morning_briefing() -> str:
     tasks_text = await build_morning_digest()
     weather_line = await get_weather_summary()
-    habits = await list_habits() if settings.notion_habits_db_id else []
+    habits = await list_habits()
 
     return build_briefing_text(tasks_text, weather_line, habits)

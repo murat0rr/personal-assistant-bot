@@ -5,7 +5,6 @@ from sqlalchemy import select
 
 from src.core.config import settings
 from src.core.db import async_session
-from src.integrations.notion import DONE_STATUS_CANDIDATES
 from src.models.task import Task
 
 
@@ -33,9 +32,10 @@ async def build_morning_digest() -> str:
     today = datetime.now(ZoneInfo(settings.timezone)).date()
 
     async with async_session() as session:
-        result = await session.execute(select(Task).where(Task.due_date.is_not(None)))
-        tasks = [
-            t for t in result.scalars().all() if t.status.lower() not in DONE_STATUS_CANDIDATES
-        ]
+        query = select(Task).where(
+            Task.due_date.is_not(None), Task.done.is_(False), Task.archived.is_(False)
+        )
+        result = await session.execute(query)
+        tasks = list(result.scalars().all())
 
     return build_morning_digest_text(tasks, today)

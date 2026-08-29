@@ -1,13 +1,8 @@
 from datetime import date, timedelta
 
-from src.integrations.notion import DONE_STATUS_CANDIDATES
 from src.models.task import Task
 
 _PRIORITY_ORDER = {"высокий": 0, "средний": 1, "низкий": 2}
-
-
-def _is_done(task: Task) -> bool:
-    return task.status.lower() in DONE_STATUS_CANDIDATES
 
 
 def _sort_key(task: Task) -> int:
@@ -18,12 +13,11 @@ def _sort_key(task: Task) -> int:
 
 def _serialize(task: Task) -> dict:
     return {
-        "notion_page_id": task.notion_page_id,
+        "id": task.id,
         "title": task.title,
         "due_date": task.due_date.isoformat() if task.due_date else None,
         "priority": task.priority,
-        "status": task.status,
-        "done": _is_done(task),
+        "done": task.done,
     }
 
 
@@ -45,7 +39,7 @@ def build_task_board(tasks: list[Task], today: date) -> dict:
     yesterday = today - timedelta(days=1)
 
     inbox = sorted(
-        (t for t in tasks if t.due_date is None or (t.due_date < today and not _is_done(t))),
+        (t for t in tasks if t.due_date is None or (t.due_date < today and not t.done)),
         key=_sort_key,
     )
     dated = sorted((t for t in tasks if t.due_date is not None), key=_sort_key)

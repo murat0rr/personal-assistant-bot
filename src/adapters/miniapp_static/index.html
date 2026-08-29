@@ -367,10 +367,10 @@
     function removeTaskEverywhere(id) {
       for (const key of ["yesterday", "today"]) {
         if (!boardState.days[key]) continue;
-        boardState.days[key].tasks = boardState.days[key].tasks.filter((t) => t.notion_page_id !== id);
+        boardState.days[key].tasks = boardState.days[key].tasks.filter((t) => t.id !== id);
       }
-      boardState.dated_tasks = (boardState.dated_tasks || []).filter((t) => t.notion_page_id !== id);
-      boardState.inbox = boardState.inbox.filter((t) => t.notion_page_id !== id);
+      boardState.dated_tasks = (boardState.dated_tasks || []).filter((t) => t.id !== id);
+      boardState.inbox = boardState.inbox.filter((t) => t.id !== id);
     }
 
     // Кладёт задачу во все секции, которым она сейчас соответствует (тот же
@@ -378,7 +378,7 @@
     // любой правки done/due_date (и для вставки только что созданной задачи),
     // чтобы задача сама "переехала" куда нужно.
     function rebucketTask(task) {
-      removeTaskEverywhere(task.notion_page_id);
+      removeTaskEverywhere(task.id);
       const todayIso = boardState.days.today?.date;
       for (const key of ["yesterday", "today"]) {
         if (boardState.days[key] && task.due_date === boardState.days[key].date) {
@@ -399,8 +399,8 @@
 
     function renderTaskRow(task, { showDateButton, showTrashButton, showMoveToToday }) {
       const row = document.createElement("div");
-      row.className = "row" + (pendingIds.has(task.notion_page_id) ? " pending" : "");
-      const isPending = pendingIds.has(task.notion_page_id);
+      row.className = "row" + (pendingIds.has(task.id) ? " pending" : "");
+      const isPending = pendingIds.has(task.id);
 
       const checkbox = document.createElement("button");
       checkbox.className = "checkbox" + (task.done ? " done" : "");
@@ -638,12 +638,10 @@
     }
 
     async function toggleTaskDone(task) {
-      const id = task.notion_page_id;
+      const id = task.id;
       const newDone = !task.done;
       const prevDone = task.done;
-      const prevStatus = task.status;
       task.done = newDone;
-      task.status = newDone ? "Done" : "Not started";
       pendingIds.add(id);
       rebucketTask(task);
       render();
@@ -654,7 +652,6 @@
         });
       } catch (e) {
         task.done = prevDone;
-        task.status = prevStatus;
         rebucketTask(task);
         alert("Не удалось обновить статус.");
       } finally {
@@ -664,7 +661,7 @@
     }
 
     async function setTaskDueDate(task, isoDate) {
-      const id = task.notion_page_id;
+      const id = task.id;
       const prevDate = task.due_date;
       task.due_date = isoDate;
       pendingIds.add(id);
@@ -686,14 +683,14 @@
     }
 
     async function archiveTask(task) {
-      const id = task.notion_page_id;
+      const id = task.id;
       pendingIds.add(id);
       render();
       try {
         await api(`/miniapp/api/tasks/${encodeURIComponent(id)}/archive`, { method: "POST" });
         removeTaskEverywhere(id);
       } catch (e) {
-        alert("Не удалось удалить — возможно, в Notion Tasks нет свойства TaskStatus.");
+        alert("Не удалось удалить задачу.");
       } finally {
         pendingIds.delete(id);
         render();
@@ -706,11 +703,10 @@
       if (dueDate === undefined) return;
       const tempId = "pending-" + Date.now();
       const tempTask = {
-        notion_page_id: tempId,
+        id: tempId,
         title,
         due_date: dueDate,
         priority: "средний",
-        status: "unknown",
         done: false,
       };
       pendingIds.add(tempId);
@@ -721,7 +717,7 @@
           method: "POST",
           body: JSON.stringify({ title, due_date: dueDate }),
         });
-        tempTask.notion_page_id = result.page_id;
+        tempTask.id = result.id;
       } catch (e) {
         removeTaskEverywhere(tempId);
         alert("Не удалось создать задачу.");

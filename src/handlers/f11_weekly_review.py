@@ -5,7 +5,8 @@ from sqlalchemy import select
 
 from src.core.config import settings
 from src.core.db import async_session
-from src.integrations.notion import DONE_STATUS_CANDIDATES, list_diary_entries, list_habits
+from src.core.habits import list_habits
+from src.integrations.notion import list_diary_entries
 from src.models.task import Task
 
 
@@ -23,17 +24,9 @@ def build_weekly_review_text(
     done_this_week = [
         t
         for t in tasks
-        if t.status.lower() in DONE_STATUS_CANDIDATES
-        and t.updated_at is not None
-        and t.updated_at.date() >= week_start
+        if t.done and t.updated_at is not None and t.updated_at.date() >= week_start
     ]
-    overdue = [
-        t
-        for t in tasks
-        if t.status.lower() not in DONE_STATUS_CANDIDATES
-        and t.due_date is not None
-        and t.due_date < today
-    ]
+    overdue = [t for t in tasks if not t.done and t.due_date is not None and t.due_date < today]
     lines.append(f"\n✅ Задачи: выполнено {len(done_this_week)}, просрочено {len(overdue)}")
 
     week_entries = [e for e in diary_entries if e["entry_date"] and e["entry_date"] >= week_start]
@@ -66,10 +59,10 @@ async def build_weekly_review() -> str:
     week_start = today - timedelta(days=7)
 
     async with async_session() as session:
-        result = await session.execute(select(Task))
+        result = await session.execute(select(Task).where(Task.archived.is_(False)))
         tasks = list(result.scalars().all())
 
     diary_entries = await list_diary_entries() if settings.notion_diary_db_id else []
-    habits = await list_habits() if settings.notion_habits_db_id else []
+    habits = await list_habits()
 
     return build_weekly_review_text(tasks, diary_entries, habits, week_start, today)

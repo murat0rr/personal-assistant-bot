@@ -12,14 +12,13 @@ def _task(
     title: str,
     due_date: date | None,
     priority: str | None = None,
-    status: str = "Not started",
+    done: bool = False,
 ) -> Task:
     return Task(
-        notion_page_id=title,
         title=title,
         due_date=due_date,
         priority=priority,
-        status=status,
+        done=done,
     )
 
 
@@ -50,11 +49,11 @@ def test_dated_tasks_includes_every_dated_task_any_range():
 
 def test_inbox_includes_overdue_undone_and_all_undated():
     tasks = [
-        _task("просрочена не сделана", date(2026, 8, 20), status="Not started"),
-        _task("просрочена сделана", date(2026, 8, 20), status="Done"),
+        _task("просрочена не сделана", date(2026, 8, 20), done=False),
+        _task("просрочена сделана", date(2026, 8, 20), done=True),
         _task("будущая", date(2026, 9, 1)),
-        _task("без даты не сделана", None, status="Not started"),
-        _task("без даты сделана", None, status="Done"),
+        _task("без даты не сделана", None, done=False),
+        _task("без даты сделана", None, done=True),
     ]
     board = build_task_board(tasks, _TODAY)
     titles = {t["title"] for t in board["inbox"]}
@@ -64,7 +63,7 @@ def test_inbox_includes_overdue_undone_and_all_undated():
 def test_day_sorted_by_priority_only_done_stays_in_place():
     tasks = [
         _task("низкий", _TODAY, priority="низкий"),
-        _task("высокий выполнена", _TODAY, priority="высокий", status="Done"),
+        _task("высокий выполнена", _TODAY, priority="высокий", done=True),
         _task("средний", _TODAY, priority="средний"),
     ]
     board = build_task_board(tasks, _TODAY)

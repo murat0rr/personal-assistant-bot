@@ -8,35 +8,24 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import BaseStorage, StorageKey
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 
 from src.core.config import settings
 from src.core.db import async_session
-from src.core.notion_sync import sync_tasks_from_notion
+from src.core.habits import list_habits
 from src.handlers.f4_diary import DiaryStates, ask_question
 from src.handlers.f9_finance import FINANCE_GUIDE
 from src.handlers.f11_weekly_review import build_weekly_review
 from src.handlers.f12_briefing import build_morning_briefing
 from src.handlers.f_reminders import check_reminders
-from src.integrations.notion import list_habits
 from src.models.chat_message import ChatMessage
 from src.models.screen_time import ScreenTime
 
 logger = logging.getLogger(__name__)
 
 
-async def _sync_tasks_job() -> None:
-    # Держит Postgres-кэш задач свежим для Mini App (там теперь чтение без
-    # похода в Notion, чтобы приложение открывалось мгновенно) и ловит
-    # изменения, сделанные прямо в Notion (не через бота/Mini App).
-    logger.info("Синк задач из Notion")
-    await sync_tasks_from_notion(notify_on_change=True)
-
-
 async def _morning_digest(bot: Bot) -> None:
     logger.info("Формирую утреннюю сводку")
-    await sync_tasks_from_notion(notify_on_change=False)
     text = await build_morning_briefing()
     await bot.send_message(chat_id=settings.telegram_user_id, text=text)
 
@@ -113,8 +102,6 @@ async def _weekly_review(bot: Bot) -> None:
 
 
 async def _habit_reminders(bot: Bot) -> None:
-    if not settings.notion_habits_db_id:
-        return
     logger.info("Проверяю несделанные привычки")
     today = datetime.now(ZoneInfo(settings.timezone)).date()
     habits = await list_habits()
@@ -130,7 +117,6 @@ async def _habit_reminders(bot: Bot) -> None:
 
 def setup_scheduler(bot: Bot, storage: BaseStorage) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
-    scheduler.add_job(_sync_tasks_job, IntervalTrigger(minutes=10))
     scheduler.add_job(_morning_digest, CronTrigger(hour=8, minute=0), args=[bot])
     scheduler.add_job(_reminders_job, CronTrigger(hour=8, minute=0), args=[bot])
     scheduler.add_job(_screen_time_digest, CronTrigger(hour=8, minute=0), args=[bot])

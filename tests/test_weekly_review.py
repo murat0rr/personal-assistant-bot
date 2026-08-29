@@ -7,12 +7,11 @@ _TODAY = date(2026, 8, 29)
 _WEEK_START = date(2026, 8, 22)
 
 
-def _task(status: str, due_date: date | None = None, updated_at: datetime | None = None) -> Task:
+def _task(done: bool, due_date: date | None = None, updated_at: datetime | None = None) -> Task:
     return Task(
-        notion_page_id=status + str(due_date) + str(updated_at),
         title="задача",
         due_date=due_date,
-        status=status,
+        done=done,
         updated_at=updated_at,
     )
 
@@ -37,15 +36,15 @@ def test_empty_week():
 def test_counts_done_this_week_and_overdue():
     tasks = [
         _task(
-            "Done",
+            True,
             updated_at=datetime(2026, 8, 24, tzinfo=UTC),
         ),
         _task(
-            "Done",
+            True,
             updated_at=datetime(2026, 8, 10, tzinfo=UTC),
         ),  # выполнено раньше этой недели — не считаем
-        _task("Not started", due_date=date(2026, 8, 20)),  # просрочено
-        _task("Not started", due_date=date(2026, 9, 1)),  # ещё не просрочено
+        _task(False, due_date=date(2026, 8, 20)),  # просрочено
+        _task(False, due_date=date(2026, 9, 1)),  # ещё не просрочено
     ]
     text = build_weekly_review_text(tasks, [], [], _WEEK_START, _TODAY)
     assert "выполнено 1, просрочено 1" in text

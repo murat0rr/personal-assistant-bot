@@ -11,7 +11,6 @@ from aiogram.types import BotCommand, Message
 from src.core.auth import is_authorized
 from src.core.config import settings
 from src.core.message_tracking import attach_message_tracking, track_incoming
-from src.core.notion_sync import sync_tasks_from_notion
 from src.core.orchestrator import router as orchestrator_router
 from src.handlers.f4_diary import router as diary_router
 from src.handlers.f9_finance import router as finance_router
@@ -63,14 +62,11 @@ async def main() -> None:
         ]
     )
 
-    if settings.notion_tasks_db_id:
-        # Разовый синк сразу при старте (без уведомлений — иначе каждый
-        # рестарт контейнера спамил бы про "изменившиеся" статусы), плюс
-        # плановые джобы: дневной синк, утренняя сводка, вечерний дневник,
-        # проверка напоминаний.
-        await sync_tasks_from_notion(notify_on_change=False)
-        scheduler = setup_scheduler(bot, dp.storage)
-        scheduler.start()
+    # Задачи и привычки теперь в Postgres (Phase 10) — никакого синка с
+    # Notion перед стартом планировщика больше не нужно, джобы стартуют
+    # безусловно.
+    scheduler = setup_scheduler(bot, dp.storage)
+    scheduler.start()
 
     await dp.start_polling(bot)
 

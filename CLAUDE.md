@@ -14,11 +14,13 @@ Telegram-first персональный ассистент: голос/текс�
 - aiogram 3 + aiogram-dialog — Telegram-бот и многошаговые диалоги
 - FastAPI — Notion webhooks, Tasker webhook, backend для Mini App
 - APScheduler — утренние/вечерние/еженедельные триггеры
-- Postgres (SQLAlchemy 2.0 async, Alembic) — состояние, кэш задач
+- Postgres (SQLAlchemy 2.0 async, Alembic) — источник правды для задач и
+  привычек (Phase 10), плюс остальное состояние приложения
 - Redis + arq — состояние диалогов, очередь фоновых задач
 - Claude API: Haiku 4.5 — роутинг и простые сценарии, Sonnet 5 — сложные
 - Groq API — Whisper STT (free tier), за адаптером/интерфейсом
-- Notion API (2026-03+, с вебхуками) — хранилище задач/заметок/дневника
+- Notion API — только заметки и дневник (задачи и привычки — в Postgres,
+  см. Phase 10 в PLAN.md)
 - Docker Compose + Caddy (авто-HTTPS) — деплой
 
 ## Структура репозитория
