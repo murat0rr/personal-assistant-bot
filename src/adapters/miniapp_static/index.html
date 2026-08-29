@@ -15,7 +15,6 @@
       --accent: var(--tg-theme-button-color, #2481cc);
       --accent-text: var(--tg-theme-button-text-color, #ffffff);
       --pending-bg: rgba(36, 129, 204, 0.1);
-      --week-selected-bg: rgba(36, 129, 204, 0.18);
     }
     * { box-sizing: border-box; }
     body {
@@ -228,7 +227,10 @@
       background: transparent;
       border: 1.5px solid transparent;
     }
-    .week-cell.selected { background: var(--week-selected-bg); }
+    /* Один и тот же var(--accent), что и обводка "сегодня" — раньше фон
+       выбранного дня был захардкожен отдельным rgba и мог не совпасть по
+       цвету, если тема Telegram меняет --accent. */
+    .week-cell.selected { background: color-mix(in srgb, var(--accent) 18%, transparent); }
     .week-cell.today { border-color: var(--accent); }
     .wc-label { font-size: 11px; color: var(--text-muted); }
     .wc-num { font-size: 14px; font-weight: 500; color: var(--text); }
@@ -781,7 +783,10 @@
       const index = Math.round(weekCarousel.scrollLeft / pageWidth); // 0=пред., 1=тек., 2=след.
       if (index === 1) return;
       weekStart = addDaysIso(weekStart, (index === 0 ? -1 : 1) * 7);
-      selectedWeekDate = null;
+      // При переключении недели выбранный день переезжает на понедельник
+      // новой недели — не остаётся тот же день/дата, что был до свайпа,
+      // и не пропадает совсем (пустой экран).
+      selectedWeekDate = weekStart;
       renderWeekCarousel();
       recenterWeekCarousel();
       renderWeekDetail();
