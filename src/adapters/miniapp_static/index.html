@@ -15,6 +15,7 @@
       --accent: var(--tg-theme-button-color, #2481cc);
       --accent-text: var(--tg-theme-button-text-color, #ffffff);
       --pending-bg: rgba(36, 129, 204, 0.1);
+      --week-selected-bg: rgba(36, 129, 204, 0.08);
     }
     * { box-sizing: border-box; }
     body {
@@ -168,6 +169,34 @@
     .day-dot.active { opacity: 1; }
     .digest { padding: 12px 14px; font-size: 14px; color: var(--text-muted); }
     button:disabled { opacity: 0.5; }
+    .week-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 4px;
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 10px 4px;
+    }
+    .week-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 0;
+      border-radius: 8px;
+      background: transparent;
+      border: 1.5px solid transparent;
+    }
+    .week-cell.selected { background: var(--week-selected-bg); }
+    .week-cell.today { border-color: var(--accent); }
+    .wc-label { font-size: 11px; color: var(--text-muted); }
+    .wc-num { font-size: 14px; font-weight: 500; color: var(--text); }
+    .week-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .week-dot.empty { border: 1px solid var(--text-muted); background: transparent; }
+    .week-dot.dim { background: var(--accent); opacity: 0.35; }
+    .week-dot.medium { background: var(--accent); opacity: 0.65; }
+    .week-dot.bright { background: var(--accent); opacity: 1; }
+    #week-day-detail { margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -188,12 +217,9 @@
           <button class="icon-btn day-task-add" aria-label="Добавить задачу"></button>
         </div>
       </div>
-      <div class="day-page" data-day="tomorrow">
-        <div class="list" id="tomorrow-list"></div>
-        <div class="add-row">
-          <input type="text" class="day-task-input" placeholder="Новая задача" />
-          <button class="icon-btn day-task-add" aria-label="Добавить задачу"></button>
-        </div>
+      <div class="day-page" data-day="calendar">
+        <div class="week-grid" id="week-grid"></div>
+        <div id="week-day-detail"></div>
       </div>
     </div>
     <div class="day-dots">
@@ -279,32 +305,31 @@
       return [...tasks].sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 3) - (PRIORITY_ORDER[b.priority] ?? 3));
     }
 
-    function findTaskById(id) {
-      for (const key of ["yesterday", "today", "tomorrow"]) {
-        const t = boardState.days[key]?.tasks.find((t) => t.notion_page_id === id);
-        if (t) return t;
-      }
-      return boardState.inbox.find((t) => t.notion_page_id === id) || null;
-    }
-
     function removeTaskEverywhere(id) {
-      for (const key of ["yesterday", "today", "tomorrow"]) {
+      for (const key of ["yesterday", "today"]) {
         if (!boardState.days[key]) continue;
         boardState.days[key].tasks = boardState.days[key].tasks.filter((t) => t.notion_page_id !== id);
+      }
+      for (const iso of Object.keys(boardState.week || {})) {
+        boardState.week[iso] = boardState.week[iso].filter((t) => t.notion_page_id !== id);
       }
       boardState.inbox = boardState.inbox.filter((t) => t.notion_page_id !== id);
     }
 
     // Кладёт задачу во все секции, которым она сейчас соответствует (тот же
     // расчёт, что и на бэкенде в build_task_board) — используется после
-    // любой правки done/due_date, чтобы задача сама "переехала" куда нужно.
+    // любой правки done/due_date (и для вставки только что созданной задачи),
+    // чтобы задача сама "переехала" куда нужно.
     function rebucketTask(task) {
       removeTaskEverywhere(task.notion_page_id);
       const todayIso = boardState.days.today?.date;
-      for (const key of ["yesterday", "today", "tomorrow"]) {
+      for (const key of ["yesterday", "today"]) {
         if (boardState.days[key] && task.due_date === boardState.days[key].date) {
           boardState.days[key].tasks.push(task);
         }
+      }
+      if (task.due_date && boardState.week && boardState.week[task.due_date]) {
+        boardState.week[task.due_date].push(task);
       }
       if (todayIso && (task.due_date === null || (task.due_date < todayIso && !task.done))) {
         boardState.inbox.push(task);
@@ -394,11 +419,90 @@
     const _dayOpts = {
       yesterday: { showDateButton: false, showTrashButton: false, showMoveToToday: true },
       today: { showDateButton: false, showTrashButton: false, showMoveToToday: false },
-      tomorrow: { showDateButton: false, showTrashButton: false, showMoveToToday: false },
     };
 
+    const WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+    let selectedWeekDate = null;
+
+    function weekDotState(tasks) {
+      const count = tasks.length;
+      if (count === 0) return "empty";
+      const important = tasks.some((t) => t.priority === "высокий" || t.priority === "event");
+      if (important || count > 5) return "bright";
+      if (count >= 4) return "medium";
+      return "dim";
+    }
+
+    function renderWeekGrid() {
+      const grid = document.getElementById("week-grid");
+      if (!boardState.week) return;
+      grid.innerHTML = "";
+      const todayIso = boardState.days.today?.date;
+      Object.keys(boardState.week).forEach((iso, i) => {
+        const tasks = boardState.week[iso];
+        const cell = document.createElement("button");
+        cell.className =
+          "week-cell" + (iso === todayIso ? " today" : "") + (iso === selectedWeekDate ? " selected" : "");
+
+        const label = document.createElement("span");
+        label.className = "wc-label";
+        label.textContent = WEEKDAY_LABELS[i];
+
+        const num = document.createElement("span");
+        num.className = "wc-num";
+        num.textContent = String(parseInt(iso.slice(8, 10), 10));
+
+        const dot = document.createElement("span");
+        dot.className = "week-dot " + weekDotState(tasks);
+
+        cell.append(label, num, dot);
+        cell.onclick = () => {
+          selectedWeekDate = selectedWeekDate === iso ? null : iso;
+          renderWeekGrid();
+          renderWeekDetail();
+        };
+        grid.append(cell);
+      });
+    }
+
+    function renderWeekDetail() {
+      const el = document.getElementById("week-day-detail");
+      el.innerHTML = "";
+      if (!selectedWeekDate || !boardState.week) return;
+
+      const listEl = document.createElement("div");
+      listEl.className = "list";
+      renderList(listEl, boardState.week[selectedWeekDate] || [], {
+        showDateButton: false,
+        showTrashButton: false,
+        showMoveToToday: false,
+      });
+      el.append(listEl);
+
+      const addRow = document.createElement("div");
+      addRow.className = "add-row";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = "Новая задача";
+      const btn = document.createElement("button");
+      btn.className = "icon-btn";
+      btn.setAttribute("aria-label", "Добавить задачу");
+      btn.innerHTML = plusIcon();
+      btn.onclick = () => {
+        const value = input.value.trim();
+        if (!value) return;
+        input.value = "";
+        createTaskFor(selectedWeekDate, value);
+      };
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") btn.click();
+      });
+      addRow.append(input, btn);
+      el.append(addRow);
+    }
+
     function render() {
-      for (const key of ["yesterday", "today", "tomorrow"]) {
+      for (const key of ["yesterday", "today"]) {
         const el = document.getElementById(`${key}-list`);
         if (boardState.days[key]) renderList(el, boardState.days[key].tasks, _dayOpts[key]);
       }
@@ -406,6 +510,8 @@
         showDateButton: true,
         showTrashButton: true,
       });
+      renderWeekGrid();
+      renderWeekDetail();
     }
 
     async function loadBoard() {
@@ -481,8 +587,7 @@
       }
     }
 
-    async function createTaskFor(dayKey, title) {
-      const dueDate = boardState.days[dayKey]?.date;
+    async function createTaskFor(dueDate, title) {
       if (!dueDate) return;
       const tempId = "pending-" + Date.now();
       const tempTask = {
@@ -494,7 +599,7 @@
         done: false,
       };
       pendingIds.add(tempId);
-      boardState.days[dayKey].tasks.push(tempTask);
+      rebucketTask(tempTask);
       render();
       try {
         const result = await api("/miniapp/api/tasks", {
@@ -503,7 +608,7 @@
         });
         tempTask.notion_page_id = result.page_id;
       } catch (e) {
-        boardState.days[dayKey].tasks = boardState.days[dayKey].tasks.filter((t) => t !== tempTask);
+        removeTaskEverywhere(tempId);
         alert("Не удалось создать задачу.");
       } finally {
         pendingIds.delete(tempId);
@@ -511,23 +616,24 @@
       }
     }
 
-    document.querySelectorAll(".day-page").forEach((page) => {
+    document.querySelectorAll(".day-page[data-day]").forEach((page) => {
       const day = page.dataset.day;
       const input = page.querySelector(".day-task-input");
       const btn = page.querySelector(".day-task-add");
+      if (!input || !btn) return; // у страницы календаря своё динамическое поле ввода
       btn.innerHTML = plusIcon();
       btn.onclick = () => {
         const value = input.value.trim();
         if (!value) return;
         input.value = "";
-        createTaskFor(day, value);
+        createTaskFor(boardState.days[day]?.date, value);
       };
       input.addEventListener("keydown", (e) => {
         if (e.key === "Enter") btn.click();
       });
     });
 
-    const _dayLabels = ["Вчера", "Сегодня", "Завтра"];
+    const _dayLabels = ["Вчера", "Сегодня", "Неделя"];
     const carousel = document.getElementById("day-carousel");
     const dayLabel = document.getElementById("day-label");
     const dayDots = Array.from(document.querySelectorAll(".day-dot"));
