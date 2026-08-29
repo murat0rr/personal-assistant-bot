@@ -170,6 +170,27 @@
     .day-dot.active { opacity: 1; }
     .digest { padding: 12px 14px; font-size: 14px; color: var(--text-muted); }
     button:disabled { opacity: 0.5; }
+    /* Полоска недель — такая же нативная scroll-snap карусель, как и внешняя
+       (вчера/сегодня/календарь): три панели (пред./тек./след. неделя),
+       после каждого свайпа JS переключает данные и мгновенно "перематывает"
+       обратно в центр — иллюзия бесконечной прокрутки без сети. */
+    .week-carousel {
+      display: flex;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      /* Не отдаём остаток жеста внешней карусели, когда полоска недель
+         упирается в свой край (первая/последняя из трёх панелей) —
+         иначе долгий свайп мог бы "провалиться" на страницу вчера/сегодня. */
+      overscroll-behavior-x: contain;
+    }
+    .week-carousel::-webkit-scrollbar { display: none; }
+    .week-page {
+      flex: 0 0 100%;
+      min-width: 100%;
+      scroll-snap-align: start;
+    }
     .week-grid {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
@@ -177,11 +198,6 @@
       background: var(--card-bg);
       border-radius: 12px;
       padding: 10px 4px;
-      /* Горизонтальный свайп на этом элементе обрабатываем сами (JS), не
-         отдаём его нативному скроллу — иначе конфликтует с внешней
-         каруселью вчера/сегодня/календарь. Вертикальный скролл страницы
-         работает как обычно. */
-      touch-action: pan-y;
     }
     .section-header {
       display: flex;
@@ -235,7 +251,11 @@
         </div>
       </div>
       <div class="day-page" data-day="calendar">
-        <div class="week-grid" id="week-grid"></div>
+        <div class="week-carousel" id="week-carousel">
+          <div class="week-page"><div class="week-grid" data-slot="prev"></div></div>
+          <div class="week-page"><div class="week-grid" data-slot="current"></div></div>
+          <div class="week-page"><div class="week-grid" data-slot="next"></div></div>
+        </div>
         <div id="week-day-detail"></div>
       </div>
     </div>
@@ -476,13 +496,11 @@
       return "dim";
     }
 
-    function renderWeekGrid() {
-      const grid = document.getElementById("week-grid");
-      if (!weekStart) return;
-      grid.innerHTML = "";
+    function fillWeekGrid(gridEl, wStart) {
+      gridEl.innerHTML = "";
       const todayIso = boardState.days.today?.date;
       for (let i = 0; i < 7; i++) {
-        const iso = addDaysIso(weekStart, i);
+        const iso = addDaysIso(wStart, i);
         const tasks = tasksForDate(iso);
         const cell = document.createElement("button");
         cell.className =
@@ -503,18 +521,27 @@
         cell.append(label, num, dot);
         cell.onclick = () => {
           selectedWeekDate = selectedWeekDate === iso ? null : iso;
-          renderWeekGrid();
+          renderWeekCarousel();
           renderWeekDetail();
         };
-        grid.append(cell);
+        gridEl.append(cell);
       }
     }
 
-    function switchWeek(deltaWeeks) {
-      weekStart = addDaysIso(weekStart, deltaWeeks * 7);
-      selectedWeekDate = null;
-      renderWeekGrid();
-      renderWeekDetail();
+    const _weekGridEls = {
+      prev: document.querySelector('#week-carousel .week-grid[data-slot="prev"]'),
+      current: document.querySelector('#week-carousel .week-grid[data-slot="current"]'),
+      next: document.querySelector('#week-carousel .week-grid[data-slot="next"]'),
+    };
+
+    // Три панели (пред./тек./след. неделя) — контент недель-соседей, чтобы
+    // нативный scroll-snap мог их показать во время свайпа, ещё до того как
+    // мы решим, что жест завершён.
+    function renderWeekCarousel() {
+      if (!weekStart) return;
+      fillWeekGrid(_weekGridEls.prev, addDaysIso(weekStart, -7));
+      fillWeekGrid(_weekGridEls.current, weekStart);
+      fillWeekGrid(_weekGridEls.next, addDaysIso(weekStart, 7));
     }
 
     function renderWeekDetail() {
@@ -568,7 +595,7 @@
         showTrashButton: true,
       });
       renderInboxHeader();
-      renderWeekGrid();
+      renderWeekCarousel();
       renderWeekDetail();
     }
 
@@ -582,12 +609,17 @@
     async function loadBoard() {
       try {
         boardState = await api("/miniapp/api/tasks");
-        if (weekStart === null) {
+        const firstLoad = weekStart === null;
+        if (firstLoad) {
           const tomorrowIso = addDaysIso(boardState.days.today.date, 1);
           weekStart = computeWeekStart(tomorrowIso);
           selectedWeekDate = tomorrowIso;
         }
         render();
+        // Центрируем полоску недель на "текущей" (средней) панели только
+        // при первой загрузке — на каждой перерисовке (после отметки
+        // задачи и т.д.) позицию свайпа трогать нельзя.
+        if (firstLoad) recenterWeekCarousel();
       } catch (e) {
         document.getElementById("today-list").innerHTML =
           '<div class="empty">Не удалось загрузить задачи.</div>';
@@ -727,32 +759,49 @@
       document.getElementById("inbox-chevron").classList.toggle("expanded", inboxExpanded);
     };
 
-    // Свайп по полоске дат недели — только сама полоска, не вся страница
-    // календаря (touch-action: pan-y в CSS отдаёт нам горизontal-жест
-    // целиком, не давая внешней карусели его перехватить).
-    (function setupWeekSwipe() {
-      const grid = document.getElementById("week-grid");
-      let startX = null;
-      const THRESHOLD = 32;
-      grid.addEventListener(
-        "touchstart",
-        (e) => {
-          startX = e.touches[0].clientX;
-        },
-        { passive: true }
-      );
-      grid.addEventListener(
-        "touchend",
-        (e) => {
-          if (startX === null) return;
-          const dx = e.changedTouches[0].clientX - startX;
-          startX = null;
-          if (dx > THRESHOLD) switchWeek(-1);
-          else if (dx < -THRESHOLD) switchWeek(1);
-        },
-        { passive: true }
-      );
-    })();
+    // Полоска недель — нативный scroll-snap (см. .week-carousel), тот же
+    // механизм, что и внешняя карусель вчера/сегодня/календарь: палец
+    // двигает контент 1:1, длинный свайп нужен как и там. После того как
+    // скролл "устаканился" на соседней панели — переключаем данные недели
+    // и мгновенно (без анимации) прыгаем обратно в центр, имитируя
+    // бесконечную прокрутку без похода в сеть.
+    const weekCarousel = document.getElementById("week-carousel");
+
+    function recenterWeekCarousel() {
+      weekCarousel.scrollLeft = weekCarousel.clientWidth;
+    }
+
+    let weekScrollTimer = null;
+    weekCarousel.addEventListener("scroll", () => {
+      clearTimeout(weekScrollTimer);
+      weekScrollTimer = setTimeout(onWeekCarouselSettled, 150);
+    });
+
+    function onWeekCarouselSettled() {
+      const pageWidth = weekCarousel.clientWidth;
+      if (!pageWidth) return;
+      const index = Math.round(weekCarousel.scrollLeft / pageWidth); // 0=пред., 1=тек., 2=след.
+      if (index === 1) return;
+      weekStart = addDaysIso(weekStart, (index === 0 ? -1 : 1) * 7);
+      selectedWeekDate = null;
+      renderWeekCarousel();
+      recenterWeekCarousel();
+      renderWeekDetail();
+      updateDayLabel();
+    }
+
+    const MONTH_NAMES = [
+      "январь", "февраль", "март", "апрель", "май", "июнь",
+      "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
+    ];
+
+    function monthLabelForWeek(wStart) {
+      const endIso = addDaysIso(wStart, 6);
+      const startMonth = parseInt(wStart.slice(5, 7), 10) - 1;
+      const endMonth = parseInt(endIso.slice(5, 7), 10) - 1;
+      if (startMonth === endMonth) return MONTH_NAMES[startMonth];
+      return `${MONTH_NAMES[startMonth]} — ${MONTH_NAMES[endMonth]}`;
+    }
 
     const _dayLabels = ["Вчера", "Сегодня", "Неделя"];
     const carousel = document.getElementById("day-carousel");
@@ -765,7 +814,11 @@
 
     function updateDayLabel() {
       const index = Math.round(carousel.scrollLeft / carousel.clientWidth);
-      dayLabel.textContent = _dayLabels[index] ?? "Сегодня";
+      if (index === 2 && weekStart) {
+        dayLabel.textContent = `Неделя, ${monthLabelForWeek(weekStart)}`;
+      } else {
+        dayLabel.textContent = _dayLabels[index] ?? "Сегодня";
+      }
       dayDots.forEach((dot, i) => dot.classList.toggle("active", i === index));
     }
 
