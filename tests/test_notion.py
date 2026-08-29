@@ -1,6 +1,11 @@
 from datetime import date
 
-from src.integrations.notion import _build_task_properties, _read_text, _write_text_property
+from src.integrations.notion import (
+    _build_task_properties,
+    _is_archived,
+    _read_text,
+    _write_text_property,
+)
 
 _FULL_SELECT_SCHEMA = {
     "Name": {"type": "title"},
@@ -87,3 +92,27 @@ def test_write_text_property_rich_text_fallback():
     assert _write_text_property(schema, "archived") == {
         "rich_text": [{"text": {"content": "archived"}}]
     }
+
+
+def test_write_text_property_multi_select():
+    schema = {"type": "multi_select"}
+    assert _write_text_property(schema, "archived") == {"multi_select": [{"name": "archived"}]}
+
+
+def test_read_text_supports_multi_select():
+    prop = {"multi_select": [{"name": "urgent"}, {"name": "archived"}]}
+    assert _read_text(prop) == "urgent, archived"
+
+
+def test_is_archived_single_tag():
+    assert _is_archived("archived") is True
+    assert _is_archived("active") is False
+
+
+def test_is_archived_among_multiple_tags():
+    assert _is_archived("urgent, archived") is True
+    assert _is_archived("urgent, important") is False
+
+
+def test_is_archived_empty():
+    assert _is_archived("") is False

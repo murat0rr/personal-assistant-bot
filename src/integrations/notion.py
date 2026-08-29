@@ -62,6 +62,13 @@ def _build_task_properties(
     return properties
 
 
+def _is_archived(task_status: str) -> bool:
+    """TaskStatus может быть multi_select (несколько тегов через запятую) —
+    проверяем членство "archived" среди тегов, а не точное равенство."""
+    tags = {tag.strip().lower() for tag in task_status.split(",")}
+    return "archived" in tags
+
+
 def parse_task_page(page: dict[str, Any]) -> dict[str, Any]:
     """Распарсить страницу Notion в плоский словарь для кэша в Postgres."""
     props = page["properties"]
@@ -230,6 +237,8 @@ def _read_text(prop: dict[str, Any] | None) -> str:
         return prop["select"]["name"]
     if prop.get("status"):
         return prop["status"]["name"]
+    if "multi_select" in prop:
+        return ", ".join(item["name"] for item in prop["multi_select"])
     if "title" in prop:
         return "".join(part["plain_text"] for part in prop["title"])
     return ""
@@ -237,12 +246,14 @@ def _read_text(prop: dict[str, Any] | None) -> str:
 
 def _write_text_property(prop_schema: dict[str, Any], value: str) -> dict[str, Any]:
     """Как _write_number, но для текстовых значений — под фактический тип
-    свойства (Select/Status/Text)."""
+    свойства (Select/Status/Multi-select/Text)."""
     prop_type = prop_schema["type"]
     if prop_type == "status":
         return {"status": {"name": value}}
     if prop_type == "select":
         return {"select": {"name": value}}
+    if prop_type == "multi_select":
+        return {"multi_select": [{"name": value}]}
     return {"rich_text": [{"text": {"content": value}}]}
 
 
@@ -363,7 +374,7 @@ async def list_tasks() -> list[dict[str, Any]]:
         response = await _client.data_sources.query(**kwargs)
         for page in response["results"]:
             parsed = parse_task_page(page)
-            if parsed["task_status"].lower() != "archived":
+            if not _is_archived(parsed["task_status"]):
                 tasks.append(parsed)
         if not response.get("has_more"):
             break
