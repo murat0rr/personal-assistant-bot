@@ -12,7 +12,6 @@ from src.adapters.tasker_webhook import router as tasker_webhook_router
 from src.core.auth import is_authorized
 from src.core.config import settings
 from src.core.db import async_session
-from src.core.notion_sync import sync_tasks_from_notion
 from src.core.telegram_auth import verify_miniapp_init_data
 from src.handlers.f8_habits import check_habit
 from src.handlers.miniapp_tasks import build_task_board
@@ -56,11 +55,10 @@ class SetDueDateRequest(BaseModel):
 
 @app.get("/miniapp/api/tasks")
 async def list_tasks(_: dict = Depends(get_authorized_user)) -> dict:
-    # Открытие Mini App — это и есть "триггер": подтягиваем актуальные
-    # данные из Notion перед тем, как отдать список (без спама в Telegram —
-    # пользователь и так смотрит на список прямо сейчас).
-    await sync_tasks_from_notion(notify_on_change=False)
-
+    # Никакого похода в Notion здесь — только чтение локального кэша,
+    # чтобы открытие Mini App было мгновенным. Кэш держит свежим плановая
+    # джоба раз в 10 минут (src/scheduler/jobs.py::_sync_tasks_job) плюс
+    # мутации из самого Mini App пишут в кэш сразу же.
     async with async_session() as session:
         result = await session.execute(select(Task))
         tasks = result.scalars().all()
@@ -150,6 +148,10 @@ async def briefing(_: dict = Depends(get_authorized_user)) -> dict:
     return {"weather": await get_weather_summary()}
 
 
+class CreateHabitRequest(BaseModel):
+    name: str
+
+
 @app.get("/miniapp/api/habits")
 async def list_habits_endpoint(_: dict = Depends(get_authorized_user)) -> list[dict]:
     if not settings.notion_habits_db_id:
@@ -163,6 +165,14 @@ async def list_habits_endpoint(_: dict = Depends(get_authorized_user)) -> list[d
         }
         for h in habits
     ]
+
+
+@app.post("/miniapp/api/habits")
+async def create_habit_endpoint(
+    payload: CreateHabitRequest, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    _page_id, url = await notion.create_habit(payload.name)
+    return {"status": "ok", "url": url}
 
 
 @app.post("/miniapp/api/habits/{page_id}/check")

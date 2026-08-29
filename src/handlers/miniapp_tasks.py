@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from src.integrations.notion import DONE_STATUS_CANDIDATES
 from src.models.task import Task
@@ -25,17 +25,31 @@ def _serialize(task: Task) -> dict:
     }
 
 
+def _day_tasks(tasks: list[Task], target: date) -> list[dict]:
+    return [
+        _serialize(t) for t in sorted((t for t in tasks if t.due_date == target), key=_sort_key)
+    ]
+
+
 def build_task_board(tasks: list[Task], today: date) -> dict:
-    """ "Задачи на день" — строго due_date == today, невыполненные сверху по
-    приоритету, выполненные внизу. "Инбокс" — просроченные невыполненные
-    задачи + вообще все задачи без даты (независимо от статуса). Чистая
-    функция — тестируется офлайн, тот же паттерн, что build_morning_digest_text."""
-    todays = sorted((t for t in tasks if t.due_date == today), key=_sort_key)
+    """Три пролистываемых дня (вчера/сегодня/завтра) — строго по due_date,
+    невыполненные сверху по приоритету, выполненные внизу. "Инбокс" —
+    просроченные невыполненные задачи (любая дата в прошлом, не только
+    вчера) + все задачи без даты, независимо от статуса. Чистая функция —
+    тестируется офлайн, тот же паттерн, что build_morning_digest_text."""
+    yesterday = today - timedelta(days=1)
+    tomorrow = today + timedelta(days=1)
+
     inbox = sorted(
         (t for t in tasks if t.due_date is None or (t.due_date < today and not _is_done(t))),
         key=_sort_key,
     )
+
     return {
-        "today": [_serialize(t) for t in todays],
+        "days": {
+            "yesterday": {"date": yesterday.isoformat(), "tasks": _day_tasks(tasks, yesterday)},
+            "today": {"date": today.isoformat(), "tasks": _day_tasks(tasks, today)},
+            "tomorrow": {"date": tomorrow.isoformat(), "tasks": _day_tasks(tasks, tomorrow)},
+        },
         "inbox": [_serialize(t) for t in inbox],
     }

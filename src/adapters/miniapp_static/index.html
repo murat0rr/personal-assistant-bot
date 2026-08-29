@@ -71,7 +71,9 @@
       flex: 1;
       font-size: 15px;
       min-width: 0;
-      overflow-wrap: break-word;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .title.done {
       color: var(--text-muted);
@@ -96,6 +98,7 @@
       background: var(--card-bg);
       color: var(--text);
       font-size: 15px;
+      min-width: 0;
     }
     .add-row input::placeholder { color: var(--text-muted); }
     .icon-btn {
@@ -105,7 +108,9 @@
       height: 40px;
       background: var(--accent);
       color: var(--accent-text);
-      font-size: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       flex-shrink: 0;
     }
     .small-btn {
@@ -115,7 +120,9 @@
       width: 30px;
       height: 30px;
       flex-shrink: 0;
-      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       position: relative;
       padding: 0;
     }
@@ -128,18 +135,56 @@
       border: none;
       padding: 0;
     }
-    .digest { padding: 12px 14px; font-size: 14px; color: var(--text-muted); }
     .trash-btn { color: #e2504a; }
+    .day-carousel {
+      display: flex;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      border-radius: 12px;
+    }
+    .day-carousel::-webkit-scrollbar { display: none; }
+    .day-page {
+      flex: 0 0 100%;
+      min-width: 100%;
+      scroll-snap-align: start;
+    }
+    .day-page .list { border-radius: 12px; }
+    .day-dots {
+      display: flex;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .day-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      opacity: 0.35;
+    }
+    .day-dot.active { opacity: 1; }
+    .digest { padding: 12px 14px; font-size: 14px; color: var(--text-muted); }
     button:disabled { opacity: 0.5; }
   </style>
 </head>
 <body>
   <div class="section">
-    <p class="section-label">Задачи на день</p>
-    <div id="today-list" class="list"></div>
+    <p class="section-label" id="day-label">Сегодня</p>
+    <div class="day-carousel" id="day-carousel">
+      <div class="day-page"><div id="yesterday-list" class="list"></div></div>
+      <div class="day-page"><div id="today-list" class="list"></div></div>
+      <div class="day-page"><div id="tomorrow-list" class="list"></div></div>
+    </div>
+    <div class="day-dots">
+      <span class="day-dot" data-index="0"></span>
+      <span class="day-dot active" data-index="1"></span>
+      <span class="day-dot" data-index="2"></span>
+    </div>
     <div class="add-row">
-      <input id="new-task-input" type="text" placeholder="Новая задача" />
-      <button id="add-task-btn" class="icon-btn" aria-label="Добавить задачу">+</button>
+      <input id="new-task-input" type="text" placeholder="Новая задача на сегодня" />
+      <button id="add-task-btn" class="icon-btn" aria-label="Добавить задачу"></button>
     </div>
   </div>
 
@@ -156,6 +201,10 @@
   <div class="section">
     <p class="section-label">Привычки</p>
     <div id="habit-list" class="list"></div>
+    <div class="add-row">
+      <input id="new-habit-input" type="text" placeholder="Новая привычка" />
+      <button id="add-habit-btn" class="icon-btn" aria-label="Добавить привычку"></button>
+    </div>
   </div>
 
   <script>
@@ -178,9 +227,30 @@
       return res.json();
     }
 
+    function icon(inner, size) {
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="${size}" height="${size}">${inner}</svg>`;
+    }
     function checkIcon() {
       return '<svg viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     }
+    function calendarIcon() {
+      return icon(
+        '<rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/>',
+        16
+      );
+    }
+    function trashIcon() {
+      return icon(
+        '<line x1="4" y1="7" x2="20" y2="7"/><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/><path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"/>',
+        16
+      );
+    }
+    function plusIcon() {
+      return icon('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>', 18);
+    }
+
+    document.getElementById("add-task-btn").innerHTML = plusIcon();
+    document.getElementById("add-habit-btn").innerHTML = plusIcon();
 
     function renderTaskRow(task, { showDateButton, showTrashButton }) {
       const row = document.createElement("div");
@@ -221,7 +291,7 @@
         const dateBtn = document.createElement("button");
         dateBtn.className = "small-btn";
         dateBtn.setAttribute("aria-label", "Поставить дату");
-        dateBtn.textContent = "📅";
+        dateBtn.innerHTML = calendarIcon();
 
         const dateInput = document.createElement("input");
         dateInput.type = "date";
@@ -248,9 +318,8 @@
         const trashBtn = document.createElement("button");
         trashBtn.className = "small-btn trash-btn";
         trashBtn.setAttribute("aria-label", "Удалить задачу");
-        trashBtn.textContent = "🗑";
+        trashBtn.innerHTML = trashIcon();
         trashBtn.onclick = async () => {
-          if (!confirm(`Удалить «${task.title}»?`)) return;
           trashBtn.disabled = true;
           try {
             await api(`/miniapp/api/tasks/${encodeURIComponent(task.notion_page_id)}/archive`, {
@@ -281,15 +350,19 @@
       tasks.forEach((t) => container.append(renderTaskRow(t, opts)));
     }
 
+    const _dayNoTrashDate = { showDateButton: false, showTrashButton: false };
+
     async function loadTasks() {
-      const todayEl = document.getElementById("today-list");
       const inboxEl = document.getElementById("inbox-list");
       try {
         const board = await api("/miniapp/api/tasks");
-        renderList(todayEl, board.today, { showDateButton: false, showTrashButton: false });
+        renderList(document.getElementById("yesterday-list"), board.days.yesterday.tasks, _dayNoTrashDate);
+        renderList(document.getElementById("today-list"), board.days.today.tasks, _dayNoTrashDate);
+        renderList(document.getElementById("tomorrow-list"), board.days.tomorrow.tasks, _dayNoTrashDate);
         renderList(inboxEl, board.inbox, { showDateButton: true, showTrashButton: true });
       } catch (e) {
-        todayEl.innerHTML = '<div class="empty">Не удалось загрузить задачи.</div>';
+        document.getElementById("today-list").innerHTML =
+          '<div class="empty">Не удалось загрузить задачи.</div>';
         inboxEl.innerHTML = "";
       }
     }
@@ -305,6 +378,7 @@
         input.value = "";
         tg?.HapticFeedback?.notificationOccurred("success");
         await loadTasks();
+        scrollToDay(1);
       } finally {
         btn.disabled = false;
       }
@@ -312,6 +386,32 @@
     document.getElementById("new-task-input").addEventListener("keydown", (e) => {
       if (e.key === "Enter") document.getElementById("add-task-btn").click();
     });
+
+    const _dayLabels = ["Вчера", "Сегодня", "Завтра"];
+    const carousel = document.getElementById("day-carousel");
+    const dayLabel = document.getElementById("day-label");
+    const dayDots = Array.from(document.querySelectorAll(".day-dot"));
+
+    function scrollToDay(index) {
+      carousel.scrollTo({ left: carousel.clientWidth * index, behavior: "smooth" });
+    }
+
+    function updateDayLabel() {
+      const index = Math.round(carousel.scrollLeft / carousel.clientWidth);
+      dayLabel.textContent = _dayLabels[index] ?? "Сегодня";
+      dayDots.forEach((dot, i) => dot.classList.toggle("active", i === index));
+    }
+
+    let _scrollTimeout;
+    carousel.addEventListener("scroll", () => {
+      clearTimeout(_scrollTimeout);
+      _scrollTimeout = setTimeout(updateDayLabel, 80);
+    });
+    dayDots.forEach((dot) => {
+      dot.addEventListener("click", () => scrollToDay(Number(dot.dataset.index)));
+    });
+    // Стартуем сразу на "сегодня" (страница 1), без анимации.
+    carousel.scrollLeft = carousel.clientWidth;
 
     async function loadDigest() {
       const el = document.getElementById("digest");
@@ -336,9 +436,10 @@
       streak.textContent = `${habit.streak} дн.`;
 
       const btn = document.createElement("button");
-      btn.className = "small-btn";
+      btn.className = "checkbox";
       btn.setAttribute("aria-label", "Отметить");
-      btn.textContent = "✓";
+      btn.innerHTML = checkIcon();
+      btn.querySelector("svg").style.display = "block";
       btn.onclick = async () => {
         btn.disabled = true;
         try {
@@ -347,6 +448,7 @@
             { method: "POST" }
           );
           streak.textContent = `${result.streak} дн.`;
+          btn.classList.add("done");
           tg?.HapticFeedback?.notificationOccurred("success");
         } finally {
           btn.disabled = false;
@@ -371,6 +473,25 @@
         el.innerHTML = '<div class="empty">Не удалось загрузить привычки.</div>';
       }
     }
+
+    document.getElementById("add-habit-btn").onclick = async () => {
+      const input = document.getElementById("new-habit-input");
+      const value = input.value.trim();
+      if (!value) return;
+      const btn = document.getElementById("add-habit-btn");
+      btn.disabled = true;
+      try {
+        await api("/miniapp/api/habits", { method: "POST", body: JSON.stringify({ name: value }) });
+        input.value = "";
+        tg?.HapticFeedback?.notificationOccurred("success");
+        await loadHabits();
+      } finally {
+        btn.disabled = false;
+      }
+    };
+    document.getElementById("new-habit-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") document.getElementById("add-habit-btn").click();
+    });
 
     loadTasks();
     loadDigest();

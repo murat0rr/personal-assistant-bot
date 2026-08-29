@@ -4,6 +4,8 @@ from src.handlers.miniapp_tasks import build_task_board
 from src.models.task import Task
 
 _TODAY = date(2026, 8, 29)
+_YESTERDAY = date(2026, 8, 28)
+_TOMORROW = date(2026, 8, 30)
 
 
 def _task(
@@ -21,15 +23,21 @@ def _task(
     )
 
 
-def test_today_only_includes_tasks_due_today():
+def test_days_split_by_exact_due_date():
     tasks = [
+        _task("вчера", _YESTERDAY),
         _task("сегодня", _TODAY),
-        _task("завтра", date(2026, 8, 30)),
-        _task("вчера", date(2026, 8, 28)),
+        _task("завтра", _TOMORROW),
+        _task("позавчера", date(2026, 8, 20)),
         _task("без даты", None),
     ]
     board = build_task_board(tasks, _TODAY)
-    assert [t["title"] for t in board["today"]] == ["сегодня"]
+    assert [t["title"] for t in board["days"]["yesterday"]["tasks"]] == ["вчера"]
+    assert [t["title"] for t in board["days"]["today"]["tasks"]] == ["сегодня"]
+    assert [t["title"] for t in board["days"]["tomorrow"]["tasks"]] == ["завтра"]
+    assert board["days"]["yesterday"]["date"] == "2026-08-28"
+    assert board["days"]["today"]["date"] == "2026-08-29"
+    assert board["days"]["tomorrow"]["date"] == "2026-08-30"
 
 
 def test_inbox_includes_overdue_undone_and_all_undated():
@@ -45,16 +53,18 @@ def test_inbox_includes_overdue_undone_and_all_undated():
     assert titles == {"просрочена не сделана", "без даты не сделана", "без даты сделана"}
 
 
-def test_today_sorted_by_priority_undone_first():
+def test_day_sorted_by_priority_undone_first():
     tasks = [
         _task("низкий", _TODAY, priority="низкий"),
         _task("высокий", _TODAY, priority="высокий"),
         _task("выполнена", _TODAY, priority="высокий", status="Done"),
     ]
     board = build_task_board(tasks, _TODAY)
-    titles = [t["title"] for t in board["today"]]
+    titles = [t["title"] for t in board["days"]["today"]["tasks"]]
     assert titles == ["высокий", "низкий", "выполнена"]
 
 
 def test_empty_board():
-    assert build_task_board([], _TODAY) == {"today": [], "inbox": []}
+    board = build_task_board([], _TODAY)
+    assert board["days"]["today"]["tasks"] == []
+    assert board["inbox"] == []

@@ -294,6 +294,22 @@ def parse_habit_page(page: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def create_habit(name: str) -> tuple[str, str]:
+    data_source_id, schema = await _get_data_source(settings.notion_habits_db_id)
+    properties: dict[str, Any] = {
+        "Name": {"title": [{"text": {"content": name}}]},
+    }
+    if "Streak" in schema:
+        properties["Streak"] = _write_number(schema["Streak"], 0)
+    if "Target frequency" in schema:
+        properties["Target frequency"] = _write_text_property(schema["Target frequency"], "daily")
+    page = await _client.pages.create(
+        parent={"type": "data_source_id", "data_source_id": data_source_id},
+        properties=properties,
+    )
+    return page["id"], page["url"]
+
+
 async def list_habits() -> list[dict[str, Any]]:
     data_source_id, _ = await _get_data_source(settings.notion_habits_db_id)
     habits: list[dict[str, Any]] = []

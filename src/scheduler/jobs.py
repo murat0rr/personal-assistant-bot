@@ -8,6 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import BaseStorage, StorageKey
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 
 from src.core.config import settings
@@ -25,8 +26,11 @@ from src.models.screen_time import ScreenTime
 logger = logging.getLogger(__name__)
 
 
-async def _daily_sync() -> None:
-    logger.info("Запуск дневного синка задач из Notion")
+async def _sync_tasks_job() -> None:
+    # Держит Postgres-кэш задач свежим для Mini App (там теперь чтение без
+    # похода в Notion, чтобы приложение открывалось мгновенно) и ловит
+    # изменения, сделанные прямо в Notion (не через бота/Mini App).
+    logger.info("Синк задач из Notion")
     await sync_tasks_from_notion(notify_on_change=True)
 
 
@@ -126,7 +130,7 @@ async def _habit_reminders(bot: Bot) -> None:
 
 def setup_scheduler(bot: Bot, storage: BaseStorage) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
-    scheduler.add_job(_daily_sync, CronTrigger(hour=3, minute=0))
+    scheduler.add_job(_sync_tasks_job, IntervalTrigger(minutes=10))
     scheduler.add_job(_morning_digest, CronTrigger(hour=8, minute=0), args=[bot])
     scheduler.add_job(_reminders_job, CronTrigger(hour=8, minute=0), args=[bot])
     scheduler.add_job(_screen_time_digest, CronTrigger(hour=8, minute=0), args=[bot])
