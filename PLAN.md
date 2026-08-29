@@ -145,7 +145,19 @@ F6 не отдельный сценарий — расширение кнопк�
 брифинг — одно сообщение со всем сразу.
 
 ### Phase 8 — Deployment & CI/CD
-См. отдельное обсуждение (следующий шаг после этого документа).
+VPS — Timeweb Cloud (Амстердам/Франкфурт, оплата из России, сервер за
+рубежом — нужно для доступа к Telegram/Notion/Claude-прокси). Домен —
+reg.ru. HTTPS — уже готовый Caddy (`Caddyfile` теперь читает `DOMAIN` из
+`.env`). CI/CD — GitHub Actions (`.github/workflows/deploy.yml`): пуш в
+`master` → SSH на сервер → `alembic upgrade head` → `docker compose up
+--build -d`.
+
+Пошаговый runbook (аренда VPS, домен, первичная настройка сервера,
+перенос `.env`, переключение BotFather/MacroDroid на новый домен,
+GitHub-секреты) — в `DEPLOY.md`.
+
+**Готово когда:** бот отвечает на `/start` уже с публичного домена по
+HTTPS; `git push` в `master` сам доезжает до сервера без ручных команд.
 
 ## Конфигурация (.env)
 
