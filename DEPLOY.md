@@ -3,6 +3,22 @@
 Runbook для первого деплоя и настройки CI/CD. Контекст и обоснование
 выбора провайдеров — в `docs/PLAN.md`, Phase 8.
 
+## Текущее состояние (актуально)
+
+- **Сервер**: `85.137.24.126` (тариф FIN-HL-02, Ubuntu 24.04 LTS,
+  ~1.9 ГБ RAM + swap), код в `/opt/assistant`, доступ по SSH-ключу
+  (`~/.ssh/assistant_vps` на локальной машине).
+- **Домен**: `287973.hosted-by-kvmka.com` — выдан провайдером
+  автоматически. На момент деплоя ещё не резолвился (NXDOMAIN) — Caddy
+  сам ретраит получение сертификата в фоне раз в 1-2 минуты; проверить
+  `nslookup 287973.hosted-by-kvmka.com` и панель провайдера, если долго
+  не появляется.
+- **GitHub**: [github.com/murat0rr/personal-assistant-bot](https://github.com/murat0rr/personal-assistant-bot)
+  (публичный), автодеплой настроен — секреты `VPS_HOST`/`VPS_USER`/
+  `VPS_SSH_KEY` добавлены, `git push` в `master` доезжает до сервера сам.
+- Локальный докер на Windows-машине остановлен — сервер единственный
+  поллер Telegram (два инстанса конфликтуют за `getUpdates`).
+
 ## 1. Аренда VPS
 
 [Timeweb Cloud](https://timeweb.cloud/services/cloud-servers) — облачный
@@ -13,81 +29,89 @@ Runbook для первого деплоя и настройки CI/CD. Конт
 После создания сохрани:
 
 - IP-адрес сервера
-- root-пароль или SSH-ключ (если Timeweb предложит сгенерировать —
-  используй его; если нет — сгенерируй свой: `ssh-keygen -t ed25519 -C "assistant-vps"`
-  и добавь публичный ключ при создании сервера)
+- root-пароль или SSH-ключ
+
+Если вход был по паролю — сразу после первого подключения добавь
+SSH-ключ и переключись на него (см. ниже), пароль после этого стоит
+сменить в панели провайдера.
 
 ## 2. Домен
 
-Купи домен на [reg.ru](https://www.reg.ru) (зона `.ru` — самая дешёвая).
-В панели управления доменом добавь DNS-запись:
+Либо купи домен на [reg.ru](https://www.reg.ru) (зона `.ru` — самая
+дешёвая) и добавь DNS A-запись на IP сервера, либо используй домен,
+который автоматически выдал сам VPS-провайдер (как в этом деплое) — тогда
+просто дождись, пока он зарезолвится (может занять время после открытия
+сервера). Проверить: `nslookup <домен>`.
 
-```
-Тип: A
-Имя: @ (или пусто — на корень домена)
-Значение: <IP сервера>
-```
+## 3. Первичная настройка сервера + перенос кода
 
-DNS распространяется не мгновенно (от нескольких минут до пары часов) —
-можно проверить командой `nslookup <домен>`.
-
-## 3. Первичная настройка сервера
-
-Сначала нужен сам git-репозиторий на GitHub (см. шаг 6) — либо клонируй
-скрипт `setup_server.sh` на сервер вручную сейчас, а репозиторий подтянешь
-позже. Подключись по SSH:
+Подключись по SSH (по ключу, если он уже добавлен в
+`~/.ssh/authorized_keys`; иначе один раз по паролю, затем добавь ключ и
+больше пароль не используй):
 
 ```bash
-ssh root@<IP сервера>
+ssh -i ~/.ssh/<твой_ключ> root@<IP сервера>
 ```
 
-Скопируй `scripts/setup_server.sh` на сервер (или создай там же через
-`nano`/`vim`, содержимое — в репозитории), затем:
+Установи Docker, git, ufw (см. `scripts/setup_server.sh` для готового
+скрипта на случай новой машины). Если репозиторий на GitHub уже есть —
+клонируй обычным образом. Если ещё нет (как было в этом деплое) — перенеси
+код напрямую с локальной машины через `git archive` (не тянет `.venv`/
+`.env`/что-либо игнорируемое git):
 
 ```bash
-chmod +x setup_server.sh
-./setup_server.sh git@github.com:<твой-user>/assistant.git
+cd <репозиторий локально>
+git archive --format=tar HEAD | ssh -i ~/.ssh/<ключ> root@<IP> "mkdir -p /opt/assistant && tar -x -C /opt/assistant"
 ```
 
-Скрипт ставит Docker, git, настраивает `ufw` (только 22/80/443) и
-клонирует репозиторий в `/opt/assistant`.
+Позже, когда репозиторий появится на GitHub, на сервере:
+
+```bash
+cd /opt/assistant
+git init && git remote add origin <URL репозитория>
+git fetch origin master && git reset --hard origin/master
+```
 
 ## 4. Перенос `.env` и первый запуск
 
 С локальной машины:
 
 ```bash
-scp .env root@<IP сервера>:/opt/assistant/.env
+scp -i ~/.ssh/<ключ> .env root@<IP сервера>:/opt/assistant/.env
 ```
 
 В скопированном `.env` на сервере добавь/проверь:
 
 ```
-DOMAIN=<твой домен, например assistant.ru>
+DOMAIN=<твой домен>
 ```
 
 На сервере:
 
 ```bash
 cd /opt/assistant
+docker compose up -d postgres redis
 docker compose run --rm bot uv run alembic upgrade head
 docker compose up --build -d
 docker compose logs bot --tail 30   # убедиться, что стартовало чисто
 ```
 
-Первый запуск Caddy может занять до минуты — он сам получает сертификат
-Let's Encrypt для `DOMAIN`. Проверь: `curl https://<домен>/health` должен
-вернуть `{"status":"ok"}`.
+Первый запуск Caddy может занять до минуты (или дольше, если домен ещё
+не резолвится — тогда он ретраит в фоне сам, без вмешательства). Проверь:
+`curl https://<домен>/health` должен вернуть `{"status":"ok"}`.
+
+**Важно**: если бот параллельно ещё крутится где-то ещё (например, на
+локальной машине разработки) — он словит `TelegramConflictError`, оба
+инстанса не могут одновременно поллить `getUpdates`. Останови старый
+(`docker compose down`) сразу после того, как новый поднялся.
 
 ## 5. Переключить интеграции на новый домен
 
 - **BotFather** → твой бот → Bot Settings → Menu Button → URL —
   поменять на `https://<домен>/miniapp/`
-- **MacroDroid** (F10, экранное время) — в макросе "Отправка" поменять
-  URL на `https://<домен>/webhooks/tasker/screen-time`
-- Локальный ngrok/докер на Windows-машине больше не нужен — можно
-  остановить (`docker compose down` на локальной машине), сервер теперь
-  главный.
+- **MacroDroid** (F10 — экранное время, F13 — гео-напоминания) — в
+  соответствующих макросах поменять URL на `https://<домен>/webhooks/tasker/screen-time`
+  и `https://<домен>/webhooks/tasker/location`
 
 ## 6. GitHub-репозиторий + CI/CD
 
@@ -95,7 +119,7 @@ Let's Encrypt для `DOMAIN`. Проверь: `curl https://<домен>/health
 чтобы не конфликтовать с локальной историей) и подключи:
 
 ```bash
-git remote add origin git@github.com:<твой-user>/assistant.git
+git remote add origin https://github.com/<твой-user>/<репо>.git
 git push -u origin master
 ```
 
@@ -108,18 +132,15 @@ variables → Actions → New repository secret:
 | `VPS_USER` | `root` (или другой пользователь с доступом к `/opt/assistant` и Docker) |
 | `VPS_SSH_KEY` | приватный SSH-ключ, у которого публичная пара — в `~/.ssh/authorized_keys` на сервере |
 
-Если ключа для деплоя ещё нет — сгенерируй отдельный (не тот, что для
-ручного входа):
+Можно переиспользовать тот же ключ, что и для ручного входа (как в этом
+деплое) — получить его содержимое:
 
 ```bash
-ssh-keygen -t ed25519 -f deploy_key -C "github-actions-deploy" -N ""
+cat ~/.ssh/<ключ>
 ```
 
-`deploy_key.pub` → на сервер: `ssh-copy-id -i deploy_key.pub root@<IP>`
-(или вручную дописать в `~/.ssh/authorized_keys`).
-`deploy_key` (приватный, без расширения) → содержимое файла целиком —
-в секрет `VPS_SSH_KEY`. Файл `deploy_key` после этого удали локально,
-он больше не нужен — публичный уже на сервере, приватный — в GitHub Secrets.
+Вставить целиком (включая строки `BEGIN`/`END`) как значение
+`VPS_SSH_KEY`.
 
 После этого — `.github/workflows/deploy.yml` уже в репозитории: любой
 `git push` в `master` сам подтянет изменения на сервер, прогонит миграции
