@@ -1,8 +1,10 @@
 from aiogram import Bot
 
 from src.core.config import settings
+from src.core.message_tracking import attach_message_tracking
 
 _bot = Bot(token=settings.telegram_bot_token)
+attach_message_tracking(_bot)
 
 
 async def notify_owner(text: str) -> None:

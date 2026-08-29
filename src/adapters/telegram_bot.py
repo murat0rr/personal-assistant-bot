@@ -9,6 +9,7 @@ from aiogram.types import Message
 
 from src.core.auth import is_authorized
 from src.core.config import settings
+from src.core.message_tracking import attach_message_tracking, track_incoming
 from src.core.notion_sync import sync_tasks_from_notion
 from src.core.orchestrator import router as orchestrator_router
 from src.handlers.f4_diary import router as diary_router
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 # идти как раз в момент деплоя); без REDIS_URL откатываемся на память.
 storage = RedisStorage.from_url(settings.redis_url) if settings.redis_url else MemoryStorage()
 dp = Dispatcher(storage=storage)
+dp.message.outer_middleware(track_incoming)
 
 # diary_router — раньше orchestrator_router: пока активен FSM-опрос,
 # текстовые ответы должны ловиться по state, а не падать в общий capture.
@@ -38,6 +40,7 @@ async def handle_start(message: Message) -> None:
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     bot = Bot(token=settings.telegram_bot_token)
+    attach_message_tracking(bot)
 
     if settings.notion_tasks_db_id:
         # Разовый синк сразу при старте (без уведомлений — иначе каждый
