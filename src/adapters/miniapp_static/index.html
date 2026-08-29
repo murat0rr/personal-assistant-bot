@@ -160,6 +160,7 @@
       margin-top: 8px;
     }
     .day-dot {
+      display: block;
       width: 6px;
       height: 6px;
       border-radius: 50%;
@@ -191,7 +192,7 @@
     .week-cell.today { border-color: var(--accent); }
     .wc-label { font-size: 11px; color: var(--text-muted); }
     .wc-num { font-size: 14px; font-weight: 500; color: var(--text); }
-    .week-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .week-dot { display: block; width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
     .week-dot.empty { border: 1px solid var(--text-muted); background: transparent; }
     .week-dot.dim { background: var(--accent); opacity: 0.35; }
     .week-dot.medium { background: var(--accent); opacity: 0.65; }
