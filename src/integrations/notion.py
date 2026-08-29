@@ -114,7 +114,21 @@ async def create_task(
     return page["url"]
 
 
-async def create_diary_entry(entry_date: date, answers_text: str, summary_text: str) -> str:
+_RATING_PROPERTY_NAMES = {
+    "physical": "Physical",
+    "social": "Social",
+    "productivity": "Productivity",
+    "happiness": "Happiness",
+}
+
+
+async def create_diary_entry(
+    entry_date: date,
+    ratings: dict[str, int],
+    highlight: str | None,
+    reflection: str | None,
+    summary: str | None,
+) -> str:
     """Записать вечерний дневник. Поля заполняются, только если реально
     есть в схеме базы — тот же адаптивный паттерн, что у create_task."""
     data_source_id, schema = await _get_data_source(settings.notion_diary_db_id)
@@ -123,10 +137,19 @@ async def create_diary_entry(entry_date: date, answers_text: str, summary_text: 
     }
     if "Date" in schema:
         properties["Date"] = {"date": {"start": entry_date.isoformat()}}
-    if "Answers" in schema:
-        properties["Answers"] = {"rich_text": [{"text": {"content": answers_text[:2000]}}]}
-    if "Summary" in schema:
-        properties["Summary"] = {"rich_text": [{"text": {"content": summary_text[:2000]}}]}
+
+    for field, notion_name in _RATING_PROPERTY_NAMES.items():
+        value = ratings.get(field)
+        if notion_name in schema and value is not None:
+            properties[notion_name] = {"number": value}
+
+    if highlight and "Highlight" in schema:
+        properties["Highlight"] = {"rich_text": [{"text": {"content": highlight[:2000]}}]}
+    if reflection and "Reflection" in schema:
+        properties["Reflection"] = {"rich_text": [{"text": {"content": reflection[:2000]}}]}
+    if summary and "Summary" in schema:
+        properties["Summary"] = {"rich_text": [{"text": {"content": summary[:2000]}}]}
+
     page = await _client.pages.create(
         parent={"type": "data_source_id", "data_source_id": data_source_id},
         properties=properties,

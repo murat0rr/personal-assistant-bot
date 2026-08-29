@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
+_RATING_FIELDS = ("physical", "social", "productivity", "happiness")
+
 
 class DiaryStates(StatesGroup):
     physical = State()
@@ -40,13 +42,13 @@ _QUESTIONS: list[tuple[State, str, str, State | None]] = [
     (DiaryStates.happiness, "Общее счастье сегодня (1-3)?", "rating", DiaryStates.highlight),
     (
         DiaryStates.highlight,
-        "Была ли сегодня какая-то особенность? (можно пропустить — просто отправь «-»)",
+        "Была ли сегодня какая-то особенность?",
         "text",
         DiaryStates.reflection,
     ),
     (
         DiaryStates.reflection,
-        "Есть что осмыслить/отрефлексировать за день? (можно «-»)",
+        "Есть что осмыслить/отрефлексировать за день?",
         "text",
         None,
     ),
@@ -60,23 +62,24 @@ _FIELD_NAMES = {
     DiaryStates.highlight: "highlight",
     DiaryStates.reflection: "reflection",
 }
-_LABELS = {
-    "physical": "Физическая активность",
-    "social": "Социальная активность",
-    "productivity": "Продуктивность",
-    "happiness": "Общее счастье",
-    "highlight": "Особенность дня",
-    "reflection": "Рефлексия",
-}
+_STATE_BY_FIELD = {name: state for state, name in _FIELD_NAMES.items()}
 
 
 def _rating_keyboard(field: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text=str(v), callback_data=f"diary:{field}:{v}")
+                InlineKeyboardButton(text=str(v), callback_data=f"diary:rate:{field}:{v}")
                 for v in (1, 2, 3)
             ]
+        ]
+    )
+
+
+def _skip_keyboard(field: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Пропустить", callback_data=f"diary:skip:{field}")]
         ]
     )
 
@@ -84,7 +87,7 @@ def _rating_keyboard(field: str) -> InlineKeyboardMarkup:
 async def ask_question(bot: Bot, state: FSMContext, target: State) -> None:
     _, text, kind, _ = _QUESTIONS_BY_STATE[target]
     field = _FIELD_NAMES[target]
-    reply_markup = _rating_keyboard(field) if kind == "rating" else None
+    reply_markup = _rating_keyboard(field) if kind == "rating" else _skip_keyboard(field)
     await bot.send_message(chat_id=settings.telegram_user_id, text=text, reply_markup=reply_markup)
     await state.set_state(target)
 
@@ -101,13 +104,16 @@ async def _finish(bot: Bot, state: FSMContext) -> None:
     data = await state.get_data()
     today = datetime.now(ZoneInfo(settings.timezone)).date()
 
-    answers_text = "\n".join(
-        f"{_LABELS[field]}: {data.get(field, '-')}" for field in _FIELD_NAMES.values()
-    )
+    ratings = {field: data.get(field) for field in _RATING_FIELDS}
+    highlight = data.get("highlight") or None
+    reflection = data.get("reflection") or None
 
     try:
-        summary = await summarize_diary(answers_text)
-        url = await create_diary_entry(today, answers_text, summary)
+        summary = None
+        if highlight or reflection:
+            text_for_summary = "\n".join(part for part in (highlight, reflection) if part)
+            summary = await summarize_diary(text_for_summary)
+        url = await create_diary_entry(today, ratings, highlight, reflection, summary)
     except Exception:
         logger.exception("Не удалось сохранить дневник за %s", today)
         await bot.send_message(
@@ -117,15 +123,16 @@ async def _finish(bot: Bot, state: FSMContext) -> None:
         await state.clear()
         return
 
-    await bot.send_message(
-        chat_id=settings.telegram_user_id,
-        text=f"Записал дневник за {today.strftime('%d.%m.%Y')}.\n{summary}\n{url}",
-    )
+    reply = f"Записал дневник за {today.strftime('%d.%m.%Y')}."
+    if summary:
+        reply += f"\n{summary}"
+    reply += f"\n{url}"
+    await bot.send_message(chat_id=settings.telegram_user_id, text=reply)
     await state.clear()
 
 
 @router.callback_query(F.data.startswith("diary:"))
-async def handle_rating(callback: CallbackQuery, state: FSMContext) -> None:
+async def handle_button(callback: CallbackQuery, state: FSMContext) -> None:
     if not callback.from_user or not is_authorized(callback.from_user.id):
         await callback.answer("Недоступно", show_alert=True)
         return
@@ -136,16 +143,23 @@ async def handle_rating(callback: CallbackQuery, state: FSMContext) -> None:
     ):
         return
 
-    _, field, value = callback.data.split(":")
+    parts = callback.data.split(":")
+    action, field = parts[1], parts[2]
     current = await state.get_state()
+    current_state_obj = _STATE_BY_FIELD.get(field)
 
-    current_state_obj = next((s for s, name in _FIELD_NAMES.items() if name == field), None)
     if current_state_obj is None or current != current_state_obj.state:
         await callback.answer("Этот вопрос уже неактуален", show_alert=True)
         return
 
-    await state.update_data(**{field: int(value)})
-    await callback.answer(f"Отмечено: {value}")
+    if action == "rate":
+        value = int(parts[3])
+        await state.update_data(**{field: value})
+        await callback.answer(f"Отмечено: {value}")
+    else:
+        await state.update_data(**{field: ""})
+        await callback.answer("Пропущено")
+
     await callback.message.edit_reply_markup(reply_markup=None)
     await _advance(callback.message.bot, state, current_state_obj)
 
@@ -163,6 +177,5 @@ async def handle_text_answer(message: Message, state: FSMContext) -> None:
         return
 
     field = _FIELD_NAMES[current_state_obj]
-    answer = message.text or ""
-    await state.update_data(**{field: "-" if answer.strip() == "-" else answer})
+    await state.update_data(**{field: message.text or ""})
     await _advance(message.bot, state, current_state_obj)
