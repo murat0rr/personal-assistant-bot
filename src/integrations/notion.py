@@ -104,14 +104,16 @@ async def create_task(
     due_date: date | None,
     priority: str,
     source: str = "F1",
-) -> str:
+) -> tuple[str, str]:
+    """Возвращает (notion_page_id, url) — page_id нужен вызывающему коду,
+    чтобы завести соответствующую строку в локальном Postgres-кэше."""
     data_source_id, schema = await _get_data_source(settings.notion_tasks_db_id)
     properties = _build_task_properties(title, due_date, priority, source, schema)
     page = await _client.pages.create(
         parent={"type": "data_source_id", "data_source_id": data_source_id},
         properties=properties,
     )
-    return page["url"]
+    return page["id"], page["url"]
 
 
 _RATING_PROPERTY_NAMES = {
@@ -184,6 +186,17 @@ async def update_task_status(page_id: str, done: bool) -> str:
     value = _resolve_status_value(status_prop, candidates, fallback_index)
     await _client.pages.update(page_id=page_id, properties={"Status": value})
     return value["status"]["name"] if "status" in value else value["select"]["name"]
+
+
+async def update_task_due_date(page_id: str, due_date: date) -> None:
+    _, schema = await _get_data_source(settings.notion_tasks_db_id)
+    date_property = _find_date_property(schema)
+    if date_property is None:
+        return
+    await _client.pages.update(
+        page_id=page_id,
+        properties={date_property: {"date": {"start": due_date.isoformat()}}},
+    )
 
 
 def _read_text(prop: dict[str, Any] | None) -> str:

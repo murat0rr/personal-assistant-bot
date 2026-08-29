@@ -19,7 +19,7 @@ async def handle_task_note(message: Message, text: str) -> None:
     try:
         today = datetime.now(ZoneInfo(settings.timezone)).date()
         fields = await extract_task_fields(text, today)
-        url = await create_task(fields.title, fields.due_date, fields.priority)
+        _page_id, url = await create_task(fields.title, fields.due_date, fields.priority)
     except Exception:
         logger.exception("Не удалось создать задачу из сообщения: %r", text)
         await message.answer("Не получилось создать задачу, попробуй ещё раз.")

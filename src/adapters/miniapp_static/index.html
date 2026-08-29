@@ -3,52 +3,159 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Задачи</title>
+  <title>Ассистент</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
+    :root {
+      --bg: var(--tg-theme-bg-color, #ffffff);
+      --card-bg: var(--tg-theme-secondary-bg-color, #f2f2f2);
+      --text: var(--tg-theme-text-color, #111111);
+      --text-muted: var(--tg-theme-hint-color, #8e8e93);
+      --hairline: rgba(127, 127, 127, 0.2);
+      --accent: var(--tg-theme-button-color, #2481cc);
+      --accent-text: var(--tg-theme-button-text-color, #ffffff);
+    }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       padding: 16px;
       font-family: -apple-system, "Segoe UI", sans-serif;
-      background: var(--tg-theme-bg-color, #fff);
-      color: var(--tg-theme-text-color, #111);
+      background: var(--bg);
+      color: var(--text);
     }
-    h1 { font-size: 18px; margin: 24px 0 16px; }
-    h1:first-of-type { margin-top: 0; }
-    .task, .habit {
+    .section { margin-bottom: 24px; }
+    .section-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin: 0 0 8px;
+      padding: 0 2px;
+    }
+    .list {
+      background: var(--card-bg);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .row {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      padding: 12px;
-      margin-bottom: 8px;
-      border-radius: 10px;
-      background: var(--tg-theme-secondary-bg-color, #f2f2f2);
+      gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 0.5px solid var(--hairline);
     }
-    .task .info, .habit .info { flex: 1; }
-    .task .title, .habit .name { font-weight: 600; }
-    .task .meta, .habit .meta { font-size: 13px; opacity: 0.7; margin-top: 2px; }
-    button {
-      border: none;
-      border-radius: 8px;
-      padding: 8px 14px;
-      background: var(--tg-theme-button-color, #2481cc);
-      color: var(--tg-theme-button-text-color, #fff);
+    .row:last-child { border-bottom: none; }
+    .empty {
+      padding: 12px 14px;
       font-size: 14px;
+      color: var(--text-muted);
     }
+    .checkbox {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 1.5px solid var(--text-muted);
+      background: transparent;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      color: #fff;
+    }
+    .checkbox.done {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    .checkbox svg { display: none; width: 12px; height: 12px; }
+    .checkbox.done svg { display: block; }
+    .title {
+      flex: 1;
+      font-size: 15px;
+      min-width: 0;
+      overflow-wrap: break-word;
+    }
+    .title.done {
+      color: var(--text-muted);
+      text-decoration: line-through;
+    }
+    .priority {
+      font-size: 12px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .add-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .add-row input {
+      flex: 1;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: var(--card-bg);
+      color: var(--text);
+      font-size: 15px;
+    }
+    .add-row input::placeholder { color: var(--text-muted); }
+    .icon-btn {
+      border: none;
+      border-radius: 10px;
+      width: 40px;
+      height: 40px;
+      background: var(--accent);
+      color: var(--accent-text);
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+    .small-btn {
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      width: 30px;
+      height: 30px;
+      flex-shrink: 0;
+      font-size: 16px;
+      position: relative;
+      padding: 0;
+    }
+    .small-btn input[type="date"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+      padding: 0;
+    }
+    .digest { padding: 12px 14px; font-size: 14px; color: var(--text-muted); }
     button:disabled { opacity: 0.5; }
-    .empty, .error { opacity: 0.6; padding: 12px 0; }
   </style>
 </head>
 <body>
-  <h1>Мои задачи</h1>
-  <div id="task-list"></div>
-  <div id="task-empty" class="empty" hidden>Задач нет 🎉</div>
-  <div id="task-error" class="error" hidden>Не удалось загрузить задачи.</div>
+  <div class="section">
+    <p class="section-label">Задачи на день</p>
+    <div id="dated-list" class="list"></div>
+    <div class="add-row">
+      <input id="new-task-input" type="text" placeholder="Новая задача" />
+      <button id="add-task-btn" class="icon-btn" aria-label="Добавить задачу">+</button>
+    </div>
+  </div>
 
-  <h1>Привычки</h1>
-  <div id="habit-list"></div>
-  <div id="habit-empty" class="empty" hidden>Привычек пока нет</div>
-  <div id="habit-error" class="error" hidden>Не удалось загрузить привычки.</div>
+  <div class="section">
+    <p class="section-label">Без даты</p>
+    <div id="undated-list" class="list"></div>
+  </div>
+
+  <div class="section">
+    <p class="section-label">Утренний дайджест</p>
+    <div id="digest" class="list digest">Загрузка…</div>
+  </div>
+
+  <div class="section">
+    <p class="section-label">Привычки</p>
+    <div id="habit-list" class="list"></div>
+  </div>
 
   <script>
     const tg = window.Telegram?.WebApp;
@@ -61,6 +168,7 @@
       const res = await fetch(path, {
         ...options,
         headers: {
+          "Content-Type": "application/json",
           ...(options.headers || {}),
           "X-Telegram-Init-Data": initData,
         },
@@ -69,62 +177,145 @@
       return res.json();
     }
 
-    function renderTask(task) {
-      const el = document.createElement("div");
-      el.className = "task";
+    function checkIcon() {
+      return '<svg viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    }
 
-      const info = document.createElement("div");
-      info.className = "info";
-      const title = document.createElement("div");
-      title.className = "title";
-      title.textContent = task.title;
-      const meta = document.createElement("div");
-      meta.className = "meta";
-      const parts = [];
-      if (task.due_date) parts.push(task.due_date);
-      if (task.priority) parts.push(task.priority);
-      meta.textContent = parts.join(" · ");
-      info.append(title, meta);
+    function renderTaskRow(task, { showDateButton }) {
+      const row = document.createElement("div");
+      row.className = "row";
 
-      const btn = document.createElement("button");
-      btn.textContent = "Готово";
-      btn.onclick = async () => {
-        btn.disabled = true;
+      const checkbox = document.createElement("button");
+      checkbox.className = "checkbox" + (task.done ? " done" : "");
+      checkbox.setAttribute("aria-label", task.done ? "Снять отметку" : "Отметить выполненной");
+      checkbox.innerHTML = checkIcon();
+      checkbox.onclick = async () => {
+        checkbox.disabled = true;
         try {
           await api(`/miniapp/api/tasks/${encodeURIComponent(task.notion_page_id)}/done`, {
             method: "POST",
+            body: JSON.stringify({ done: !task.done }),
           });
-          el.remove();
           tg?.HapticFeedback?.notificationOccurred("success");
+          await loadTasks();
         } catch (e) {
-          btn.disabled = false;
+          checkbox.disabled = false;
         }
       };
 
-      el.append(info, btn);
-      return el;
+      const title = document.createElement("span");
+      title.className = "title" + (task.done ? " done" : "");
+      title.textContent = task.title;
+
+      row.append(checkbox, title);
+
+      if (!task.done && task.priority) {
+        const badge = document.createElement("span");
+        badge.className = "priority";
+        badge.textContent = task.priority;
+        row.append(badge);
+      }
+
+      if (showDateButton && !task.done) {
+        const dateBtn = document.createElement("button");
+        dateBtn.className = "small-btn";
+        dateBtn.setAttribute("aria-label", "Поставить дату");
+        dateBtn.textContent = "📅";
+
+        const dateInput = document.createElement("input");
+        dateInput.type = "date";
+        dateInput.onchange = async () => {
+          if (!dateInput.value) return;
+          dateBtn.disabled = true;
+          try {
+            await api(`/miniapp/api/tasks/${encodeURIComponent(task.notion_page_id)}/due-date`, {
+              method: "POST",
+              body: JSON.stringify({ due_date: dateInput.value }),
+            });
+            tg?.HapticFeedback?.notificationOccurred("success");
+            await loadTasks();
+          } catch (e) {
+            dateBtn.disabled = false;
+          }
+        };
+        dateBtn.onclick = () => (dateInput.showPicker ? dateInput.showPicker() : dateInput.click());
+        dateBtn.append(dateInput);
+        row.append(dateBtn);
+      }
+
+      return row;
+    }
+
+    function renderList(container, tasks, opts) {
+      container.innerHTML = "";
+      if (tasks.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "Пусто";
+        container.append(empty);
+        return;
+      }
+      tasks.forEach((t) => container.append(renderTaskRow(t, opts)));
+    }
+
+    async function loadTasks() {
+      const datedEl = document.getElementById("dated-list");
+      const undatedEl = document.getElementById("undated-list");
+      try {
+        const board = await api("/miniapp/api/tasks");
+        renderList(datedEl, board.dated, { showDateButton: false });
+        renderList(undatedEl, board.undated, { showDateButton: true });
+      } catch (e) {
+        datedEl.innerHTML = '<div class="empty">Не удалось загрузить задачи.</div>';
+        undatedEl.innerHTML = "";
+      }
+    }
+
+    document.getElementById("add-task-btn").onclick = async () => {
+      const input = document.getElementById("new-task-input");
+      const value = input.value.trim();
+      if (!value) return;
+      const btn = document.getElementById("add-task-btn");
+      btn.disabled = true;
+      try {
+        await api("/miniapp/api/tasks", { method: "POST", body: JSON.stringify({ title: value }) });
+        input.value = "";
+        tg?.HapticFeedback?.notificationOccurred("success");
+        await loadTasks();
+      } finally {
+        btn.disabled = false;
+      }
+    };
+    document.getElementById("new-task-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") document.getElementById("add-task-btn").click();
+    });
+
+    async function loadDigest() {
+      const el = document.getElementById("digest");
+      try {
+        const data = await api("/miniapp/api/briefing");
+        el.textContent = data.weather || "Погода не настроена";
+      } catch (e) {
+        el.textContent = "Не удалось загрузить.";
+      }
     }
 
     function renderHabit(habit) {
-      const el = document.createElement("div");
-      el.className = "habit";
+      const row = document.createElement("div");
+      row.className = "row";
 
-      const info = document.createElement("div");
-      info.className = "info";
-      const name = document.createElement("div");
-      name.className = "name";
+      const name = document.createElement("span");
+      name.className = "title";
       name.textContent = habit.name;
-      const meta = document.createElement("div");
-      meta.className = "meta";
-      info.append(name, meta);
 
-      const setStreak = (streak) => {
-        meta.textContent = `streak: ${streak}`;
-      };
-      setStreak(habit.streak);
+      const streak = document.createElement("span");
+      streak.className = "priority";
+      streak.textContent = `${habit.streak} дн.`;
 
       const btn = document.createElement("button");
-      btn.textContent = "Отметить";
+      btn.className = "small-btn";
+      btn.setAttribute("aria-label", "Отметить");
+      btn.textContent = "✓";
       btn.onclick = async () => {
         btn.disabled = true;
         try {
@@ -132,46 +323,34 @@
             `/miniapp/api/habits/${encodeURIComponent(habit.notion_page_id)}/check`,
             { method: "POST" }
           );
-          setStreak(result.streak);
+          streak.textContent = `${result.streak} дн.`;
           tg?.HapticFeedback?.notificationOccurred("success");
         } finally {
           btn.disabled = false;
         }
       };
 
-      el.append(info, btn);
-      return el;
-    }
-
-    async function loadTasks() {
-      const list = document.getElementById("task-list");
-      try {
-        const tasks = await api("/miniapp/api/tasks");
-        if (tasks.length === 0) {
-          document.getElementById("task-empty").hidden = false;
-          return;
-        }
-        tasks.forEach((t) => list.append(renderTask(t)));
-      } catch (e) {
-        document.getElementById("task-error").hidden = false;
-      }
+      row.append(name, streak, btn);
+      return row;
     }
 
     async function loadHabits() {
-      const list = document.getElementById("habit-list");
+      const el = document.getElementById("habit-list");
       try {
         const habits = await api("/miniapp/api/habits");
         if (habits.length === 0) {
-          document.getElementById("habit-empty").hidden = false;
+          el.innerHTML = '<div class="empty">Привычек пока нет</div>';
           return;
         }
-        habits.forEach((h) => list.append(renderHabit(h)));
+        el.innerHTML = "";
+        habits.forEach((h) => el.append(renderHabit(h)));
       } catch (e) {
-        document.getElementById("habit-error").hidden = false;
+        el.innerHTML = '<div class="empty">Не удалось загрузить привычки.</div>';
       }
     }
 
     loadTasks();
+    loadDigest();
     loadHabits();
   </script>
 </body>
