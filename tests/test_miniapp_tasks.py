@@ -6,7 +6,6 @@ from src.models.task import Task
 # 2026-08-29 — суббота.
 _TODAY = date(2026, 8, 29)
 _YESTERDAY = date(2026, 8, 28)
-_MONDAY = date(2026, 8, 24)
 
 
 def _task(
@@ -38,26 +37,15 @@ def test_days_split_by_exact_due_date():
     assert board["days"]["today"]["date"] == "2026-08-29"
 
 
-def test_week_covers_current_monday_to_sunday():
+def test_dated_tasks_includes_every_dated_task_any_range():
     tasks = [
-        _task("понедельник", _MONDAY),
-        _task("суббота (сегодня)", _TODAY),
-        _task("вне недели", date(2026, 9, 5)),
+        _task("далеко в прошлом", date(2020, 1, 1)),
+        _task("далеко в будущем", date(2030, 1, 1)),
+        _task("без даты", None),
     ]
     board = build_task_board(tasks, _TODAY)
-    week = board["week"]
-    assert list(week.keys()) == [
-        "2026-08-24",
-        "2026-08-25",
-        "2026-08-26",
-        "2026-08-27",
-        "2026-08-28",
-        "2026-08-29",
-        "2026-08-30",
-    ]
-    assert [t["title"] for t in week["2026-08-24"]] == ["понедельник"]
-    assert [t["title"] for t in week["2026-08-29"]] == ["суббота (сегодня)"]
-    assert all("вне недели" not in [t["title"] for t in tasks] for tasks in week.values())
+    titles = {t["title"] for t in board["dated_tasks"]}
+    assert titles == {"далеко в прошлом", "далеко в будущем"}
 
 
 def test_inbox_includes_overdue_undone_and_all_undated():
@@ -89,4 +77,4 @@ def test_empty_board():
     board = build_task_board([], _TODAY)
     assert board["days"]["today"]["tasks"] == []
     assert board["inbox"] == []
-    assert all(tasks == [] for tasks in board["week"].values())
+    assert board["dated_tasks"] == []

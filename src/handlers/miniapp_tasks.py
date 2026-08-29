@@ -36,25 +36,25 @@ def _day_tasks(tasks: list[Task], target: date) -> list[dict]:
 def build_task_board(tasks: list[Task], today: date) -> dict:
     """ "Вчера"/"Сегодня" — строго по due_date, сортировка только по
     приоритету (отмеченные задачи остаются на месте, не переезжают вниз).
-    "Неделя" — текущая календарная неделя (Пн-Вс), задачи по каждому дню, для
-    карточки-календаря в Mini App. "Инбокс" — просроченные невыполненные
-    задачи (любая дата в прошлом) + все задачи без даты, независимо от
-    статуса. Чистая функция — тестируется офлайн, тот же паттерн, что
-    build_morning_digest_text."""
+    dated_tasks — вообще все задачи с проставленной датой (не только
+    ближайшая неделя) — навигация по неделям в календаре Mini App работает
+    из этого списка целиком на фронтенде, без похода в сеть при свайпе.
+    "Инбокс" — просроченные невыполненные задачи (любая дата в прошлом) +
+    все задачи без даты, независимо от статуса. Чистая функция —
+    тестируется офлайн, тот же паттерн, что build_morning_digest_text."""
     yesterday = today - timedelta(days=1)
-    monday = today - timedelta(days=today.weekday())
-    week_dates = [monday + timedelta(days=i) for i in range(7)]
 
     inbox = sorted(
         (t for t in tasks if t.due_date is None or (t.due_date < today and not _is_done(t))),
         key=_sort_key,
     )
+    dated = sorted((t for t in tasks if t.due_date is not None), key=_sort_key)
 
     return {
         "days": {
             "yesterday": {"date": yesterday.isoformat(), "tasks": _day_tasks(tasks, yesterday)},
             "today": {"date": today.isoformat(), "tasks": _day_tasks(tasks, today)},
         },
-        "week": {d.isoformat(): _day_tasks(tasks, d) for d in week_dates},
+        "dated_tasks": [_serialize(t) for t in dated],
         "inbox": [_serialize(t) for t in inbox],
     }

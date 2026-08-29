@@ -177,7 +177,24 @@
       background: var(--card-bg);
       border-radius: 12px;
       padding: 10px 4px;
+      /* Горизонтальный свайп на этом элементе обрабатываем сами (JS), не
+         отдаём его нативному скроллу — иначе конфликтует с внешней
+         каруселью вчера/сегодня/календарь. Вертикальный скролл страницы
+         работает как обычно. */
+      touch-action: pan-y;
     }
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+    }
+    .chevron {
+      color: var(--text-muted);
+      transition: transform 0.15s ease;
+      display: flex;
+    }
+    .chevron.expanded { transform: rotate(180deg); }
     .week-cell {
       display: flex;
       flex-direction: column;
@@ -230,11 +247,16 @@
   </div>
 
   <div class="section">
-    <p class="section-label">Инбокс</p>
-    <div id="inbox-list" class="list"></div>
-    <div class="add-row">
-      <input id="new-inbox-input" type="text" placeholder="Новая задача" />
-      <button id="add-inbox-btn" class="icon-btn" aria-label="Добавить задачу"></button>
+    <p class="section-label section-header" id="inbox-header">
+      <span id="inbox-title">Инбокс</span>
+      <span class="chevron" id="inbox-chevron"></span>
+    </p>
+    <div id="inbox-body" style="display: none;">
+      <div id="inbox-list" class="list"></div>
+      <div class="add-row">
+        <input id="new-inbox-input" type="text" placeholder="Новая задача" />
+        <button id="add-inbox-btn" class="icon-btn" aria-label="Добавить задачу"></button>
+      </div>
     </div>
   </div>
 
@@ -296,10 +318,13 @@
     function moveToTodayIcon() {
       return icon('<line x1="5" y1="12" x2="19" y2="12"/><path d="M13 6l6 6-6 6"/>', 16);
     }
+    function chevronIcon() {
+      return icon('<path d="M6 9l6 6 6-6"/>', 14);
+    }
 
     // ---- Состояние. Рендер идёт из него, без похода в сеть на каждое действие
     // (optimistic UI) — сеть только подтверждает то, что уже видно на экране.
-    let boardState = { days: {}, inbox: [] };
+    let boardState = { days: {}, dated_tasks: [], inbox: [] };
     const pendingIds = new Set();
 
     const PRIORITY_ORDER = { высокий: 0, средний: 1, низкий: 2 };
@@ -314,9 +339,7 @@
         if (!boardState.days[key]) continue;
         boardState.days[key].tasks = boardState.days[key].tasks.filter((t) => t.notion_page_id !== id);
       }
-      for (const iso of Object.keys(boardState.week || {})) {
-        boardState.week[iso] = boardState.week[iso].filter((t) => t.notion_page_id !== id);
-      }
+      boardState.dated_tasks = (boardState.dated_tasks || []).filter((t) => t.notion_page_id !== id);
       boardState.inbox = boardState.inbox.filter((t) => t.notion_page_id !== id);
     }
 
@@ -332,12 +355,16 @@
           boardState.days[key].tasks.push(task);
         }
       }
-      if (task.due_date && boardState.week && boardState.week[task.due_date]) {
-        boardState.week[task.due_date].push(task);
+      if (task.due_date) {
+        boardState.dated_tasks.push(task);
       }
       if (todayIso && (task.due_date === null || (task.due_date < todayIso && !task.done))) {
         boardState.inbox.push(task);
       }
+    }
+
+    function tasksForDate(iso) {
+      return (boardState.dated_tasks || []).filter((t) => t.due_date === iso);
     }
 
     function renderTaskRow(task, { showDateButton, showTrashButton, showMoveToToday }) {
@@ -427,6 +454,15 @@
 
     const WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
     let selectedWeekDate = null;
+    let weekStart = null; // ISO понедельника недели, которая сейчас показана
+
+    function computeWeekStart(iso) {
+      const [y, m, d] = iso.split("-").map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      const weekday = (dt.getUTCDay() + 6) % 7; // Пн=0 ... Вс=6
+      dt.setUTCDate(dt.getUTCDate() - weekday);
+      return dt.toISOString().slice(0, 10);
+    }
 
     function weekDotState(tasks) {
       // Пустой день — совсем без точки (null), не отдельный визуальный
@@ -442,11 +478,12 @@
 
     function renderWeekGrid() {
       const grid = document.getElementById("week-grid");
-      if (!boardState.week) return;
+      if (!weekStart) return;
       grid.innerHTML = "";
       const todayIso = boardState.days.today?.date;
-      Object.keys(boardState.week).forEach((iso, i) => {
-        const tasks = boardState.week[iso];
+      for (let i = 0; i < 7; i++) {
+        const iso = addDaysIso(weekStart, i);
+        const tasks = tasksForDate(iso);
         const cell = document.createElement("button");
         cell.className =
           "week-cell" + (iso === todayIso ? " today" : "") + (iso === selectedWeekDate ? " selected" : "");
@@ -470,17 +507,24 @@
           renderWeekDetail();
         };
         grid.append(cell);
-      });
+      }
+    }
+
+    function switchWeek(deltaWeeks) {
+      weekStart = addDaysIso(weekStart, deltaWeeks * 7);
+      selectedWeekDate = null;
+      renderWeekGrid();
+      renderWeekDetail();
     }
 
     function renderWeekDetail() {
       const el = document.getElementById("week-day-detail");
       el.innerHTML = "";
-      if (!selectedWeekDate || !boardState.week) return;
+      if (!selectedWeekDate) return;
 
       const listEl = document.createElement("div");
       listEl.className = "list";
-      renderList(listEl, boardState.week[selectedWeekDate] || [], {
+      renderList(listEl, tasksForDate(selectedWeekDate), {
         showDateButton: false,
         showTrashButton: false,
         showMoveToToday: false,
@@ -509,6 +553,11 @@
       el.append(addRow);
     }
 
+    function renderInboxHeader() {
+      const title = document.getElementById("inbox-title");
+      title.textContent = boardState.inbox.length ? `Инбокс (${boardState.inbox.length})` : "Инбокс";
+    }
+
     function render() {
       for (const key of ["yesterday", "today"]) {
         const el = document.getElementById(`${key}-list`);
@@ -518,6 +567,7 @@
         showDateButton: true,
         showTrashButton: true,
       });
+      renderInboxHeader();
       renderWeekGrid();
       renderWeekDetail();
     }
@@ -532,9 +582,10 @@
     async function loadBoard() {
       try {
         boardState = await api("/miniapp/api/tasks");
-        if (selectedWeekDate === null) {
+        if (weekStart === null) {
           const tomorrowIso = addDaysIso(boardState.days.today.date, 1);
-          if (boardState.week[tomorrowIso]) selectedWeekDate = tomorrowIso;
+          weekStart = computeWeekStart(tomorrowIso);
+          selectedWeekDate = tomorrowIso;
         }
         render();
       } catch (e) {
@@ -665,6 +716,43 @@
     document.getElementById("new-inbox-input").addEventListener("keydown", (e) => {
       if (e.key === "Enter") document.getElementById("add-inbox-btn").click();
     });
+
+    // Инбокс свёрнут по умолчанию — только заголовок со счётчиком, тап
+    // разворачивает список и поле добавления.
+    let inboxExpanded = false;
+    document.getElementById("inbox-chevron").innerHTML = chevronIcon();
+    document.getElementById("inbox-header").onclick = () => {
+      inboxExpanded = !inboxExpanded;
+      document.getElementById("inbox-body").style.display = inboxExpanded ? "" : "none";
+      document.getElementById("inbox-chevron").classList.toggle("expanded", inboxExpanded);
+    };
+
+    // Свайп по полоске дат недели — только сама полоска, не вся страница
+    // календаря (touch-action: pan-y в CSS отдаёт нам горизontal-жест
+    // целиком, не давая внешней карусели его перехватить).
+    (function setupWeekSwipe() {
+      const grid = document.getElementById("week-grid");
+      let startX = null;
+      const THRESHOLD = 32;
+      grid.addEventListener(
+        "touchstart",
+        (e) => {
+          startX = e.touches[0].clientX;
+        },
+        { passive: true }
+      );
+      grid.addEventListener(
+        "touchend",
+        (e) => {
+          if (startX === null) return;
+          const dx = e.changedTouches[0].clientX - startX;
+          startX = null;
+          if (dx > THRESHOLD) switchWeek(-1);
+          else if (dx < -THRESHOLD) switchWeek(1);
+        },
+        { passive: true }
+      );
+    })();
 
     const _dayLabels = ["Вчера", "Сегодня", "Неделя"];
     const carousel = document.getElementById("day-carousel");
