@@ -13,6 +13,7 @@ from src.core.message_tracking import attach_message_tracking, track_incoming
 from src.core.notion_sync import sync_tasks_from_notion
 from src.core.orchestrator import router as orchestrator_router
 from src.handlers.f4_diary import router as diary_router
+from src.handlers.f9_finance import router as finance_router
 from src.handlers.f_reminders import router as reminders_router
 from src.handlers.mode_buttons import MAIN_KEYBOARD
 from src.handlers.mode_buttons import router as mode_buttons_router
@@ -32,6 +33,7 @@ dp.message.outer_middleware(track_incoming)
 dp.include_router(diary_router)
 dp.include_router(mode_buttons_router)
 dp.include_router(reminders_router)
+dp.include_router(finance_router)
 dp.include_router(orchestrator_router)
 
 

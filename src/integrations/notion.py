@@ -269,6 +269,38 @@ async def update_habit_check(page_id: str, new_streak: int, checked_on: date) ->
     await _client.pages.update(page_id=page_id, properties=properties)
 
 
+def parse_diary_page(page: dict[str, Any]) -> dict[str, Any]:
+    props = page["properties"]
+    return {
+        "notion_page_id": page["id"],
+        "entry_date": _read_date(props.get("Date")),
+        "physical": _read_number(props.get("Physical")),
+        "social": _read_number(props.get("Social")),
+        "productivity": _read_number(props.get("Productivity")),
+        "happiness": _read_number(props.get("Happiness")),
+        "highlight": _read_text(props.get("Highlight")) or None,
+    }
+
+
+async def list_diary_entries() -> list[dict[str, Any]]:
+    """Забрать все записи дневника — без серверной фильтрации по дате
+    (датасет маленький, фильтруем на своей стороне), тот же паттерн, что
+    list_habits."""
+    data_source_id, _ = await _get_data_source(settings.notion_diary_db_id)
+    entries: list[dict[str, Any]] = []
+    cursor: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {"data_source_id": data_source_id}
+        if cursor:
+            kwargs["start_cursor"] = cursor
+        response = await _client.data_sources.query(**kwargs)
+        entries.extend(parse_diary_page(page) for page in response["results"])
+        if not response.get("has_more"):
+            break
+        cursor = response["next_cursor"]
+    return entries
+
+
 async def list_tasks() -> list[dict[str, Any]]:
     """Забрать все задачи из Notion Tasks — используется pull-синком
     (плановым и по требованию), а не входящими вебхуками."""

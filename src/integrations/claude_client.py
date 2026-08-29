@@ -133,6 +133,25 @@ async def parse_reminder(text: str, today: date) -> ReminderPlan:
     return ReminderPlan.model_validate(tool_use.input)
 
 
+async def summarize_finance_csv(csv_text: str) -> str:
+    response = await client.messages.create(
+        model=settings.claude_model_sonnet,
+        max_tokens=1500,
+        system=(
+            "Тебе присылают CSV-выписку по банковской карте (формат и "
+            "названия колонок могут отличаться — определи их сама по "
+            "содержимому, включая колонку с суммой и категорией/описанием "
+            "операции). Посчитай общую сумму трат, разбивку по категориям "
+            "(топ-5), и отметь 1-2 необычно крупные операции, если такие "
+            "есть. Игнорируй пополнения и переводы самому себе, если они "
+            "отличимы от трат. Ответь компактно, на русском, с эмодзи по "
+            "категориям."
+        ),
+        messages=[{"role": "user", "content": csv_text}],
+    )
+    return "".join(block.text for block in response.content if block.type == "text")
+
+
 async def summarize_diary(answers_text: str) -> str:
     response = await client.messages.create(
         model=settings.claude_model_haiku,

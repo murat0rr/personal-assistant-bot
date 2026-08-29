@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
 
+from src.adapters.tasker_webhook import router as tasker_webhook_router
 from src.core.config import settings
 from src.core.db import async_session
 from src.core.notion_sync import sync_tasks_from_notion
@@ -19,6 +20,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Личный ассистент API")
+app.include_router(tasker_webhook_router)
 
 
 @app.get("/health")
