@@ -721,17 +721,22 @@
         if (!dragging) return;
         const dx = curX - startX;
         const wasOpen = open;
-        open = wasOpen ? dx < SWIPE_CLOSE_THRESHOLD : dx < -SWIPE_OPEN_THRESHOLD;
-        setReveal(open ? SWIPE_MAX_REVEAL : 0, true);
-        if (open && openSwipeRow !== self) {
-          closeOpenSwipeRow();
-          openSwipeRow = self;
-          openSwipeTaskId = taskId;
-        } else if (!open && openSwipeRow === self) {
-          openSwipeRow = null;
-          openSwipeTaskId = null;
-        }
+        const shouldOpen = wasOpen ? dx < SWIPE_CLOSE_THRESHOLD : dx < -SWIPE_OPEN_THRESHOLD;
         dragging = false;
+        if (shouldOpen) {
+          open = true;
+          setReveal(SWIPE_MAX_REVEAL, true);
+          if (openSwipeRow !== self) {
+            closeOpenSwipeRow();
+            openSwipeRow = self;
+            openSwipeTaskId = taskId;
+          }
+        } else {
+          // Через self.close() (не напрямую) — снаружи он переопределён,
+          // чтобы применить отложенную пересортировку после смены
+          // приоритета (см. renderSwipeableTaskRow).
+          self.close();
+        }
       }
       zone.addEventListener("pointerup", endDrag);
       zone.addEventListener("pointercancel", endDrag);
@@ -804,6 +809,11 @@
     function renderSwipeableTaskRow(task, { showMoveToToday }) {
       const isPending = pendingIds.has(task.id);
       let swipeHandle = null; // назначим после setupSwipeDrag ниже
+      // true, если приоритет поменяли, пока шторка была открыта — тогда
+      // полный render() (пересортировка/смена группы) откладываем до
+      // закрытия, см. syncPriorityUI и переопределение swipeHandle.close
+      // ниже.
+      let needsResortOnClose = false;
 
       const wrap = document.createElement("div");
       wrap.className = "swipe-wrap" + (isPending ? " pending" : "");
@@ -822,9 +832,18 @@
       importantBtn.setAttribute("aria-label", "Важная задача");
       importantBtn.innerHTML = flagIcon();
       // Панель специально НЕ закрываем здесь — можно сразу передумать и
-      // тапнуть другой значок, не открывая шторку заново.
+      // тапнуть другой значок, не открывая шторку заново. Полный render()
+      // (который пересортировал бы список и мог унести строку в другую
+      // группу) тоже откладываем — см. syncPriorityUI/needsResortOnClose
+      // ниже: список перестроится только когда шторку закроют, а не прямо
+      // во время работы с ней.
       importantBtn.onclick = () => {
-        setTaskPriority(task, task.priority === "высокий" ? "средний" : "высокий");
+        needsResortOnClose = true;
+        setTaskPriority(
+          task,
+          task.priority === "высокий" ? "средний" : "высокий",
+          syncPriorityUI
+        );
       };
 
       const eventBtn = document.createElement("button");
@@ -833,7 +852,8 @@
       eventBtn.setAttribute("aria-label", "Событие");
       eventBtn.innerHTML = eventPinIcon();
       eventBtn.onclick = () => {
-        setTaskPriority(task, task.priority === "event" ? "средний" : "event");
+        needsResortOnClose = true;
+        setTaskPriority(task, task.priority === "event" ? "средний" : "event", syncPriorityUI);
       };
 
       const dateBtn = document.createElement("button");
@@ -933,12 +953,55 @@
       zone.className = "swipe-zone";
       content.append(zone);
 
+      // Обновляет активность значков важности/события, тип пикера даты
+      // (для события — сразу с временем) и флажок/булавку справа от
+      // заголовка — без пересборки всей строки и без изменения её позиции
+      // в списке. Вызывается вместо render() из importantBtn/eventBtn,
+      // пока шторка открыта (см. needsResortOnClose ниже).
+      function syncPriorityUI() {
+        importantBtn.classList.toggle("active", task.priority === "высокий");
+        eventBtn.classList.toggle("active", task.priority === "event");
+        const stillPending = pendingIds.has(task.id);
+        importantBtn.disabled = stillPending;
+        eventBtn.disabled = stillPending;
+        dateInput.type = task.priority === "event" ? "datetime-local" : "date";
+
+        const existing = content.querySelector(".flag-icon, .event-pin");
+        if (existing) existing.remove();
+        if (!task.done && task.priority === "высокий") {
+          const flag = document.createElement("span");
+          flag.className = "flag-icon";
+          flag.setAttribute("aria-label", "Высокий приоритет");
+          flag.innerHTML = flagIcon();
+          content.insertBefore(flag, handle);
+        } else if (task.priority === "event" && !task.due_time) {
+          const pin = document.createElement("span");
+          pin.className = "event-pin";
+          pin.setAttribute("aria-label", "Событие");
+          pin.innerHTML = eventPinIcon();
+          content.insertBefore(pin, handle);
+        }
+      }
+
       wrap.append(actions, content);
       swipeHandle = setupSwipeDrag(zone, actions, task.id);
+
+      // Если приоритет меняли при открытой шторке, список пересортируем и
+      // перегруппируем только сейчас, в момент закрытия — не посреди
+      // работы с панелью (вдруг следом ещё и дату хотели выбрать).
+      const baseClose = swipeHandle.close;
+      swipeHandle.close = () => {
+        baseClose();
+        if (needsResortOnClose) {
+          needsResortOnClose = false;
+          render();
+        }
+      };
+
       if (task.id === openSwipeTaskId) {
         // Эту же задачу только что пересобрал render() (например, после
-        // тапа по значку важности/события) — её шторка была открыта,
-        // восстанавливаем без анимации.
+        // закрытия шторки с изменённым приоритетом) — её шторка была
+        // открыта, восстанавливаем без анимации.
         swipeHandle.reopenInstant();
         openSwipeRow = swipeHandle;
       }
@@ -1202,12 +1265,17 @@
       }
     }
 
-    async function setTaskPriority(task, newPriority) {
+    async function setTaskPriority(task, newPriority, onUpdate) {
+      // onUpdate — необязательный "лёгкий" рендер вместо полного render():
+      // пока свайп-шторка открыта, importantBtn/eventBtn передают сюда
+      // syncPriorityUI, чтобы список не пересортировался прямо во время
+      // работы с панелью (см. renderSwipeableTaskRow).
+      const update = onUpdate || render;
       const id = task.id;
       const prevPriority = task.priority;
       task.priority = newPriority;
       pendingIds.add(id);
-      render();
+      update();
       try {
         await api(`/miniapp/api/tasks/${encodeURIComponent(id)}/priority`, {
           method: "POST",
@@ -1215,11 +1283,11 @@
         });
       } catch (e) {
         task.priority = prevPriority;
-        render();
+        update();
         alert("Не удалось изменить приоритет.");
       } finally {
         pendingIds.delete(id);
-        render();
+        update();
       }
     }
 
