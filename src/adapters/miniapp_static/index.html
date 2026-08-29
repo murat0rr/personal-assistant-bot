@@ -200,13 +200,14 @@
       overscroll-behavior-x: contain;
       /* Отступы по бокам вместе с шириной панели меньше 100% — по краям
          видны кусочки соседних недель ("peek"), явный намёк, что полоску
-         можно пролистать, без лишних стрелочек/подписей. */
-      padding: 0 8%;
+         можно пролистать, без лишних стрелочек/подписей. Подобрали на
+         макете — 4% с каждой стороны, только половинка ячейки выглядывает. */
+      padding: 0 4%;
     }
     .week-carousel::-webkit-scrollbar { display: none; }
     .week-page {
-      flex: 0 0 84%;
-      min-width: 84%;
+      flex: 0 0 92%;
+      min-width: 92%;
       scroll-snap-align: center;
     }
     .week-grid {
@@ -804,11 +805,23 @@
       return bestIndex;
     }
 
-    let weekScrollTimer = null;
-    weekCarousel.addEventListener("scroll", () => {
-      clearTimeout(weekScrollTimer);
-      weekScrollTimer = setTimeout(onWeekCarouselSettled, 150);
-    });
+    // Раньше подмена контента (следующая неделя) срабатывала по таймеру
+    // (150мс без новых scroll-событий) — из-за этого могла сработать чуть
+    // раньше, чем нативная анимация snap-доводки реально долетала до места,
+    // и переключение выглядело резким рывком вместо плавного доезда.
+    // "scrollend" — специально для этого событие: срабатывает ровно один
+    // раз, именно когда скролл (включая анимацию довода) по-настоящему
+    // закончился. Таймер оставляем только как запасной вариант для
+    // движков без поддержки scrollend.
+    if ("onscrollend" in window) {
+      weekCarousel.addEventListener("scrollend", onWeekCarouselSettled);
+    } else {
+      let weekScrollTimer = null;
+      weekCarousel.addEventListener("scroll", () => {
+        clearTimeout(weekScrollTimer);
+        weekScrollTimer = setTimeout(onWeekCarouselSettled, 300);
+      });
+    }
 
     function onWeekCarouselSettled() {
       const index = nearestWeekPageIndex(); // 0=пред., 1=тек., 2=след.
