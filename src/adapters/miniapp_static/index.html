@@ -157,6 +157,13 @@
       flex: 0 0 100%;
       min-width: 100%;
       scroll-snap-align: start;
+      /* Раньше резкий свайп мог по инерции пролететь сразу через страницу
+         (напр. с "Вчера" сразу на "Неделя", мимо "Сегодня") — этот пункт
+         спецификации CSS Scroll Snap как раз для этого: даже при сильном
+         рывке скролл обязан остановиться на каждой точке привязки по
+         очереди, не пропуская ни одной. На календарь (.week-page) это не
+         распространяется — там оставляем как было. */
+      scroll-snap-stop: always;
     }
     .day-page .list { border-radius: 12px; }
     .day-dots {
@@ -227,11 +234,12 @@
       background: transparent;
       border: 1.5px solid transparent;
     }
-    /* Один и тот же var(--accent), что и обводка "сегодня" — раньше фон
-       выбранного дня был захардкожен отдельным rgba и мог не совпасть по
-       цвету, если тема Telegram меняет --accent. */
-    .week-cell.selected { background: color-mix(in srgb, var(--accent) 18%, transparent); }
-    .week-cell.today { border-color: var(--accent); }
+    /* Сегодняшний день — заливка, выбранный день — обводка. Оба берут цвет
+       из одного и того же var(--accent), так что если оба условия
+       совпали (сегодня и выбран), заливка и обводка естественно
+       комбинируются на одной ячейке. */
+    .week-cell.today { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+    .week-cell.selected { border-color: var(--accent); }
     .wc-label { font-size: 11px; color: var(--text-muted); }
     .wc-num { font-size: 14px; font-weight: 500; color: var(--text); }
     .week-dot { display: block; width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: transparent; }
@@ -783,10 +791,7 @@
       const index = Math.round(weekCarousel.scrollLeft / pageWidth); // 0=пред., 1=тек., 2=след.
       if (index === 1) return;
       weekStart = addDaysIso(weekStart, (index === 0 ? -1 : 1) * 7);
-      // При переключении недели выбранный день переезжает на понедельник
-      // новой недели — не остаётся тот же день/дата, что был до свайпа,
-      // и не пропадает совсем (пустой экран).
-      selectedWeekDate = weekStart;
+      selectedWeekDate = null;
       renderWeekCarousel();
       recenterWeekCarousel();
       renderWeekDetail();
