@@ -189,6 +189,7 @@
        обратно в центр — иллюзия бесконечной прокрутки без сети. */
     .week-carousel {
       display: flex;
+      gap: 12px;
       overflow-x: auto;
       scroll-snap-type: x mandatory;
       -webkit-overflow-scrolling: touch;
@@ -197,12 +198,16 @@
          упирается в свой край (первая/последняя из трёх панелей) —
          иначе долгий свайп мог бы "провалиться" на страницу вчера/сегодня. */
       overscroll-behavior-x: contain;
+      /* Отступы по бокам вместе с шириной панели меньше 100% — по краям
+         видны кусочки соседних недель ("peek"), явный намёк, что полоску
+         можно пролистать, без лишних стрелочек/подписей. */
+      padding: 0 8%;
     }
     .week-carousel::-webkit-scrollbar { display: none; }
     .week-page {
-      flex: 0 0 100%;
-      min-width: 100%;
-      scroll-snap-align: start;
+      flex: 0 0 84%;
+      min-width: 84%;
+      scroll-snap-align: center;
     }
     .week-grid {
       display: grid;
@@ -769,14 +774,34 @@
 
     // Полоска недель — нативный scroll-snap (см. .week-carousel), тот же
     // механизм, что и внешняя карусель вчера/сегодня/календарь: палец
-    // двигает контент 1:1, длинный свайп нужен как и там. После того как
-    // скролл "устаканился" на соседней панели — переключаем данные недели
-    // и мгновенно (без анимации) прыгаем обратно в центр, имитируя
-    // бесконечную прокрутку без похода в сеть.
+    // двигает контент 1:1, длинный свайп нужен как и там. Панели уже не на
+    // всю ширину (видны кусочки соседних недель по бокам — "peek"), поэтому
+    // центрирование считаем по геометрии самих панелей (scrollIntoView),
+    // а не по clientWidth контейнера. После того как скролл "устаканился"
+    // на соседней панели — переключаем данные недели и мгновенно (без
+    // анимации) прыгаем обратно в центр, имитируя бесконечную прокрутку
+    // без похода в сеть.
     const weekCarousel = document.getElementById("week-carousel");
+    const weekPages = Array.from(document.querySelectorAll("#week-carousel .week-page"));
 
     function recenterWeekCarousel() {
-      weekCarousel.scrollLeft = weekCarousel.clientWidth;
+      weekPages[1].scrollIntoView({ inline: "center", block: "nearest" });
+    }
+
+    function nearestWeekPageIndex() {
+      const containerRect = weekCarousel.getBoundingClientRect();
+      const containerCenter = containerRect.left + containerRect.width / 2;
+      let bestIndex = 1;
+      let bestDist = Infinity;
+      weekPages.forEach((el, i) => {
+        const r = el.getBoundingClientRect();
+        const dist = Math.abs(r.left + r.width / 2 - containerCenter);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestIndex = i;
+        }
+      });
+      return bestIndex;
     }
 
     let weekScrollTimer = null;
@@ -786,9 +811,7 @@
     });
 
     function onWeekCarouselSettled() {
-      const pageWidth = weekCarousel.clientWidth;
-      if (!pageWidth) return;
-      const index = Math.round(weekCarousel.scrollLeft / pageWidth); // 0=пред., 1=тек., 2=след.
+      const index = nearestWeekPageIndex(); // 0=пред., 1=тек., 2=след.
       if (index === 1) return;
       weekStart = addDaysIso(weekStart, (index === 0 ? -1 : 1) * 7);
       selectedWeekDate = null;
