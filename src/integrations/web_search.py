@@ -1,26 +1,26 @@
 from src.core.config import settings
 from src.integrations.claude_client import client
 
-_WEB_SEARCH_TOOL = {
-    "type": "web_search_20260209",
-    "name": "web_search",
-    "max_uses": 5,
-}
-
+# Нативный server-side тул web_search_20260209 не поддерживается прокси
+# limitdeckai.ru — любой запрос с ним падает 400 "tools[0] requires name and
+# input_schema", даже когда поиск не нужен (например, рецепт). Известное и
+# принятое ограничение (см. Phase 2 в PLAN.md): отвечаем по знаниям модели,
+# без реального веб-поиска.
 _SYSTEM_PROMPT = (
-    "Ты помогаешь подобрать товар или услугу по бюджету и критериям "
-    "пользователя. Используй веб-поиск, чтобы найти 3-5 актуальных "
-    "вариантов. Для каждого укажи название, примерную цену и ссылку. "
-    "Отвечай кратко, списком, на русском."
+    "Ты — полезный ассистент. Отвечай на вопросы пользователя: рецепты, "
+    "учебные вопросы, выбор между вариантами, подбор товаров/услуг по "
+    "бюджету и т.п. Веб-поиска у тебя нет — если для точного ответа нужны "
+    "самые свежие данные (актуальные цены, наличие), предупреди об этом "
+    "коротко и ответь по своим знаниям с оговоркой, что данные могут быть "
+    "не самыми свежими. Отвечай кратко и по делу, на русском."
 )
 
 
-async def research_options(query: str) -> str:
+async def answer_question(query: str) -> str:
     response = await client.messages.create(
         model=settings.claude_model_sonnet,
         max_tokens=1500,
         system=_SYSTEM_PROMPT,
-        tools=[_WEB_SEARCH_TOOL],
         messages=[{"role": "user", "content": query}],
     )
     return "".join(block.text for block in response.content if block.type == "text")

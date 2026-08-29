@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     notion_webhook_secret: str = ""
     notion_tasks_db_id: str = ""
     notion_diary_db_id: str = ""
+    notion_habits_db_id: str = ""
+    notion_notes_db_id: str = ""
     tasker_webhook_secret: str = ""
     database_url: str = ""
     redis_url: str = ""

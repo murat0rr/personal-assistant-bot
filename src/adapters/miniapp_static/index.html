@@ -13,8 +13,9 @@
       background: var(--tg-theme-bg-color, #fff);
       color: var(--tg-theme-text-color, #111);
     }
-    h1 { font-size: 18px; margin: 0 0 16px; }
-    .task {
+    h1 { font-size: 18px; margin: 24px 0 16px; }
+    h1:first-of-type { margin-top: 0; }
+    .task, .habit {
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -23,9 +24,9 @@
       border-radius: 10px;
       background: var(--tg-theme-secondary-bg-color, #f2f2f2);
     }
-    .task .info { flex: 1; }
-    .task .title { font-weight: 600; }
-    .task .meta { font-size: 13px; opacity: 0.7; margin-top: 2px; }
+    .task .info, .habit .info { flex: 1; }
+    .task .title, .habit .name { font-weight: 600; }
+    .task .meta, .habit .meta { font-size: 13px; opacity: 0.7; margin-top: 2px; }
     button {
       border: none;
       border-radius: 8px;
@@ -35,14 +36,19 @@
       font-size: 14px;
     }
     button:disabled { opacity: 0.5; }
-    #empty, #error { opacity: 0.6; padding: 12px 0; }
+    .empty, .error { opacity: 0.6; padding: 12px 0; }
   </style>
 </head>
 <body>
   <h1>Мои задачи</h1>
-  <div id="list"></div>
-  <div id="empty" hidden>Задач нет 🎉</div>
-  <div id="error" hidden>Не удалось загрузить задачи.</div>
+  <div id="task-list"></div>
+  <div id="task-empty" class="empty" hidden>Задач нет 🎉</div>
+  <div id="task-error" class="error" hidden>Не удалось загрузить задачи.</div>
+
+  <h1>Привычки</h1>
+  <div id="habit-list"></div>
+  <div id="habit-empty" class="empty" hidden>Привычек пока нет</div>
+  <div id="habit-error" class="error" hidden>Не удалось загрузить привычки.</div>
 
   <script>
     const tg = window.Telegram?.WebApp;
@@ -99,21 +105,74 @@
       return el;
     }
 
-    async function load() {
-      const list = document.getElementById("list");
+    function renderHabit(habit) {
+      const el = document.createElement("div");
+      el.className = "habit";
+
+      const info = document.createElement("div");
+      info.className = "info";
+      const name = document.createElement("div");
+      name.className = "name";
+      name.textContent = habit.name;
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      info.append(name, meta);
+
+      const setStreak = (streak) => {
+        meta.textContent = `streak: ${streak}`;
+      };
+      setStreak(habit.streak);
+
+      const btn = document.createElement("button");
+      btn.textContent = "Отметить";
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          const result = await api(
+            `/miniapp/api/habits/${encodeURIComponent(habit.notion_page_id)}/check`,
+            { method: "POST" }
+          );
+          setStreak(result.streak);
+          tg?.HapticFeedback?.notificationOccurred("success");
+        } finally {
+          btn.disabled = false;
+        }
+      };
+
+      el.append(info, btn);
+      return el;
+    }
+
+    async function loadTasks() {
+      const list = document.getElementById("task-list");
       try {
         const tasks = await api("/miniapp/api/tasks");
         if (tasks.length === 0) {
-          document.getElementById("empty").hidden = false;
+          document.getElementById("task-empty").hidden = false;
           return;
         }
         tasks.forEach((t) => list.append(renderTask(t)));
       } catch (e) {
-        document.getElementById("error").hidden = false;
+        document.getElementById("task-error").hidden = false;
       }
     }
 
-    load();
+    async function loadHabits() {
+      const list = document.getElementById("habit-list");
+      try {
+        const habits = await api("/miniapp/api/habits");
+        if (habits.length === 0) {
+          document.getElementById("habit-empty").hidden = false;
+          return;
+        }
+        habits.forEach((h) => list.append(renderHabit(h)));
+      } catch (e) {
+        document.getElementById("habit-error").hidden = false;
+      }
+    }
+
+    loadTasks();
+    loadHabits();
   </script>
 </body>
 </html>

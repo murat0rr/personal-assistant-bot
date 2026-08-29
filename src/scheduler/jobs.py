@@ -15,6 +15,8 @@ from src.core.db import async_session
 from src.core.notion_sync import sync_tasks_from_notion
 from src.handlers.f4_diary import DiaryStates, ask_question
 from src.handlers.f5_morning_digest import build_morning_digest
+from src.handlers.f_reminders import check_reminders
+from src.integrations.notion import list_habits
 from src.models.chat_message import ChatMessage
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,11 @@ async def _morning_digest(bot: Bot) -> None:
     await sync_tasks_from_notion(notify_on_change=False)
     text = await build_morning_digest()
     await bot.send_message(chat_id=settings.telegram_user_id, text=text)
+
+
+async def _reminders_job(bot: Bot) -> None:
+    logger.info("Проверяю напоминания")
+    await check_reminders(bot)
 
 
 async def _evening_diary(bot: Bot, storage: BaseStorage) -> None:
@@ -69,10 +76,28 @@ async def _cleanup_old_messages(bot: Bot) -> None:
     logger.info("Автоочистка чата: удалено сообщений %s", len(old_messages))
 
 
+async def _habit_reminders(bot: Bot) -> None:
+    if not settings.notion_habits_db_id:
+        return
+    logger.info("Проверяю несделанные привычки")
+    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    habits = await list_habits()
+    missed = [h for h in habits if h["target_frequency"] == "daily" and h["last_checked"] != today]
+    if not missed:
+        return
+    names = "\n".join(f"— {h['name']}" for h in missed)
+    await bot.send_message(
+        chat_id=settings.telegram_user_id,
+        text=f"⏰ Не забудь отметить привычки за сегодня:\n{names}",
+    )
+
+
 def setup_scheduler(bot: Bot, storage: BaseStorage) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
     scheduler.add_job(_daily_sync, CronTrigger(hour=3, minute=0))
     scheduler.add_job(_morning_digest, CronTrigger(hour=8, minute=0), args=[bot])
+    scheduler.add_job(_reminders_job, CronTrigger(hour=8, minute=0), args=[bot])
+    scheduler.add_job(_habit_reminders, CronTrigger(hour=20, minute=0), args=[bot])
     scheduler.add_job(_evening_diary, CronTrigger(hour=21, minute=0), args=[bot, storage])
     scheduler.add_job(_cleanup_old_messages, CronTrigger(hour=0, minute=5), args=[bot])
     return scheduler

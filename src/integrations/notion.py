@@ -157,6 +157,20 @@ async def create_diary_entry(
     return page["url"]
 
 
+async def create_note(text: str) -> str:
+    data_source_id, schema = await _get_data_source(settings.notion_notes_db_id)
+    properties: dict[str, Any] = {
+        "Name": {"title": [{"text": {"content": text[:80]}}]},
+    }
+    if "Content" in schema:
+        properties["Content"] = {"rich_text": [{"text": {"content": text[:2000]}}]}
+    page = await _client.pages.create(
+        parent={"type": "data_source_id", "data_source_id": data_source_id},
+        properties=properties,
+    )
+    return page["url"]
+
+
 async def update_task_status(page_id: str, done: bool) -> str:
     """Обновить статус задачи в Notion. Возвращает реально записанную метку
     статуса — её же нужно сохранить в Postgres, чтобы не словить дублирующее
@@ -170,6 +184,89 @@ async def update_task_status(page_id: str, done: bool) -> str:
     value = _resolve_status_value(status_prop, candidates, fallback_index)
     await _client.pages.update(page_id=page_id, properties={"Status": value})
     return value["status"]["name"] if "status" in value else value["select"]["name"]
+
+
+def _read_text(prop: dict[str, Any] | None) -> str:
+    """Прочитать текстовое значение независимо от того, каким типом
+    свойства пользователь реально завёл поле в Notion (Text/Select/Title)."""
+    if not prop:
+        return ""
+    if "rich_text" in prop:
+        return "".join(part["plain_text"] for part in prop["rich_text"])
+    if prop.get("select"):
+        return prop["select"]["name"]
+    if "title" in prop:
+        return "".join(part["plain_text"] for part in prop["title"])
+    return ""
+
+
+def _read_number(prop: dict[str, Any] | None) -> float | None:
+    """Как _read_text, но для чисел — на случай, если поле завели как Text."""
+    if not prop:
+        return None
+    if "number" in prop:
+        return prop["number"]
+    text = _read_text(prop)
+    try:
+        return float(text) if text else None
+    except ValueError:
+        return None
+
+
+def _read_date(prop: dict[str, Any] | None) -> date | None:
+    if not prop:
+        return None
+    raw = prop.get("date")
+    return date.fromisoformat(raw["start"][:10]) if raw else None
+
+
+def _write_number(prop_schema: dict[str, Any], value: float) -> dict[str, Any]:
+    if prop_schema["type"] == "number":
+        return {"number": value}
+    return {"rich_text": [{"text": {"content": str(value)}}]}
+
+
+def parse_habit_page(page: dict[str, Any]) -> dict[str, Any]:
+    props = page["properties"]
+    return {
+        "notion_page_id": page["id"],
+        "name": _read_text(props.get("Name")) or "(без названия)",
+        "streak": int(_read_number(props.get("Streak")) or 0),
+        "last_checked": _read_date(props.get("Last checked")),
+        "target_frequency": _read_text(props.get("Target frequency")) or "daily",
+    }
+
+
+async def list_habits() -> list[dict[str, Any]]:
+    data_source_id, _ = await _get_data_source(settings.notion_habits_db_id)
+    habits: list[dict[str, Any]] = []
+    cursor: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {"data_source_id": data_source_id}
+        if cursor:
+            kwargs["start_cursor"] = cursor
+        response = await _client.data_sources.query(**kwargs)
+        habits.extend(parse_habit_page(page) for page in response["results"])
+        if not response.get("has_more"):
+            break
+        cursor = response["next_cursor"]
+    return habits
+
+
+async def get_habit(page_id: str) -> dict[str, Any]:
+    page = await _client.pages.retrieve(page_id=page_id)
+    return parse_habit_page(page)
+
+
+async def update_habit_check(page_id: str, new_streak: int, checked_on: date) -> None:
+    _, schema = await _get_data_source(settings.notion_habits_db_id)
+    properties: dict[str, Any] = {
+        "Last checked": {"date": {"start": checked_on.isoformat()}},
+    }
+    streak_schema = schema.get("Streak")
+    if streak_schema is not None:
+        properties["Streak"] = _write_number(streak_schema, new_streak)
+    await _client.pages.update(page_id=page_id, properties=properties)
 
 
 async def list_tasks() -> list[dict[str, Any]]:

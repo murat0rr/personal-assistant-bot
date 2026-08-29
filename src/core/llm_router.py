@@ -3,7 +3,7 @@ from typing import Literal
 from src.core.config import settings
 from src.integrations.claude_client import client
 
-Intent = Literal["task_note", "research"]
+Intent = Literal["task", "note", "question", "reminder"]
 
 _CLASSIFY_INTENT_TOOL = {
     "name": "classify_intent",
@@ -13,11 +13,13 @@ _CLASSIFY_INTENT_TOOL = {
         "properties": {
             "intent": {
                 "type": "string",
-                "enum": ["task_note", "research"],
+                "enum": ["task", "note", "question", "reminder"],
                 "description": (
-                    "'task_note' — создать задачу/заметку (что-то сделать, купить, "
-                    "напомнить). 'research' — подобрать или сравнить товар/услугу "
-                    "по бюджету или другим критериям."
+                    "'task' — что-то сделать/купить (появится в Tasks со сроком и "
+                    "приоритетом). 'note' — просто сохранить мысль/информацию без "
+                    "действия. 'question' — рецепт, вопрос, выбор, что-то узнать "
+                    "или сравнить. 'reminder' — напомнить в будущем по расписанию "
+                    "(дата, периодичность)."
                 ),
             },
         },
@@ -37,5 +39,5 @@ async def classify_intent(text: str) -> Intent:
     )
     tool_use = next((block for block in response.content if block.type == "tool_use"), None)
     if tool_use is None:
-        return "task_note"
+        return "task"
     return tool_use.input["intent"]

@@ -61,6 +61,78 @@ async def extract_task_fields(text: str, today: date) -> TaskFields:
     return TaskFields.model_validate(tool_use.input)
 
 
+_PARSE_REMINDER_TOOL = {
+    "name": "parse_reminder",
+    "description": (
+        "Разобрать напоминание, описанное пользователем на естественном языке, "
+        "в структурированное расписание."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "text": {
+                "type": "string",
+                "description": "О чём напомнить — краткая формулировка",
+            },
+            "schedule_kind": {
+                "type": "string",
+                "enum": ["once", "monthly_day", "weekly_day", "interval_days"],
+                "description": (
+                    "'once' — конкретная дата, разово. 'monthly_day' — определённое "
+                    "число каждого месяца (day=32 означает 'последний день месяца'). "
+                    "'weekly_day' — определённый день недели каждую неделю. "
+                    "'interval_days' — каждые N дней начиная с сегодня."
+                ),
+            },
+            "reminder_date": {
+                "type": ["string", "null"],
+                "description": "Для 'once' — дата в формате YYYY-MM-DD, иначе null",
+            },
+            "day_of_month": {
+                "type": ["integer", "null"],
+                "description": "Для 'monthly_day' — число 1-31, или 32 для последнего дня месяца",
+            },
+            "weekday": {
+                "type": ["integer", "null"],
+                "description": "Для 'weekly_day' — 0=понедельник ... 6=воскресенье",
+            },
+            "interval_days": {
+                "type": ["integer", "null"],
+                "description": "Для 'interval_days' — раз в сколько дней",
+            },
+        },
+        "required": ["text", "schedule_kind"],
+    },
+}
+
+
+class ReminderPlan(BaseModel):
+    text: str
+    schedule_kind: Literal["once", "monthly_day", "weekly_day", "interval_days"]
+    reminder_date: date | None = None
+    day_of_month: int | None = None
+    weekday: int | None = None
+    interval_days: int | None = None
+
+
+async def parse_reminder(text: str, today: date) -> ReminderPlan:
+    response = await client.messages.create(
+        model=settings.claude_model_haiku,
+        max_tokens=300,
+        system=(
+            f"Сегодняшняя дата: {today.isoformat()}. Разбери напоминание "
+            "пользователя в структурированное расписание."
+        ),
+        tools=[_PARSE_REMINDER_TOOL],
+        tool_choice={"type": "tool", "name": "parse_reminder"},
+        messages=[{"role": "user", "content": text}],
+    )
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+    if tool_use is None:
+        raise ValueError(f"Claude не вернул структурированный ответ на текст: {text!r}")
+    return ReminderPlan.model_validate(tool_use.input)
+
+
 async def summarize_diary(answers_text: str) -> str:
     response = await client.messages.create(
         model=settings.claude_model_haiku,

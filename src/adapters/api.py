@@ -1,5 +1,7 @@
 import logging
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -9,6 +11,7 @@ from src.core.config import settings
 from src.core.db import async_session
 from src.core.notion_sync import sync_tasks_from_notion
 from src.core.telegram_auth import verify_miniapp_init_data
+from src.handlers.f8_habits import check_habit
 from src.integrations import notion
 from src.models.task import Task
 
@@ -69,6 +72,28 @@ async def mark_task_done(page_id: str, _: dict = Depends(get_authorized_user)) -
         await session.commit()
 
     return {"status": "ok"}
+
+
+@app.get("/miniapp/api/habits")
+async def list_habits_endpoint(_: dict = Depends(get_authorized_user)) -> list[dict]:
+    if not settings.notion_habits_db_id:
+        return []
+    habits = await notion.list_habits()
+    return [
+        {
+            "notion_page_id": h["notion_page_id"],
+            "name": h["name"],
+            "streak": h["streak"],
+        }
+        for h in habits
+    ]
+
+
+@app.post("/miniapp/api/habits/{page_id}/check")
+async def mark_habit_checked(page_id: str, _: dict = Depends(get_authorized_user)) -> dict:
+    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    new_streak = await check_habit(page_id, today)
+    return {"status": "ok", "streak": new_streak}
 
 
 # Mount регистрируем последним: Starlette матчит маршруты по порядку
