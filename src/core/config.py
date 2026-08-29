@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     notion_habits_db_id: str = ""
     notion_notes_db_id: str = ""
     tasker_webhook_secret: str = ""
+    weather_city: str = ""
     database_url: str = ""
     redis_url: str = ""
     timezone: str = "Europe/Moscow"

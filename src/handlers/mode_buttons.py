@@ -8,7 +8,7 @@ from src.core.auth import is_authorized
 from src.core.message_text import extract_text
 from src.handlers.f1_task_note import handle_task_note
 from src.handlers.f_notes import handle_note
-from src.handlers.f_question import handle_question
+from src.handlers.f_question import handle_question_input
 from src.handlers.f_reminders import handle_new_reminder
 
 router = Router()
@@ -32,14 +32,19 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
 _BUTTON_PROMPTS: dict[str, tuple[State, str]] = {
     "📝 Задача": (ModeStates.task, "Окей, что за задача?"),
     "🗒 Заметка": (ModeStates.note, "Слушаю, что записать?"),
-    "❓ Вопрос": (ModeStates.question, "Какой у тебя вопрос?"),
+    "❓ Вопрос": (
+        ModeStates.question,
+        "Какой у тебя вопрос? Можно текстом, голосом, фото или PDF.",
+    ),
     "🔔 Напоминалка": (ModeStates.reminder, "Когда и о чём напомнить?"),
 }
 
+# ModeStates.question сюда не входит — у него свой хендлер (handle_question_button
+# ниже): нужен мультимодальный ввод (фото/PDF) и мгновенный ack, который
+# generic-путь через extract_text не покрывает.
 _MODE_HANDLERS = {
     ModeStates.task: handle_task_note,
     ModeStates.note: handle_note,
-    ModeStates.question: handle_question,
     ModeStates.reminder: handle_new_reminder,
 }
 
@@ -72,3 +77,13 @@ async def handle_mode_content(message: Message, state: FSMContext) -> None:
     if not text:
         return
     await handler(message, text)
+
+
+@router.message(StateFilter(ModeStates.question), F.text | F.voice | F.photo | F.document)
+async def handle_question_button(message: Message, state: FSMContext) -> None:
+    if not message.from_user or not is_authorized(message.from_user.id):
+        await message.answer("Извините, этот бот вам недоступен.")
+        return
+
+    await state.clear()
+    await handle_question_input(message)

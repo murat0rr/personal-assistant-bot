@@ -14,9 +14,9 @@ from src.core.config import settings
 from src.core.db import async_session
 from src.core.notion_sync import sync_tasks_from_notion
 from src.handlers.f4_diary import DiaryStates, ask_question
-from src.handlers.f5_morning_digest import build_morning_digest
 from src.handlers.f9_finance import FINANCE_GUIDE
 from src.handlers.f11_weekly_review import build_weekly_review
+from src.handlers.f12_briefing import build_morning_briefing
 from src.handlers.f_reminders import check_reminders
 from src.integrations.notion import list_habits
 from src.models.chat_message import ChatMessage
@@ -33,7 +33,7 @@ async def _daily_sync() -> None:
 async def _morning_digest(bot: Bot) -> None:
     logger.info("Формирую утреннюю сводку")
     await sync_tasks_from_notion(notify_on_change=False)
-    text = await build_morning_digest()
+    text = await build_morning_briefing()
     await bot.send_message(chat_id=settings.telegram_user_id, text=text)
 
 

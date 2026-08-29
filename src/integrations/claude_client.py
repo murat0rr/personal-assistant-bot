@@ -152,6 +152,84 @@ async def summarize_finance_csv(csv_text: str) -> str:
     return "".join(block.text for block in response.content if block.type == "text")
 
 
+_ANSWER_QUESTION_TOOL = {
+    "name": "answer_question",
+    "description": (
+        "Ответить на вопрос пользователя (рецепт, учебный вопрос, разбор "
+        "домашнего задания по фото/PDF, выбор между вариантами, подбор по "
+        "бюджету и т.п.) и приложить файл, если он реально полезен."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "reply_text": {
+                "type": "string",
+                "description": (
+                    "Основной ответ, компактно, на русском — не дублируй в "
+                    "него содержимое приложенного файла, если он есть."
+                ),
+            },
+            "attachment": {
+                "type": ["object", "null"],
+                "description": (
+                    "Файл-приложение (план подготовки, конспект, "
+                    "сравнительная таблица) — только если он реально "
+                    "полезен, иначе null."
+                ),
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "Имя файла с расширением .md или .txt",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Полное содержимое файла",
+                    },
+                },
+            },
+        },
+        "required": ["reply_text"],
+    },
+}
+
+
+class QuestionAttachment(BaseModel):
+    filename: str
+    content: str
+
+
+class QuestionAnswer(BaseModel):
+    reply_text: str
+    attachment: QuestionAttachment | None = None
+
+
+async def answer_question_rich(content_blocks: list[dict]) -> QuestionAnswer:
+    """Мультимодальный ответ на вопрос (текст/голос/фото/PDF, см. kнопку
+    "Вопрос") — в отличие от простого answer_question в web_search.py,
+    здесь forced tool-use, чтобы модель сама решала, нужен ли файл-приложение."""
+    response = await client.messages.create(
+        model=settings.claude_model_sonnet,
+        max_tokens=4096,
+        system=(
+            "Ты отвечаешь на вопросы пользователя: рецепты, учебные "
+            "вопросы, разбор домашних заданий (в том числе по фото или "
+            "PDF), выбор между вариантами, подбор товаров/услуг по "
+            "бюджету. Веб-поиска у тебя нет — для вопросов, требующих "
+            "самых свежих данных, отвечай по знаниям с оговоркой, что они "
+            "могут быть не самыми актуальными. Если это домашнее задание — "
+            "дай пошаговый план решения/подготовки и укажи, какие темы "
+            "стоит повторить."
+        ),
+        tools=[_ANSWER_QUESTION_TOOL],
+        tool_choice={"type": "tool", "name": "answer_question"},
+        messages=[{"role": "user", "content": content_blocks}],
+    )
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+    if tool_use is None:
+        raise ValueError("Claude не вернул структурированный ответ на вопрос")
+    return QuestionAnswer.model_validate(tool_use.input)
+
+
 async def summarize_diary(answers_text: str) -> str:
     response = await client.messages.create(
         model=settings.claude_model_haiku,
