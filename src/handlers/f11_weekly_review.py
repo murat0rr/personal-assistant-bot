@@ -26,7 +26,9 @@ def build_weekly_review_text(
         for t in tasks
         if t.done and t.updated_at is not None and t.updated_at.date() >= week_start
     ]
-    overdue = [t for t in tasks if not t.done and t.due_date is not None and t.due_date < today]
+    overdue = [
+        t for t in tasks if not t.done and t.due_date is not None and t.due_date.date() < today
+    ]
     lines.append(f"\n✅ Задачи: выполнено {len(done_this_week)}, просрочено {len(overdue)}")
 
     week_entries = [e for e in diary_entries if e["entry_date"] and e["entry_date"] >= week_start]

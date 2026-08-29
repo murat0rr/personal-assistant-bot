@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from src.handlers.f5_morning_digest import build_morning_digest_text
 from src.models.task import Task
@@ -7,7 +7,11 @@ _TODAY = date(2026, 8, 29)
 
 
 def _task(title: str, due_date: date | None) -> Task:
-    return Task(title=title, due_date=due_date, done=False)
+    return Task(
+        title=title,
+        due_date=datetime.combine(due_date, datetime.min.time()) if due_date else None,
+        done=False,
+    )
 
 
 def test_empty_when_no_active_tasks():

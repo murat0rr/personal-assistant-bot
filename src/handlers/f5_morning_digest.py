@@ -10,10 +10,11 @@ from src.models.task import Task
 
 def build_morning_digest_text(tasks: list[Task], today: date) -> str:
     """Чистая функция форматирования — Task можно создать без сессии БД
-    (обычный Python-объект), поэтому тестируется офлайн."""
-    active = [t for t in tasks if t.due_date is not None and t.due_date <= today]
-    overdue = sorted((t for t in active if t.due_date < today), key=lambda t: t.due_date)
-    due_today = [t for t in active if t.due_date == today]
+    (обычный Python-объект), поэтому тестируется офлайн. due_date — теперь
+    timestamp (см. Task), поэтому сравниваем именно дату, не время."""
+    active = [t for t in tasks if t.due_date is not None and t.due_date.date() <= today]
+    overdue = sorted((t for t in active if t.due_date.date() < today), key=lambda t: t.due_date)
+    due_today = [t for t in active if t.due_date.date() == today]
 
     if not overdue and not due_today:
         return "🌅 Доброе утро! На сегодня активных задач нет."

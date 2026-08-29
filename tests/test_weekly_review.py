@@ -10,7 +10,7 @@ _WEEK_START = date(2026, 8, 22)
 def _task(done: bool, due_date: date | None = None, updated_at: datetime | None = None) -> Task:
     return Task(
         title="задача",
-        due_date=due_date,
+        due_date=datetime.combine(due_date, datetime.min.time()) if due_date else None,
         done=done,
         updated_at=updated_at,
     )

@@ -157,6 +157,92 @@
       padding: 0;
     }
     .archive-btn { color: var(--accent); }
+    /* Свайп-шторка на строке задачи (Вчера/Сегодня/календарь — не Инбокс,
+       там действия и так всегда на виду). Сама строка (.swipe-content)
+       неподвижна; шторка с кнопками (.swipe-actions) наезжает поверх
+       справа при перетаскивании, фон чуть светлее самой строки. */
+    .swipe-wrap {
+      position: relative;
+      overflow: hidden;
+      border-bottom: 0.5px solid var(--hairline);
+    }
+    .swipe-wrap:last-child { border-bottom: none; }
+    .swipe-actions {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 0;
+      overflow: hidden;
+      display: flex;
+      z-index: 1;
+      background: color-mix(in srgb, var(--card-bg) 85%, white 15%);
+    }
+    .swipe-btn {
+      flex: 0 0 44px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      position: relative;
+    }
+    .swipe-btn + .swipe-btn::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 25%;
+      bottom: 25%;
+      width: 0.5px;
+      background: var(--hairline);
+    }
+    .swipe-btn input[type="date"],
+    .swipe-btn input[type="datetime-local"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+      padding: 0;
+    }
+    .swipe-btn-archive { color: var(--accent); }
+    .swipe-content {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      background: var(--card-bg);
+      touch-action: pan-y;
+    }
+    .swipe-wrap.pending .swipe-content { background: var(--pending-bg); }
+    .swipe-handle {
+      position: absolute;
+      right: 4px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 4px;
+      height: 20px;
+      border-radius: 2px;
+      background: var(--hairline);
+      pointer-events: none;
+    }
+    .event-pin {
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .due-time {
+      font-size: 13px;
+      color: var(--accent);
+      font-weight: 500;
+      flex-shrink: 0;
+    }
+    .list-divider { border-top: 0.5px solid var(--hairline); }
     .day-carousel {
       display: flex;
       overflow-x: auto;
@@ -366,13 +452,29 @@
     function chevronIcon() {
       return icon('<path d="M6 9l6 6 6-6"/>', 14);
     }
+    function eventPinIcon() {
+      return icon('<path d="M12 21c4-4.5 7-8 7-12a7 7 0 10-14 0c0 4 3 7.5 7 12z"/><circle cx="12" cy="9" r="2.3"/>', 15);
+    }
+    function editIcon() {
+      return icon('<path d="M16.5 4.5l3 3L7 20l-4 1 1-4z"/>', 18);
+    }
 
     // ---- Состояние. Рендер идёт из него, без похода в сеть на каждое действие
     // (optimistic UI) — сеть только подтверждает то, что уже видно на экране.
     let boardState = { days: {}, dated_tasks: [], inbox: [] };
     const pendingIds = new Set();
 
-    const PRIORITY_ORDER = { высокий: 0, средний: 1, низкий: 2 };
+    const PRIORITY_ORDER = { высокий: 0, event: 0, средний: 1, низкий: 2 };
+    const PRIORITY_CYCLE = ["низкий", "средний", "высокий", "event"];
+    function nextPriority(current) {
+      const index = PRIORITY_CYCLE.indexOf(current);
+      return PRIORITY_CYCLE[(index + 1) % PRIORITY_CYCLE.length];
+    }
+    function priorityGlyph(priority) {
+      if (priority === "event") return eventPinIcon();
+      const opacity = priority === "высокий" ? "1" : priority === "низкий" ? ".35" : ".65";
+      return `<span style="display:flex;opacity:${opacity}">${flagIcon()}</span>`;
+    }
 
     // Порядок внутри списка фиксируется один раз при загрузке доски
     // (assignTaskOrder, вызывается из loadBoard) и больше не пересчитывается
@@ -504,22 +606,226 @@
       return row;
     }
 
+    const SWIPE_MAX_REVEAL = 176; // 4 кнопки по 44px
+
+    // Палец двигает не саму строку, а ширину шторки с кнопками — строка
+    // (.swipe-content) неподвижна, шторка (.swipe-actions) наезжает поверх
+    // справа. Возвращает { close() } — им пользуются кнопки внутри шторки,
+    // чтобы закрыться после действия (кроме архивации — там схлопывается
+    // вся строка).
+    function setupSwipeDrag(actions, content) {
+      let startX = 0;
+      let curX = 0;
+      let dragging = false;
+      let open = false;
+
+      function setReveal(px, animate) {
+        actions.style.transition = animate ? "width 180ms ease" : "none";
+        actions.style.width = px + "px";
+      }
+
+      content.addEventListener("pointerdown", (e) => {
+        startX = e.clientX;
+        curX = startX;
+        dragging = false;
+      });
+      content.addEventListener("pointermove", (e) => {
+        const dx = e.clientX - startX;
+        if (!dragging) {
+          if (Math.abs(dx) < 6) return;
+          dragging = true;
+          content.setPointerCapture(e.pointerId);
+        }
+        curX = e.clientX;
+        let reveal = open ? SWIPE_MAX_REVEAL - dx : -dx;
+        reveal = Math.max(0, Math.min(SWIPE_MAX_REVEAL, reveal));
+        setReveal(reveal, false);
+        e.preventDefault();
+      });
+      function endDrag() {
+        if (!dragging) return;
+        const dx = curX - startX;
+        const wasOpen = open;
+        open = wasOpen ? dx > -SWIPE_MAX_REVEAL / 2 : dx < -SWIPE_MAX_REVEAL / 2;
+        setReveal(open ? SWIPE_MAX_REVEAL : 0, true);
+        dragging = false;
+      }
+      content.addEventListener("pointerup", endDrag);
+      content.addEventListener("pointercancel", endDrag);
+
+      return {
+        close: () => {
+          setReveal(0, true);
+          open = false;
+        },
+      };
+    }
+
+    // Строка задачи со свайп-шторкой — Вчера/Сегодня/календарь. Инбокс
+    // держит свой renderTaskRow с всегда видимыми иконками (см. render()) —
+    // там свайп ни к чему, действия там нужны мгновенно, без лишнего жеста.
+    function renderSwipeableTaskRow(task, { showMoveToToday }) {
+      const isPending = pendingIds.has(task.id);
+      let swipeHandle = null; // назначим после setupSwipeDrag ниже
+
+      const wrap = document.createElement("div");
+      wrap.className = "swipe-wrap" + (isPending ? " pending" : "");
+
+      const actions = document.createElement("div");
+      actions.className = "swipe-actions";
+
+      const priorityBtn = document.createElement("button");
+      priorityBtn.className = "swipe-btn";
+      priorityBtn.disabled = isPending;
+      priorityBtn.setAttribute("aria-label", "Изменить приоритет");
+      priorityBtn.innerHTML = priorityGlyph(task.priority);
+      priorityBtn.onclick = () => {
+        swipeHandle.close();
+        cycleTaskPriority(task);
+      };
+
+      const dateBtn = document.createElement("button");
+      dateBtn.className = "swipe-btn";
+      dateBtn.disabled = isPending;
+      dateBtn.setAttribute("aria-label", "Дата и время");
+      dateBtn.innerHTML = calendarIcon();
+      const dateInput = document.createElement("input");
+      // Для события сразу дата+время одним пикером; для обычной задачи —
+      // только дата, как и было, без лишнего поля под редкий случай.
+      dateInput.type = task.priority === "event" ? "datetime-local" : "date";
+      dateInput.onchange = () => {
+        if (!dateInput.value) return;
+        swipeHandle.close();
+        setTaskDueDate(task, dateInput.value);
+      };
+      dateBtn.onclick = () => (dateInput.showPicker ? dateInput.showPicker() : dateInput.click());
+      dateBtn.append(dateInput);
+
+      const editBtn = document.createElement("button");
+      editBtn.className = "swipe-btn";
+      editBtn.disabled = isPending;
+      editBtn.setAttribute("aria-label", "Переименовать");
+      editBtn.innerHTML = editIcon();
+      editBtn.onclick = () => {
+        swipeHandle.close();
+        editTaskTitle(task);
+      };
+
+      const archiveBtn = document.createElement("button");
+      archiveBtn.className = "swipe-btn swipe-btn-archive";
+      archiveBtn.disabled = isPending;
+      archiveBtn.setAttribute("aria-label", "Архивировать");
+      archiveBtn.innerHTML = archiveIcon();
+      archiveBtn.onclick = () => archiveTask(task);
+
+      actions.append(priorityBtn, dateBtn, editBtn, archiveBtn);
+
+      const content = document.createElement("div");
+      content.className = "swipe-content";
+
+      const checkbox = document.createElement("button");
+      checkbox.className = "checkbox" + (task.done ? " done" : "");
+      checkbox.disabled = isPending;
+      checkbox.setAttribute("aria-label", task.done ? "Снять отметку" : "Отметить выполненной");
+      checkbox.innerHTML = checkIcon();
+      checkbox.onclick = () => toggleTaskDone(task);
+      content.append(checkbox);
+
+      const title = document.createElement("span");
+      title.className = "title" + (task.done ? " done" : "");
+      title.textContent = task.title;
+      content.append(title);
+
+      if (task.due_time) {
+        const time = document.createElement("span");
+        time.className = "due-time";
+        time.textContent = task.due_time;
+        content.append(time);
+      }
+
+      // Один и тот же "слот" справа от заголовка — либо флажок высокого
+      // приоритета, либо булавка события (только пока у события нет
+      // времени: раз время уже показано текстом, отдельный значок не нужен).
+      if (!task.done && task.priority === "высокий") {
+        const flag = document.createElement("span");
+        flag.className = "flag-icon";
+        flag.setAttribute("aria-label", "Высокий приоритет");
+        flag.innerHTML = flagIcon();
+        content.append(flag);
+      } else if (task.priority === "event" && !task.due_time) {
+        const pin = document.createElement("span");
+        pin.className = "event-pin";
+        pin.setAttribute("aria-label", "Событие");
+        pin.innerHTML = eventPinIcon();
+        content.append(pin);
+      }
+
+      if (showMoveToToday && !task.done) {
+        const moveBtn = document.createElement("button");
+        moveBtn.className = "small-btn";
+        moveBtn.disabled = isPending;
+        moveBtn.setAttribute("aria-label", "Перенести на сегодня");
+        moveBtn.innerHTML = moveToTodayIcon();
+        moveBtn.onclick = () => setTaskDueDate(task, boardState.days.today.date);
+        content.append(moveBtn);
+      }
+
+      const handle = document.createElement("span");
+      handle.className = "swipe-handle";
+      content.append(handle);
+
+      wrap.append(actions, content);
+      swipeHandle = setupSwipeDrag(actions, content);
+      return wrap;
+    }
+
+    function renderEmpty(container) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "Пусто";
+      container.append(empty);
+    }
+
     function renderList(container, tasks, opts) {
       container.innerHTML = "";
+      if (opts.groupEvents) {
+        renderGroupedList(container, tasks, opts);
+        return;
+      }
       const sorted = sortTasks(tasks);
       if (sorted.length === 0) {
-        const empty = document.createElement("div");
-        empty.className = "empty";
-        empty.textContent = "Пусто";
-        container.append(empty);
+        renderEmpty(container);
         return;
       }
       sorted.forEach((t) => container.append(renderTaskRow(t, opts)));
     }
 
+    // Вчера/Сегодня/календарь: события со временем — отдельной группой
+    // сверху, отсортированы по времени, дальше тонкая линия и обычные
+    // задачи по приоритету, как в остальных списках.
+    function renderGroupedList(container, tasks, opts) {
+      const events = tasks
+        .filter((t) => t.priority === "event")
+        .sort((a, b) => (a.due_time || "").localeCompare(b.due_time || ""));
+      const regular = sortTasks(tasks.filter((t) => t.priority !== "event"));
+
+      if (events.length === 0 && regular.length === 0) {
+        renderEmpty(container);
+        return;
+      }
+
+      events.forEach((t) => container.append(renderSwipeableTaskRow(t, opts)));
+      if (events.length && regular.length) {
+        const divider = document.createElement("div");
+        divider.className = "list-divider";
+        container.append(divider);
+      }
+      regular.forEach((t) => container.append(renderSwipeableTaskRow(t, opts)));
+    }
+
     const _dayOpts = {
-      yesterday: { showDateButton: false, showTrashButton: false, showMoveToToday: true },
-      today: { showDateButton: false, showTrashButton: false, showMoveToToday: false },
+      yesterday: { groupEvents: true, showMoveToToday: true },
+      today: { groupEvents: true, showMoveToToday: false },
     };
 
     const WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -603,8 +909,7 @@
       const listEl = document.createElement("div");
       listEl.className = "list";
       renderList(listEl, tasksForDate(selectedWeekDate), {
-        showDateButton: false,
-        showTrashButton: false,
+        groupEvents: true,
         showMoveToToday: false,
       });
       el.append(listEl);
@@ -701,26 +1006,84 @@
       }
     }
 
-    async function setTaskDueDate(task, isoDate) {
+    async function setTaskDueDate(task, value) {
+      // value — либо чистая дата ("2026-09-01", обычный <input type=date>),
+      // либо datetime-local ("2026-09-01T14:30", событие со временем).
+      // due_date локально остаётся чистой датой (им живёт вся бакетизация
+      // по дням), время — отдельно в due_time; на бэкенд шлём value целиком,
+      // там разбирается на timestamp.
       const id = task.id;
       const prevDate = task.due_date;
-      task.due_date = isoDate;
+      const prevTime = task.due_time;
+      task.due_date = value.slice(0, 10);
+      task.due_time = value.length > 10 ? value.slice(11, 16) : null;
       pendingIds.add(id);
       rebucketTask(task);
       render();
       try {
         await api(`/miniapp/api/tasks/${encodeURIComponent(id)}/due-date`, {
           method: "POST",
-          body: JSON.stringify({ due_date: isoDate }),
+          body: JSON.stringify({ due_date: value }),
         });
       } catch (e) {
         task.due_date = prevDate;
+        task.due_time = prevTime;
         rebucketTask(task);
         alert("Не удалось поставить дату.");
       } finally {
         pendingIds.delete(id);
         render();
       }
+    }
+
+    async function cycleTaskPriority(task) {
+      const id = task.id;
+      const prevPriority = task.priority;
+      task.priority = nextPriority(task.priority);
+      pendingIds.add(id);
+      render();
+      try {
+        await api(`/miniapp/api/tasks/${encodeURIComponent(id)}/priority`, {
+          method: "POST",
+          body: JSON.stringify({ priority: task.priority }),
+        });
+      } catch (e) {
+        task.priority = prevPriority;
+        render();
+        alert("Не удалось изменить приоритет.");
+      } finally {
+        pendingIds.delete(id);
+        render();
+      }
+    }
+
+    async function renameTask(task, newTitle) {
+      const trimmed = newTitle.trim();
+      if (!trimmed || trimmed === task.title) return;
+      const id = task.id;
+      const prevTitle = task.title;
+      task.title = trimmed;
+      pendingIds.add(id);
+      render();
+      try {
+        await api(`/miniapp/api/tasks/${encodeURIComponent(id)}/title`, {
+          method: "POST",
+          body: JSON.stringify({ title: trimmed }),
+        });
+      } catch (e) {
+        task.title = prevTitle;
+        render();
+        alert("Не удалось переименовать задачу.");
+      } finally {
+        pendingIds.delete(id);
+        render();
+      }
+    }
+
+    function editTaskTitle(task) {
+      const next = prompt("Новое название", task.title);
+      if (next === null) return; // отменили
+      renameTask(task, next);
     }
 
     async function archiveTask(task) {
@@ -747,6 +1110,7 @@
         id: tempId,
         title,
         due_date: dueDate,
+        due_time: null,
         priority: "средний",
         done: false,
       };

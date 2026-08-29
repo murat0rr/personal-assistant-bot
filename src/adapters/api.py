@@ -21,6 +21,17 @@ from src.models.task import Task
 
 _DEFAULT_PRIORITY = "средний"
 
+
+def _parse_due_date(value: str) -> datetime:
+    """due_date в БД — timestamp. Фронтенд шлёт либо чистую дату
+    ("2026-09-01", обычная задача — идёт на полночь), либо
+    datetime-local ("2026-09-01T14:30", событие со временем начала)."""
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return datetime.combine(date.fromisoformat(value), datetime.min.time())
+
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -54,6 +65,14 @@ class SetDueDateRequest(BaseModel):
     due_date: str
 
 
+class SetPriorityRequest(BaseModel):
+    priority: str
+
+
+class SetTitleRequest(BaseModel):
+    title: str
+
+
 @app.get("/miniapp/api/tasks")
 async def list_tasks(_: dict = Depends(get_authorized_user)) -> dict:
     # Postgres — единственный источник правды для задач (Phase 10), поэтому
@@ -72,8 +91,8 @@ async def create_task_endpoint(
 ) -> dict:
     # due_date=None — валидный случай (задача из Инбокса, без даты), не
     # заменяем его на "сегодня": фронтенд всегда передаёт то, что реально
-    # имел в виду (конкретный день, либо явно null).
-    due_date = date.fromisoformat(payload.due_date) if payload.due_date else None
+    # имел в виду (конкретный день/дата+время, либо явно null).
+    due_date = _parse_due_date(payload.due_date) if payload.due_date else None
 
     async with async_session() as session:
         task = Task(
@@ -113,7 +132,41 @@ async def set_task_due_date(
         if task is None:
             raise HTTPException(status_code=404, detail="not found")
 
-        task.due_date = date.fromisoformat(payload.due_date)
+        task.due_date = _parse_due_date(payload.due_date)
+        await session.commit()
+
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/tasks/{task_id}/priority")
+async def set_task_priority(
+    task_id: int, payload: SetPriorityRequest, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="not found")
+
+        task.priority = payload.priority
+        await session.commit()
+
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/tasks/{task_id}/title")
+async def set_task_title(
+    task_id: int, payload: SetTitleRequest, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="empty title")
+
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="not found")
+
+        task.title = title
         await session.commit()
 
     return {"status": "ok"}

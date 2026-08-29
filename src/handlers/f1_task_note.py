@@ -20,7 +20,12 @@ async def handle_task_note(message: Message, text: str) -> None:
         async with async_session() as session:
             task = Task(
                 title=fields.title,
-                due_date=fields.due_date,
+                # due_date в БД — timestamp; голосовая/текстовая задача времени
+                # не задаёт, поэтому дата целиком идёт на полночь (конвенция
+                # "время не указано", см. handlers/miniapp_tasks.py).
+                due_date=datetime.combine(fields.due_date, datetime.min.time())
+                if fields.due_date
+                else None,
                 priority=fields.priority,
                 source="F1",
             )

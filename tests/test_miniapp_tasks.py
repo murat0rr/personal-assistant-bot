@@ -1,6 +1,6 @@
-from datetime import date
+from datetime import date, datetime
 
-from src.handlers.miniapp_tasks import build_task_board
+from src.handlers.miniapp_tasks import build_task_board, next_priority
 from src.models.task import Task
 
 # 2026-08-29 — суббота.
@@ -14,9 +14,11 @@ def _task(
     priority: str | None = None,
     done: bool = False,
 ) -> Task:
+    # due_date в модели — timestamp; здесь удобнее задавать в тестах просто
+    # день, а на полночь переводим внутри (см. Task.due_date).
     return Task(
         title=title,
-        due_date=due_date,
+        due_date=datetime.combine(due_date, datetime.min.time()) if due_date else None,
         priority=priority,
         done=done,
     )
@@ -77,3 +79,25 @@ def test_empty_board():
     assert board["days"]["today"]["tasks"] == []
     assert board["inbox"] == []
     assert board["dated_tasks"] == []
+
+
+def test_due_time_shown_only_when_not_midnight():
+    with_time = Task(
+        title="встреча", due_date=datetime(2026, 8, 29, 14, 30), priority="event", done=False
+    )
+    without_time = Task(
+        title="обычная", due_date=datetime(2026, 8, 29, 0, 0), priority="средний", done=False
+    )
+    board = build_task_board([with_time, without_time], _TODAY)
+    by_title = {t["title"]: t for t in board["dated_tasks"]}
+    assert by_title["встреча"]["due_time"] == "14:30"
+    assert by_title["встреча"]["due_date"] == "2026-08-29"
+    assert by_title["обычная"]["due_time"] is None
+
+
+def test_next_priority_cycles_through_all_four_and_wraps():
+    assert next_priority(None) == "низкий"
+    assert next_priority("низкий") == "средний"
+    assert next_priority("средний") == "высокий"
+    assert next_priority("высокий") == "event"
+    assert next_priority("event") == "низкий"

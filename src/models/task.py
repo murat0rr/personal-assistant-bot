@@ -1,6 +1,6 @@
-from datetime import date, datetime
+from datetime import datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Integer, String
+from sqlalchemy import Boolean, DateTime, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -19,7 +19,11 @@ class Task(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     legacy_notion_id: Mapped[str | None] = mapped_column(String, nullable=True)
     title: Mapped[str] = mapped_column(String)
-    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # timestamp, а не date — гибкость для задач-событий со временем начала
+    # (приоритет "event"). Полночь (00:00) = время не указано, обычная
+    # задача на день; ненулевое время — событие с конкретным началом. Без
+    # отдельного булева флага под один частный случай — см. handlers/miniapp_tasks.py.
+    due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
     priority: Mapped[str | None] = mapped_column(String, nullable=True)
     done: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
