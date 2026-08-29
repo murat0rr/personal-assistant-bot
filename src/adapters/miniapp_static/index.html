@@ -183,32 +183,26 @@
     .day-dot.active { opacity: 1; }
     .digest { padding: 12px 14px; font-size: 14px; color: var(--text-muted); }
     button:disabled { opacity: 0.5; }
-    /* Полоска недель — такая же нативная scroll-snap карусель, как и внешняя
-       (вчера/сегодня/календарь): три панели (пред./тек./след. неделя),
-       после каждого свайпа JS переключает данные и мгновенно "перематывает"
-       обратно в центр — иллюзия бесконечной прокрутки без сети. */
+    /* Полоска недель — три панели (пред./тек./след. неделя), но, в отличие
+       от внешней карусели вчера/сегодня/календарь, БЕЗ нативного
+       scroll-snap: у него на некоторых устройствах после плавного доезда
+       по инерции идёт отдельная "довод-до-пикселя" коррекция от браузера,
+       и на медленном свайпе это заметно как маленький срыв в самом конце.
+       Вместо этого палец двигает .week-track напрямую через transform
+       (JS ниже), а после отпускания — ровно один наш собственный CSS-
+       transition до целевой недели, без вмешательства нативной физики. */
     .week-carousel {
-      display: flex;
-      gap: 12px;
-      overflow-x: auto;
-      scroll-snap-type: x mandatory;
-      -webkit-overflow-scrolling: touch;
-      scrollbar-width: none;
-      /* Не отдаём остаток жеста внешней карусели, когда полоска недель
-         упирается в свой край (первая/последняя из трёх панелей) —
-         иначе долгий свайп мог бы "провалиться" на страницу вчера/сегодня. */
-      overscroll-behavior-x: contain;
-      /* Отступы по бокам вместе с шириной панели меньше 100% — по краям
-         видны кусочки соседних недель ("peek"), явный намёк, что полоску
-         можно пролистать, без лишних стрелочек/подписей. Подобрали на
-         макете — 4% с каждой стороны, только половинка ячейки выглядывает. */
-      padding: 0 4%;
+      overflow: hidden;
     }
-    .week-carousel::-webkit-scrollbar { display: none; }
+    .week-track {
+      display: flex;
+      gap: 8px;
+      touch-action: pan-y;
+    }
     .week-page {
-      flex: 0 0 92%;
-      min-width: 92%;
-      scroll-snap-align: center;
+      /* Ширина — в px через JS (applyWeekPanelSizes), от неё же зависит
+         величина "peek" по бокам, см. WEEK_PANEL_RATIO в JS. */
+      flex: 0 0 auto;
     }
     .week-grid {
       display: grid;
@@ -275,9 +269,11 @@
       </div>
       <div class="day-page" data-day="calendar">
         <div class="week-carousel" id="week-carousel">
-          <div class="week-page"><div class="week-grid" data-slot="prev"></div></div>
-          <div class="week-page"><div class="week-grid" data-slot="current"></div></div>
-          <div class="week-page"><div class="week-grid" data-slot="next"></div></div>
+          <div class="week-track" id="week-track">
+            <div class="week-page"><div class="week-grid" data-slot="prev"></div></div>
+            <div class="week-page"><div class="week-grid" data-slot="current"></div></div>
+            <div class="week-page"><div class="week-grid" data-slot="next"></div></div>
+          </div>
         </div>
         <div id="week-day-detail"></div>
       </div>
@@ -548,9 +544,10 @@
       next: document.querySelector('#week-carousel .week-grid[data-slot="next"]'),
     };
 
-    // Три панели (пред./тек./след. неделя) — контент недель-соседей, чтобы
-    // нативный scroll-snap мог их показать во время свайпа, ещё до того как
-    // мы решим, что жест завершён.
+    // Три панели (пред./тек./след. неделя) — контент недель-соседей уже
+    // готов заранее, чтобы во время свайпа (перетаскивания .week-track)
+    // они сразу были видны по бокам, ещё до того как мы решим, что жест
+    // завершён.
     function renderWeekCarousel() {
       if (!weekStart) return;
       fillWeekGrid(_weekGridEls.prev, addDaysIso(weekStart, -7));
@@ -773,65 +770,118 @@
       document.getElementById("inbox-chevron").classList.toggle("expanded", inboxExpanded);
     };
 
-    // Полоска недель — нативный scroll-snap (см. .week-carousel), тот же
-    // механизм, что и внешняя карусель вчера/сегодня/календарь: палец
-    // двигает контент 1:1, длинный свайп нужен как и там. Панели уже не на
-    // всю ширину (видны кусочки соседних недель по бокам — "peek"), поэтому
-    // центрирование считаем по геометрии самих панелей (scrollIntoView),
-    // а не по clientWidth контейнера. После того как скролл "устаканился"
-    // на соседней панели — переключаем данные недели и мгновенно (без
-    // анимации) прыгаем обратно в центр, имитируя бесконечную прокрутку
-    // без похода в сеть.
+    // Полоска недель — палец двигает .week-track напрямую через transform
+    // (1:1, без нативного скролла), а после отпускания доезжает ровно
+    // одним нашим CSS-transition до целевой недели. Три панели
+    // (пред./тек./след.) переиспользуются: после доезда JS подменяет их
+    // данные и мгновенно (без анимации) возвращает transform в центр —
+    // имитация бесконечной прокрутки без похода в сеть.
     const weekCarousel = document.getElementById("week-carousel");
-    const weekPages = Array.from(document.querySelectorAll("#week-carousel .week-page"));
+    const weekTrack = document.getElementById("week-track");
+    const weekPages = Array.from(document.querySelectorAll("#week-track .week-page"));
+
+    const WEEK_PANEL_RATIO = 0.88; // ширина панели — вместе с WEEK_GAP даёт ~4% видимого peek с каждой стороны
+    const WEEK_GAP = 8; // должен совпадать с gap в .week-track — съедает часть отступа между панелями
+    const WEEK_DRAG_THRESHOLD = 0.22; // доля шага панели, после которой при отпускании переключаем неделю
+    const WEEK_FLING_VELOCITY = 0.5; // px/мс — быстрый флик переключает неделю независимо от пройденного расстояния
+
+    function weekGeometry() {
+      const vw = weekCarousel.clientWidth;
+      const pw = vw * WEEK_PANEL_RATIO;
+      return { vw, pw, step: pw + WEEK_GAP };
+    }
+
+    function applyWeekPanelSizes() {
+      const { pw } = weekGeometry();
+      weekPages.forEach((el) => {
+        el.style.width = pw + "px";
+      });
+    }
+
+    function weekRestX(index) {
+      const { vw, pw, step } = weekGeometry();
+      return vw / 2 - (index * step + pw / 2);
+    }
+
+    function setWeekTrackTransform(x, withTransition) {
+      weekTrack.style.transition = withTransition ? "transform 240ms cubic-bezier(0.22, 1, 0.36, 1)" : "none";
+      weekTrack.style.transform = `translateX(${x}px)`;
+    }
 
     function recenterWeekCarousel() {
-      weekPages[1].scrollIntoView({ inline: "center", block: "nearest" });
+      applyWeekPanelSizes();
+      setWeekTrackTransform(weekRestX(1), false);
     }
 
-    function nearestWeekPageIndex() {
-      const containerRect = weekCarousel.getBoundingClientRect();
-      const containerCenter = containerRect.left + containerRect.width / 2;
-      let bestIndex = 1;
-      let bestDist = Infinity;
-      weekPages.forEach((el, i) => {
-        const r = el.getBoundingClientRect();
-        const dist = Math.abs(r.left + r.width / 2 - containerCenter);
-        if (dist < bestDist) {
-          bestDist = dist;
-          bestIndex = i;
-        }
-      });
-      return bestIndex;
+    let weekDrag = null;
+    let weekSettling = false;
+
+    weekTrack.addEventListener("pointerdown", (e) => {
+      if (weekSettling) return;
+      weekDrag = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        baseX: weekRestX(1),
+        dragging: false,
+        lastX: e.clientX,
+        lastTime: e.timeStamp,
+        velocity: 0,
+      };
+    });
+
+    weekTrack.addEventListener("pointermove", (e) => {
+      if (!weekDrag || e.pointerId !== weekDrag.pointerId) return;
+      const dx = e.clientX - weekDrag.startX;
+      if (!weekDrag.dragging) {
+        if (Math.abs(dx) < 6) return; // ещё не ясно, тап это или свайп — не мешаем клику по ячейке
+        weekDrag.dragging = true;
+        weekTrack.setPointerCapture(weekDrag.pointerId);
+      }
+      const dt = e.timeStamp - weekDrag.lastTime;
+      if (dt > 0) weekDrag.velocity = (e.clientX - weekDrag.lastX) / dt;
+      weekDrag.lastX = e.clientX;
+      weekDrag.lastTime = e.timeStamp;
+      setWeekTrackTransform(weekDrag.baseX + dx, false);
+      e.preventDefault();
+    });
+
+    function endWeekDrag(e) {
+      if (!weekDrag || e.pointerId !== weekDrag.pointerId) return;
+      const drag = weekDrag;
+      weekDrag = null;
+      if (!drag.dragging) return; // тап — ничего не двигали, клик по ячейке отработает сам
+
+      const dx = e.clientX - drag.startX;
+      const { step } = weekGeometry();
+      let targetIndex = 1;
+      if (Math.abs(drag.velocity) > WEEK_FLING_VELOCITY) {
+        targetIndex = drag.velocity < 0 ? 2 : 0;
+      } else if (Math.abs(dx) > step * WEEK_DRAG_THRESHOLD) {
+        targetIndex = dx < 0 ? 2 : 0;
+      }
+      settleWeekCarousel(targetIndex);
     }
 
-    // Раньше подмена контента (следующая неделя) срабатывала по таймеру
-    // (150мс без новых scroll-событий) — из-за этого могла сработать чуть
-    // раньше, чем нативная анимация snap-доводки реально долетала до места,
-    // и переключение выглядело резким рывком вместо плавного доезда.
-    // "scrollend" — специально для этого событие: срабатывает ровно один
-    // раз, именно когда скролл (включая анимацию довода) по-настоящему
-    // закончился. Таймер оставляем только как запасной вариант для
-    // движков без поддержки scrollend.
-    if ("onscrollend" in window) {
-      weekCarousel.addEventListener("scrollend", onWeekCarouselSettled);
-    } else {
-      let weekScrollTimer = null;
-      weekCarousel.addEventListener("scroll", () => {
-        clearTimeout(weekScrollTimer);
-        weekScrollTimer = setTimeout(onWeekCarouselSettled, 300);
-      });
-    }
+    weekTrack.addEventListener("pointerup", endWeekDrag);
+    weekTrack.addEventListener("pointercancel", endWeekDrag);
 
-    function onWeekCarouselSettled() {
-      const index = nearestWeekPageIndex(); // 0=пред., 1=тек., 2=след.
-      if (index === 1) return;
-      weekStart = addDaysIso(weekStart, (index === 0 ? -1 : 1) * 7);
-      selectedWeekDate = null;
-      renderWeekCarousel();
-      recenterWeekCarousel();
-      renderWeekDetail();
-      updateDayLabel();
+    function settleWeekCarousel(targetIndex) {
+      weekSettling = true;
+      setWeekTrackTransform(weekRestX(targetIndex), true);
+      weekTrack.addEventListener(
+        "transitionend",
+        () => {
+          weekSettling = false;
+          if (targetIndex === 1) return; // просто откатились назад — неделя не поменялась
+          weekStart = addDaysIso(weekStart, (targetIndex === 0 ? -1 : 1) * 7);
+          selectedWeekDate = null;
+          renderWeekCarousel();
+          recenterWeekCarousel();
+          renderWeekDetail();
+          updateDayLabel();
+        },
+        { once: true }
+      );
     }
 
     const MONTH_NAMES = [
