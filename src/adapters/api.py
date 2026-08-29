@@ -43,6 +43,7 @@ async def get_authorized_user(x_telegram_init_data: str = Header(...)) -> dict:
 
 class CreateTaskRequest(BaseModel):
     title: str
+    due_date: str | None = None
 
 
 class MarkDoneRequest(BaseModel):
@@ -71,9 +72,13 @@ async def list_tasks(_: dict = Depends(get_authorized_user)) -> dict:
 async def create_task_endpoint(
     payload: CreateTaskRequest, _: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    due_date = (
+        date.fromisoformat(payload.due_date)
+        if payload.due_date
+        else datetime.now(ZoneInfo(settings.timezone)).date()
+    )
     page_id, url = await notion.create_task(
-        payload.title, today, _DEFAULT_PRIORITY, source="MiniApp"
+        payload.title, due_date, _DEFAULT_PRIORITY, source="MiniApp"
     )
 
     async with async_session() as session:
@@ -81,7 +86,7 @@ async def create_task_endpoint(
             Task(
                 notion_page_id=page_id,
                 title=payload.title,
-                due_date=today,
+                due_date=due_date,
                 priority=_DEFAULT_PRIORITY,
                 status="unknown",
                 source="MiniApp",
@@ -89,7 +94,7 @@ async def create_task_endpoint(
         )
         await session.commit()
 
-    return {"status": "ok", "url": url}
+    return {"status": "ok", "url": url, "page_id": page_id}
 
 
 @app.post("/miniapp/api/tasks/{page_id}/done")

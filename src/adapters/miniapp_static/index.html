@@ -14,6 +14,7 @@
       --hairline: rgba(127, 127, 127, 0.2);
       --accent: var(--tg-theme-button-color, #2481cc);
       --accent-text: var(--tg-theme-button-text-color, #ffffff);
+      --pending-bg: rgba(36, 129, 204, 0.1);
     }
     * { box-sizing: border-box; }
     body {
@@ -41,8 +42,10 @@
       gap: 10px;
       padding: 12px 14px;
       border-bottom: 0.5px solid var(--hairline);
+      transition: background-color 0.15s ease;
     }
     .row:last-child { border-bottom: none; }
+    .row.pending { background: var(--pending-bg); }
     .empty {
       padding: 12px 14px;
       font-size: 14px;
@@ -79,11 +82,11 @@
       color: var(--text-muted);
       text-decoration: line-through;
     }
-    .priority {
-      font-size: 12px;
-      color: var(--text-muted);
+    .flag-icon {
+      color: var(--accent);
+      display: flex;
+      align-items: center;
       flex-shrink: 0;
-      white-space: nowrap;
     }
     .add-row {
       display: flex;
@@ -135,14 +138,13 @@
       border: none;
       padding: 0;
     }
-    .trash-btn { color: #e2504a; }
+    .archive-btn { color: var(--accent); }
     .day-carousel {
       display: flex;
       overflow-x: auto;
       scroll-snap-type: x mandatory;
       -webkit-overflow-scrolling: touch;
       scrollbar-width: none;
-      border-radius: 12px;
     }
     .day-carousel::-webkit-scrollbar { display: none; }
     .day-page {
@@ -173,18 +175,32 @@
   <div class="section">
     <p class="section-label" id="day-label">Сегодня</p>
     <div class="day-carousel" id="day-carousel">
-      <div class="day-page"><div id="yesterday-list" class="list"></div></div>
-      <div class="day-page"><div id="today-list" class="list"></div></div>
-      <div class="day-page"><div id="tomorrow-list" class="list"></div></div>
+      <div class="day-page" data-day="yesterday">
+        <div class="list" id="yesterday-list"></div>
+        <div class="add-row">
+          <input type="text" class="day-task-input" placeholder="Новая задача" />
+          <button class="icon-btn day-task-add" aria-label="Добавить задачу"></button>
+        </div>
+      </div>
+      <div class="day-page" data-day="today">
+        <div class="list" id="today-list"></div>
+        <div class="add-row">
+          <input type="text" class="day-task-input" placeholder="Новая задача" />
+          <button class="icon-btn day-task-add" aria-label="Добавить задачу"></button>
+        </div>
+      </div>
+      <div class="day-page" data-day="tomorrow">
+        <div class="list" id="tomorrow-list"></div>
+        <div class="add-row">
+          <input type="text" class="day-task-input" placeholder="Новая задача" />
+          <button class="icon-btn day-task-add" aria-label="Добавить задачу"></button>
+        </div>
+      </div>
     </div>
     <div class="day-dots">
       <span class="day-dot" data-index="0"></span>
       <span class="day-dot active" data-index="1"></span>
       <span class="day-dot" data-index="2"></span>
-    </div>
-    <div class="add-row">
-      <input id="new-task-input" type="text" placeholder="Новая задача на сегодня" />
-      <button id="add-task-btn" class="icon-btn" aria-label="Добавить задачу"></button>
     </div>
   </div>
 
@@ -239,40 +255,72 @@
         16
       );
     }
-    function trashIcon() {
-      return icon(
-        '<line x1="4" y1="7" x2="20" y2="7"/><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/><path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"/>',
-        16
-      );
+    function archiveIcon() {
+      return icon('<rect x="4" y="10" width="16" height="10" rx="1"/><path d="M12 3v8M9 8l3 3 3-3"/>', 16);
     }
     function plusIcon() {
       return icon('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>', 18);
     }
+    function flagIcon() {
+      return icon('<line x1="5" y1="3" x2="5" y2="21"/><path d="M5 4h11l-3 4 3 4H5"/>', 15);
+    }
 
-    document.getElementById("add-task-btn").innerHTML = plusIcon();
-    document.getElementById("add-habit-btn").innerHTML = plusIcon();
+    // ---- Состояние. Рендер идёт из него, без похода в сеть на каждое действие
+    // (optimistic UI) — сеть только подтверждает то, что уже видно на экране.
+    let boardState = { days: {}, inbox: [] };
+    const pendingIds = new Set();
+
+    const PRIORITY_ORDER = { высокий: 0, средний: 1, низкий: 2 };
+    function sortTasks(tasks) {
+      return [...tasks].sort((a, b) => {
+        if (a.done !== b.done) return a.done ? 1 : -1;
+        return (PRIORITY_ORDER[a.priority] ?? 3) - (PRIORITY_ORDER[b.priority] ?? 3);
+      });
+    }
+
+    function findTaskById(id) {
+      for (const key of ["yesterday", "today", "tomorrow"]) {
+        const t = boardState.days[key]?.tasks.find((t) => t.notion_page_id === id);
+        if (t) return t;
+      }
+      return boardState.inbox.find((t) => t.notion_page_id === id) || null;
+    }
+
+    function removeTaskEverywhere(id) {
+      for (const key of ["yesterday", "today", "tomorrow"]) {
+        if (!boardState.days[key]) continue;
+        boardState.days[key].tasks = boardState.days[key].tasks.filter((t) => t.notion_page_id !== id);
+      }
+      boardState.inbox = boardState.inbox.filter((t) => t.notion_page_id !== id);
+    }
+
+    // Кладёт задачу во все секции, которым она сейчас соответствует (тот же
+    // расчёт, что и на бэкенде в build_task_board) — используется после
+    // любой правки done/due_date, чтобы задача сама "переехала" куда нужно.
+    function rebucketTask(task) {
+      removeTaskEverywhere(task.notion_page_id);
+      const todayIso = boardState.days.today?.date;
+      for (const key of ["yesterday", "today", "tomorrow"]) {
+        if (boardState.days[key] && task.due_date === boardState.days[key].date) {
+          boardState.days[key].tasks.push(task);
+        }
+      }
+      if (todayIso && (task.due_date === null || (task.due_date < todayIso && !task.done))) {
+        boardState.inbox.push(task);
+      }
+    }
 
     function renderTaskRow(task, { showDateButton, showTrashButton }) {
       const row = document.createElement("div");
-      row.className = "row";
+      row.className = "row" + (pendingIds.has(task.notion_page_id) ? " pending" : "");
+      const isPending = pendingIds.has(task.notion_page_id);
 
       const checkbox = document.createElement("button");
       checkbox.className = "checkbox" + (task.done ? " done" : "");
+      checkbox.disabled = isPending;
       checkbox.setAttribute("aria-label", task.done ? "Снять отметку" : "Отметить выполненной");
       checkbox.innerHTML = checkIcon();
-      checkbox.onclick = async () => {
-        checkbox.disabled = true;
-        try {
-          await api(`/miniapp/api/tasks/${encodeURIComponent(task.notion_page_id)}/done`, {
-            method: "POST",
-            body: JSON.stringify({ done: !task.done }),
-          });
-          tg?.HapticFeedback?.notificationOccurred("success");
-          await loadTasks();
-        } catch (e) {
-          checkbox.disabled = false;
-        }
-      };
+      checkbox.onclick = () => toggleTaskDone(task);
 
       const title = document.createElement("span");
       title.className = "title" + (task.done ? " done" : "");
@@ -280,34 +328,26 @@
 
       row.append(checkbox, title);
 
-      if (!task.done && task.priority) {
-        const badge = document.createElement("span");
-        badge.className = "priority";
-        badge.textContent = task.priority;
-        row.append(badge);
+      if (!task.done && task.priority === "высокий") {
+        const flag = document.createElement("span");
+        flag.className = "flag-icon";
+        flag.setAttribute("aria-label", "Высокий приоритет");
+        flag.innerHTML = flagIcon();
+        row.append(flag);
       }
 
       if (showDateButton && !task.done) {
         const dateBtn = document.createElement("button");
         dateBtn.className = "small-btn";
+        dateBtn.disabled = isPending;
         dateBtn.setAttribute("aria-label", "Поставить дату");
         dateBtn.innerHTML = calendarIcon();
 
         const dateInput = document.createElement("input");
         dateInput.type = "date";
-        dateInput.onchange = async () => {
+        dateInput.onchange = () => {
           if (!dateInput.value) return;
-          dateBtn.disabled = true;
-          try {
-            await api(`/miniapp/api/tasks/${encodeURIComponent(task.notion_page_id)}/due-date`, {
-              method: "POST",
-              body: JSON.stringify({ due_date: dateInput.value }),
-            });
-            tg?.HapticFeedback?.notificationOccurred("success");
-            await loadTasks();
-          } catch (e) {
-            dateBtn.disabled = false;
-          }
+          setTaskDueDate(task, dateInput.value);
         };
         dateBtn.onclick = () => (dateInput.showPicker ? dateInput.showPicker() : dateInput.click());
         dateBtn.append(dateInput);
@@ -315,24 +355,13 @@
       }
 
       if (showTrashButton) {
-        const trashBtn = document.createElement("button");
-        trashBtn.className = "small-btn trash-btn";
-        trashBtn.setAttribute("aria-label", "Удалить задачу");
-        trashBtn.innerHTML = trashIcon();
-        trashBtn.onclick = async () => {
-          trashBtn.disabled = true;
-          try {
-            await api(`/miniapp/api/tasks/${encodeURIComponent(task.notion_page_id)}/archive`, {
-              method: "POST",
-            });
-            tg?.HapticFeedback?.notificationOccurred("success");
-            await loadTasks();
-          } catch (e) {
-            trashBtn.disabled = false;
-            alert("Не удалось удалить — возможно, в Notion Tasks нет свойства TaskStatus.");
-          }
-        };
-        row.append(trashBtn);
+        const archiveBtn = document.createElement("button");
+        archiveBtn.className = "small-btn archive-btn";
+        archiveBtn.disabled = isPending;
+        archiveBtn.setAttribute("aria-label", "Удалить задачу");
+        archiveBtn.innerHTML = archiveIcon();
+        archiveBtn.onclick = () => archiveTask(task);
+        row.append(archiveBtn);
       }
 
       return row;
@@ -340,53 +369,151 @@
 
     function renderList(container, tasks, opts) {
       container.innerHTML = "";
-      if (tasks.length === 0) {
+      const sorted = sortTasks(tasks);
+      if (sorted.length === 0) {
         const empty = document.createElement("div");
         empty.className = "empty";
         empty.textContent = "Пусто";
         container.append(empty);
         return;
       }
-      tasks.forEach((t) => container.append(renderTaskRow(t, opts)));
+      sorted.forEach((t) => container.append(renderTaskRow(t, opts)));
     }
 
-    const _dayNoTrashDate = { showDateButton: false, showTrashButton: false };
+    const _dayNoExtras = { showDateButton: false, showTrashButton: false };
 
-    async function loadTasks() {
-      const inboxEl = document.getElementById("inbox-list");
+    function render() {
+      for (const key of ["yesterday", "today", "tomorrow"]) {
+        const el = document.getElementById(`${key}-list`);
+        if (boardState.days[key]) renderList(el, boardState.days[key].tasks, _dayNoExtras);
+      }
+      renderList(document.getElementById("inbox-list"), boardState.inbox, {
+        showDateButton: true,
+        showTrashButton: true,
+      });
+    }
+
+    async function loadBoard() {
       try {
-        const board = await api("/miniapp/api/tasks");
-        renderList(document.getElementById("yesterday-list"), board.days.yesterday.tasks, _dayNoTrashDate);
-        renderList(document.getElementById("today-list"), board.days.today.tasks, _dayNoTrashDate);
-        renderList(document.getElementById("tomorrow-list"), board.days.tomorrow.tasks, _dayNoTrashDate);
-        renderList(inboxEl, board.inbox, { showDateButton: true, showTrashButton: true });
+        boardState = await api("/miniapp/api/tasks");
+        render();
       } catch (e) {
         document.getElementById("today-list").innerHTML =
           '<div class="empty">Не удалось загрузить задачи.</div>';
-        inboxEl.innerHTML = "";
       }
     }
 
-    document.getElementById("add-task-btn").onclick = async () => {
-      const input = document.getElementById("new-task-input");
-      const value = input.value.trim();
-      if (!value) return;
-      const btn = document.getElementById("add-task-btn");
-      btn.disabled = true;
+    async function toggleTaskDone(task) {
+      const id = task.notion_page_id;
+      const newDone = !task.done;
+      const prevDone = task.done;
+      const prevStatus = task.status;
+      task.done = newDone;
+      task.status = newDone ? "Done" : "Not started";
+      pendingIds.add(id);
+      rebucketTask(task);
+      render();
       try {
-        await api("/miniapp/api/tasks", { method: "POST", body: JSON.stringify({ title: value }) });
-        input.value = "";
+        await api(`/miniapp/api/tasks/${encodeURIComponent(id)}/done`, {
+          method: "POST",
+          body: JSON.stringify({ done: newDone }),
+        });
         tg?.HapticFeedback?.notificationOccurred("success");
-        await loadTasks();
-        scrollToDay(1);
       } catch (e) {
+        task.done = prevDone;
+        task.status = prevStatus;
+        rebucketTask(task);
+        alert("Не удалось обновить статус.");
+      } finally {
+        pendingIds.delete(id);
+        render();
+      }
+    }
+
+    async function setTaskDueDate(task, isoDate) {
+      const id = task.notion_page_id;
+      const prevDate = task.due_date;
+      task.due_date = isoDate;
+      pendingIds.add(id);
+      rebucketTask(task);
+      render();
+      try {
+        await api(`/miniapp/api/tasks/${encodeURIComponent(id)}/due-date`, {
+          method: "POST",
+          body: JSON.stringify({ due_date: isoDate }),
+        });
+        tg?.HapticFeedback?.notificationOccurred("success");
+      } catch (e) {
+        task.due_date = prevDate;
+        rebucketTask(task);
+        alert("Не удалось поставить дату.");
+      } finally {
+        pendingIds.delete(id);
+        render();
+      }
+    }
+
+    async function archiveTask(task) {
+      const id = task.notion_page_id;
+      pendingIds.add(id);
+      render();
+      try {
+        await api(`/miniapp/api/tasks/${encodeURIComponent(id)}/archive`, { method: "POST" });
+        removeTaskEverywhere(id);
+        tg?.HapticFeedback?.notificationOccurred("success");
+      } catch (e) {
+        alert("Не удалось удалить — возможно, в Notion Tasks нет свойства TaskStatus.");
+      } finally {
+        pendingIds.delete(id);
+        render();
+      }
+    }
+
+    async function createTaskFor(dayKey, title) {
+      const dueDate = boardState.days[dayKey]?.date;
+      if (!dueDate) return;
+      const tempId = "pending-" + Date.now();
+      const tempTask = {
+        notion_page_id: tempId,
+        title,
+        due_date: dueDate,
+        priority: "средний",
+        status: "unknown",
+        done: false,
+      };
+      pendingIds.add(tempId);
+      boardState.days[dayKey].tasks.push(tempTask);
+      render();
+      try {
+        const result = await api("/miniapp/api/tasks", {
+          method: "POST",
+          body: JSON.stringify({ title, due_date: dueDate }),
+        });
+        tempTask.notion_page_id = result.page_id;
+        tg?.HapticFeedback?.notificationOccurred("success");
+      } catch (e) {
+        boardState.days[dayKey].tasks = boardState.days[dayKey].tasks.filter((t) => t !== tempTask);
         alert("Не удалось создать задачу.");
       } finally {
-        btn.disabled = false;
+        pendingIds.delete(tempId);
+        render();
       }
-    };
-    document.getElementById("new-task-input").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") document.getElementById("add-task-btn").click();
+    }
+
+    document.querySelectorAll(".day-page").forEach((page) => {
+      const day = page.dataset.day;
+      const input = page.querySelector(".day-task-input");
+      const btn = page.querySelector(".day-task-add");
+      btn.innerHTML = plusIcon();
+      btn.onclick = () => {
+        const value = input.value.trim();
+        if (!value) return;
+        input.value = "";
+        createTaskFor(day, value);
+      };
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") btn.click();
+      });
     });
 
     const _dayLabels = ["Вчера", "Сегодня", "Завтра"];
@@ -434,7 +561,10 @@
       name.textContent = habit.name;
 
       const streak = document.createElement("span");
-      streak.className = "priority";
+      streak.className = "small-btn";
+      streak.style.width = "auto";
+      streak.style.color = "var(--text-muted)";
+      streak.style.fontSize = "12px";
       streak.textContent = `${habit.streak} дн.`;
 
       const btn = document.createElement("button");
@@ -476,6 +606,7 @@
       }
     }
 
+    document.getElementById("add-habit-btn").innerHTML = plusIcon();
     document.getElementById("add-habit-btn").onclick = async () => {
       const input = document.getElementById("new-habit-input");
       const value = input.value.trim();
@@ -497,7 +628,7 @@
       if (e.key === "Enter") document.getElementById("add-habit-btn").click();
     });
 
-    loadTasks();
+    loadBoard();
     loadDigest();
     loadHabits();
   </script>
