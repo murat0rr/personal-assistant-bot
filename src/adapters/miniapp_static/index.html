@@ -102,8 +102,15 @@
       color: var(--text);
       font-size: 15px;
       min-width: 0;
+      -webkit-tap-highlight-color: transparent;
     }
     .add-row input::placeholder { color: var(--text-muted); }
+    .add-row input:focus {
+      outline: none;
+      /* Просто светлее фон вместо системной жёлтой подсветки при тапе —
+         brightness одинаково хорошо работает и в светлой, и в тёмной теме. */
+      filter: brightness(1.15);
+    }
     .icon-btn {
       border: none;
       border-radius: 10px;
@@ -273,25 +280,16 @@
     </p>
     <div id="inbox-body" style="display: none;">
       <div id="inbox-list" class="list"></div>
-      <div class="add-row">
-        <input id="new-inbox-input" type="text" placeholder="Новая задача" />
-        <button id="add-inbox-btn" class="icon-btn" aria-label="Добавить задачу"></button>
-      </div>
+    </div>
+    <div class="add-row">
+      <input id="new-inbox-input" type="text" placeholder="Новая задача" />
+      <button id="add-inbox-btn" class="icon-btn" aria-label="Добавить задачу"></button>
     </div>
   </div>
 
   <div class="section">
     <p class="section-label">Утренний дайджест</p>
     <div id="digest" class="list digest">Загрузка…</div>
-  </div>
-
-  <div class="section">
-    <p class="section-label">Привычки</p>
-    <div id="habit-list" class="list"></div>
-    <div class="add-row">
-      <input id="new-habit-input" type="text" placeholder="Новая привычка" />
-      <button id="add-habit-btn" class="icon-btn" aria-label="Добавить привычку"></button>
-    </div>
   </div>
 
   <script>
@@ -849,83 +847,8 @@
       }
     }
 
-    function renderHabit(habit) {
-      const row = document.createElement("div");
-      row.className = "row";
-
-      const name = document.createElement("span");
-      name.className = "title";
-      name.textContent = habit.name;
-
-      const streak = document.createElement("span");
-      streak.className = "small-btn";
-      streak.style.width = "auto";
-      streak.style.color = "var(--text-muted)";
-      streak.style.fontSize = "12px";
-      streak.textContent = `${habit.streak} дн.`;
-
-      const btn = document.createElement("button");
-      btn.className = "checkbox";
-      btn.setAttribute("aria-label", "Отметить");
-      btn.innerHTML = checkIcon();
-      btn.querySelector("svg").style.display = "block";
-      btn.onclick = async () => {
-        btn.disabled = true;
-        try {
-          const result = await api(
-            `/miniapp/api/habits/${encodeURIComponent(habit.notion_page_id)}/check`,
-            { method: "POST" }
-          );
-          streak.textContent = `${result.streak} дн.`;
-          btn.classList.add("done");
-        } finally {
-          btn.disabled = false;
-        }
-      };
-
-      row.append(name, streak, btn);
-      return row;
-    }
-
-    async function loadHabits() {
-      const el = document.getElementById("habit-list");
-      try {
-        const habits = await api("/miniapp/api/habits");
-        if (habits.length === 0) {
-          el.innerHTML = '<div class="empty">Привычек пока нет</div>';
-          return;
-        }
-        el.innerHTML = "";
-        habits.forEach((h) => el.append(renderHabit(h)));
-      } catch (e) {
-        el.innerHTML = '<div class="empty">Не удалось загрузить привычки.</div>';
-      }
-    }
-
-    document.getElementById("add-habit-btn").innerHTML = plusIcon();
-    document.getElementById("add-habit-btn").onclick = async () => {
-      const input = document.getElementById("new-habit-input");
-      const value = input.value.trim();
-      if (!value) return;
-      const btn = document.getElementById("add-habit-btn");
-      btn.disabled = true;
-      try {
-        await api("/miniapp/api/habits", { method: "POST", body: JSON.stringify({ name: value }) });
-        input.value = "";
-        await loadHabits();
-      } catch (e) {
-        alert("Не удалось добавить привычку.");
-      } finally {
-        btn.disabled = false;
-      }
-    };
-    document.getElementById("new-habit-input").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") document.getElementById("add-habit-btn").click();
-    });
-
     loadBoard();
     loadDigest();
-    loadHabits();
   </script>
 </body>
 </html>
