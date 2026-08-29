@@ -80,7 +80,6 @@
     }
     .title.done {
       color: var(--text-muted);
-      text-decoration: line-through;
     }
     .flag-icon {
       color: var(--accent);
@@ -264,6 +263,9 @@
     function flagIcon() {
       return icon('<line x1="5" y1="3" x2="5" y2="21"/><path d="M5 4h11l-3 4 3 4H5"/>', 15);
     }
+    function moveToTodayIcon() {
+      return icon('<line x1="5" y1="12" x2="19" y2="12"/><path d="M13 6l6 6-6 6"/>', 16);
+    }
 
     // ---- Состояние. Рендер идёт из него, без похода в сеть на каждое действие
     // (optimistic UI) — сеть только подтверждает то, что уже видно на экране.
@@ -272,10 +274,9 @@
 
     const PRIORITY_ORDER = { высокий: 0, средний: 1, низкий: 2 };
     function sortTasks(tasks) {
-      return [...tasks].sort((a, b) => {
-        if (a.done !== b.done) return a.done ? 1 : -1;
-        return (PRIORITY_ORDER[a.priority] ?? 3) - (PRIORITY_ORDER[b.priority] ?? 3);
-      });
+      // Отмеченные задачи остаются на месте, а не улетают вниз — сортируем
+      // только по приоритету, без резкого перескока при отметке.
+      return [...tasks].sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 3) - (PRIORITY_ORDER[b.priority] ?? 3));
     }
 
     function findTaskById(id) {
@@ -310,7 +311,7 @@
       }
     }
 
-    function renderTaskRow(task, { showDateButton, showTrashButton }) {
+    function renderTaskRow(task, { showDateButton, showTrashButton, showMoveToToday }) {
       const row = document.createElement("div");
       row.className = "row" + (pendingIds.has(task.notion_page_id) ? " pending" : "");
       const isPending = pendingIds.has(task.notion_page_id);
@@ -364,6 +365,16 @@
         row.append(archiveBtn);
       }
 
+      if (showMoveToToday && !task.done) {
+        const moveBtn = document.createElement("button");
+        moveBtn.className = "small-btn";
+        moveBtn.disabled = isPending;
+        moveBtn.setAttribute("aria-label", "Перенести на сегодня");
+        moveBtn.innerHTML = moveToTodayIcon();
+        moveBtn.onclick = () => setTaskDueDate(task, boardState.days.today.date);
+        row.append(moveBtn);
+      }
+
       return row;
     }
 
@@ -380,12 +391,16 @@
       sorted.forEach((t) => container.append(renderTaskRow(t, opts)));
     }
 
-    const _dayNoExtras = { showDateButton: false, showTrashButton: false };
+    const _dayOpts = {
+      yesterday: { showDateButton: false, showTrashButton: false, showMoveToToday: true },
+      today: { showDateButton: false, showTrashButton: false, showMoveToToday: false },
+      tomorrow: { showDateButton: false, showTrashButton: false, showMoveToToday: false },
+    };
 
     function render() {
       for (const key of ["yesterday", "today", "tomorrow"]) {
         const el = document.getElementById(`${key}-list`);
-        if (boardState.days[key]) renderList(el, boardState.days[key].tasks, _dayNoExtras);
+        if (boardState.days[key]) renderList(el, boardState.days[key].tasks, _dayOpts[key]);
       }
       renderList(document.getElementById("inbox-list"), boardState.inbox, {
         showDateButton: true,
@@ -418,7 +433,6 @@
           method: "POST",
           body: JSON.stringify({ done: newDone }),
         });
-        tg?.HapticFeedback?.notificationOccurred("success");
       } catch (e) {
         task.done = prevDone;
         task.status = prevStatus;
@@ -442,7 +456,6 @@
           method: "POST",
           body: JSON.stringify({ due_date: isoDate }),
         });
-        tg?.HapticFeedback?.notificationOccurred("success");
       } catch (e) {
         task.due_date = prevDate;
         rebucketTask(task);
@@ -460,7 +473,6 @@
       try {
         await api(`/miniapp/api/tasks/${encodeURIComponent(id)}/archive`, { method: "POST" });
         removeTaskEverywhere(id);
-        tg?.HapticFeedback?.notificationOccurred("success");
       } catch (e) {
         alert("Не удалось удалить — возможно, в Notion Tasks нет свойства TaskStatus.");
       } finally {
@@ -490,7 +502,6 @@
           body: JSON.stringify({ title, due_date: dueDate }),
         });
         tempTask.notion_page_id = result.page_id;
-        tg?.HapticFeedback?.notificationOccurred("success");
       } catch (e) {
         boardState.days[dayKey].tasks = boardState.days[dayKey].tasks.filter((t) => t !== tempTask);
         alert("Не удалось создать задачу.");
@@ -531,10 +542,16 @@
       dayDots.forEach((dot, i) => dot.classList.toggle("active", i === index));
     }
 
-    let _scrollTimeout;
+    // rAF-троттлинг вместо debounce на таймауте — точки следуют за пальцем
+    // в реальном времени, а не с задержкой после остановки скролла.
+    let _tracking = false;
     carousel.addEventListener("scroll", () => {
-      clearTimeout(_scrollTimeout);
-      _scrollTimeout = setTimeout(updateDayLabel, 80);
+      if (_tracking) return;
+      _tracking = true;
+      requestAnimationFrame(() => {
+        updateDayLabel();
+        _tracking = false;
+      });
     });
     dayDots.forEach((dot) => {
       dot.addEventListener("click", () => scrollToDay(Number(dot.dataset.index)));
@@ -581,7 +598,6 @@
           );
           streak.textContent = `${result.streak} дн.`;
           btn.classList.add("done");
-          tg?.HapticFeedback?.notificationOccurred("success");
         } finally {
           btn.disabled = false;
         }
@@ -616,7 +632,6 @@
       try {
         await api("/miniapp/api/habits", { method: "POST", body: JSON.stringify({ name: value }) });
         input.value = "";
-        tg?.HapticFeedback?.notificationOccurred("success");
         await loadHabits();
       } catch (e) {
         alert("Не удалось добавить привычку.");

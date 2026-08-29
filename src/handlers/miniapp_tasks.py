@@ -10,8 +10,10 @@ def _is_done(task: Task) -> bool:
     return task.status.lower() in DONE_STATUS_CANDIDATES
 
 
-def _sort_key(task: Task) -> tuple[bool, int]:
-    return (_is_done(task), _PRIORITY_ORDER.get(task.priority, 3))
+def _sort_key(task: Task) -> int:
+    # Отмеченные задачи остаются на своём месте (не улетают вниз) — сортируем
+    # только по приоритету, без группировки по статусу выполнения.
+    return _PRIORITY_ORDER.get(task.priority, 3)
 
 
 def _serialize(task: Task) -> dict:
@@ -33,10 +35,11 @@ def _day_tasks(tasks: list[Task], target: date) -> list[dict]:
 
 def build_task_board(tasks: list[Task], today: date) -> dict:
     """Три пролистываемых дня (вчера/сегодня/завтра) — строго по due_date,
-    невыполненные сверху по приоритету, выполненные внизу. "Инбокс" —
-    просроченные невыполненные задачи (любая дата в прошлом, не только
-    вчера) + все задачи без даты, независимо от статуса. Чистая функция —
-    тестируется офлайн, тот же паттерн, что build_morning_digest_text."""
+    сортировка только по приоритету (отмеченные задачи остаются на месте,
+    не переезжают вниз). "Инбокс" — просроченные невыполненные задачи
+    (любая дата в прошлом, не только вчера) + все задачи без даты,
+    независимо от статуса. Чистая функция — тестируется офлайн, тот же
+    паттерн, что build_morning_digest_text."""
     yesterday = today - timedelta(days=1)
     tomorrow = today + timedelta(days=1)
 

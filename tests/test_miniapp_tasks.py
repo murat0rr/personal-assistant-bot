@@ -53,15 +53,16 @@ def test_inbox_includes_overdue_undone_and_all_undated():
     assert titles == {"просрочена не сделана", "без даты не сделана", "без даты сделана"}
 
 
-def test_day_sorted_by_priority_undone_first():
+def test_day_sorted_by_priority_only_done_stays_in_place():
     tasks = [
         _task("низкий", _TODAY, priority="низкий"),
-        _task("высокий", _TODAY, priority="высокий"),
-        _task("выполнена", _TODAY, priority="высокий", status="Done"),
+        _task("высокий выполнена", _TODAY, priority="высокий", status="Done"),
+        _task("средний", _TODAY, priority="средний"),
     ]
     board = build_task_board(tasks, _TODAY)
     titles = [t["title"] for t in board["days"]["today"]["tasks"]]
-    assert titles == ["высокий", "низкий", "выполнена"]
+    # Выполненная задача с высоким приоритетом остаётся наверху, не улетает вниз.
+    assert titles == ["высокий выполнена", "средний", "низкий"]
 
 
 def test_empty_board():
