@@ -129,13 +129,14 @@
       padding: 0;
     }
     .digest { padding: 12px 14px; font-size: 14px; color: var(--text-muted); }
+    .trash-btn { color: #e2504a; }
     button:disabled { opacity: 0.5; }
   </style>
 </head>
 <body>
   <div class="section">
     <p class="section-label">Задачи на день</p>
-    <div id="dated-list" class="list"></div>
+    <div id="today-list" class="list"></div>
     <div class="add-row">
       <input id="new-task-input" type="text" placeholder="Новая задача" />
       <button id="add-task-btn" class="icon-btn" aria-label="Добавить задачу">+</button>
@@ -143,8 +144,8 @@
   </div>
 
   <div class="section">
-    <p class="section-label">Без даты</p>
-    <div id="undated-list" class="list"></div>
+    <p class="section-label">Инбокс</p>
+    <div id="inbox-list" class="list"></div>
   </div>
 
   <div class="section">
@@ -181,7 +182,7 @@
       return '<svg viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     }
 
-    function renderTaskRow(task, { showDateButton }) {
+    function renderTaskRow(task, { showDateButton, showTrashButton }) {
       const row = document.createElement("div");
       row.className = "row";
 
@@ -243,6 +244,28 @@
         row.append(dateBtn);
       }
 
+      if (showTrashButton) {
+        const trashBtn = document.createElement("button");
+        trashBtn.className = "small-btn trash-btn";
+        trashBtn.setAttribute("aria-label", "Удалить задачу");
+        trashBtn.textContent = "🗑";
+        trashBtn.onclick = async () => {
+          if (!confirm(`Удалить «${task.title}»?`)) return;
+          trashBtn.disabled = true;
+          try {
+            await api(`/miniapp/api/tasks/${encodeURIComponent(task.notion_page_id)}/archive`, {
+              method: "POST",
+            });
+            tg?.HapticFeedback?.notificationOccurred("success");
+            await loadTasks();
+          } catch (e) {
+            trashBtn.disabled = false;
+            alert("Не удалось удалить — возможно, в Notion Tasks нет свойства TaskStatus.");
+          }
+        };
+        row.append(trashBtn);
+      }
+
       return row;
     }
 
@@ -259,15 +282,15 @@
     }
 
     async function loadTasks() {
-      const datedEl = document.getElementById("dated-list");
-      const undatedEl = document.getElementById("undated-list");
+      const todayEl = document.getElementById("today-list");
+      const inboxEl = document.getElementById("inbox-list");
       try {
         const board = await api("/miniapp/api/tasks");
-        renderList(datedEl, board.dated, { showDateButton: false });
-        renderList(undatedEl, board.undated, { showDateButton: true });
+        renderList(todayEl, board.today, { showDateButton: false, showTrashButton: false });
+        renderList(inboxEl, board.inbox, { showDateButton: true, showTrashButton: true });
       } catch (e) {
-        datedEl.innerHTML = '<div class="empty">Не удалось загрузить задачи.</div>';
-        undatedEl.innerHTML = "";
+        todayEl.innerHTML = '<div class="empty">Не удалось загрузить задачи.</div>';
+        inboxEl.innerHTML = "";
       }
     }
 

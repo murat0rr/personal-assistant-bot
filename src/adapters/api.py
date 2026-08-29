@@ -65,7 +65,8 @@ async def list_tasks(_: dict = Depends(get_authorized_user)) -> dict:
         result = await session.execute(select(Task))
         tasks = result.scalars().all()
 
-    return build_task_board(list(tasks))
+    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    return build_task_board(list(tasks), today)
 
 
 @app.post("/miniapp/api/tasks")
@@ -122,6 +123,24 @@ async def set_task_due_date(
         await notion.update_task_due_date(page_id, due_date)
         task.due_date = due_date
         await session.commit()
+
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/tasks/{page_id}/archive")
+async def archive_task_endpoint(
+    page_id: str, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    try:
+        await notion.archive_task(page_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    async with async_session() as session:
+        task = await session.get(Task, page_id)
+        if task is not None:
+            await session.delete(task)
+            await session.commit()
 
     return {"status": "ok"}
 

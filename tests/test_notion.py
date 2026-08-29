@@ -1,6 +1,6 @@
 from datetime import date
 
-from src.integrations.notion import _build_task_properties
+from src.integrations.notion import _build_task_properties, _read_text, _write_text_property
 
 _FULL_SELECT_SCHEMA = {
     "Name": {"type": "title"},
@@ -60,3 +60,30 @@ def test_build_task_properties_date_property_named_date():
 
     assert props["Date"] == {"date": {"start": "2026-08-29"}}
     assert "Due date" not in props
+
+
+def test_read_text_supports_native_status_type():
+    prop = {"type": "status", "status": {"name": "archived"}}
+    assert _read_text(prop) == "archived"
+
+
+def test_read_text_missing_property_is_empty():
+    assert _read_text(None) == ""
+    assert _read_text({}) == ""
+
+
+def test_write_text_property_select():
+    schema = {"type": "select"}
+    assert _write_text_property(schema, "archived") == {"select": {"name": "archived"}}
+
+
+def test_write_text_property_status():
+    schema = {"type": "status"}
+    assert _write_text_property(schema, "archived") == {"status": {"name": "archived"}}
+
+
+def test_write_text_property_rich_text_fallback():
+    schema = {"type": "rich_text"}
+    assert _write_text_property(schema, "archived") == {
+        "rich_text": [{"text": {"content": "archived"}}]
+    }

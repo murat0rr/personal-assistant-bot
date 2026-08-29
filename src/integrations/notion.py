@@ -82,6 +82,8 @@ def parse_task_page(page: dict[str, Any]) -> dict[str, Any]:
     source_parts = props.get("Source", {}).get("rich_text", [])
     source = "".join(part["plain_text"] for part in source_parts) or None
 
+    task_status = _read_text(props.get("TaskStatus"))
+
     return {
         "notion_page_id": page["id"],
         "title": title,
@@ -89,6 +91,7 @@ def parse_task_page(page: dict[str, Any]) -> dict[str, Any]:
         "priority": priority,
         "status": status,
         "source": source,
+        "task_status": task_status,
     }
 
 
@@ -188,6 +191,23 @@ async def update_task_status(page_id: str, done: bool) -> str:
     return value["status"]["name"] if "status" in value else value["select"]["name"]
 
 
+async def archive_task(page_id: str) -> None:
+    """Мягкое удаление — не архивирует саму страницу Notion, а проставляет
+    свойству TaskStatus значение "archived" (кнопка "корзина" в Mini App).
+    Требует, чтобы в базе Tasks было заведено свойство с именем ровно
+    "TaskStatus" (Select или Status) — если его нет, явно сообщаем об этом,
+    а не создаём свойство втихую."""
+    _, schema = await _get_data_source(settings.notion_tasks_db_id)
+    task_status_schema = schema.get("TaskStatus")
+    if task_status_schema is None:
+        raise ValueError(
+            'В базе Notion Tasks нет свойства "TaskStatus" — добавь его '
+            '(Select или Status) с опцией "archived".'
+        )
+    value = _write_text_property(task_status_schema, "archived")
+    await _client.pages.update(page_id=page_id, properties={"TaskStatus": value})
+
+
 async def update_task_due_date(page_id: str, due_date: date) -> None:
     _, schema = await _get_data_source(settings.notion_tasks_db_id)
     date_property = _find_date_property(schema)
@@ -201,16 +221,29 @@ async def update_task_due_date(page_id: str, due_date: date) -> None:
 
 def _read_text(prop: dict[str, Any] | None) -> str:
     """Прочитать текстовое значение независимо от того, каким типом
-    свойства пользователь реально завёл поле в Notion (Text/Select/Title)."""
+    свойства пользователь реально завёл поле в Notion (Text/Select/Status/Title)."""
     if not prop:
         return ""
     if "rich_text" in prop:
         return "".join(part["plain_text"] for part in prop["rich_text"])
     if prop.get("select"):
         return prop["select"]["name"]
+    if prop.get("status"):
+        return prop["status"]["name"]
     if "title" in prop:
         return "".join(part["plain_text"] for part in prop["title"])
     return ""
+
+
+def _write_text_property(prop_schema: dict[str, Any], value: str) -> dict[str, Any]:
+    """Как _write_number, но для текстовых значений — под фактический тип
+    свойства (Select/Status/Text)."""
+    prop_type = prop_schema["type"]
+    if prop_type == "status":
+        return {"status": {"name": value}}
+    if prop_type == "select":
+        return {"select": {"name": value}}
+    return {"rich_text": [{"text": {"content": value}}]}
 
 
 def _read_number(prop: dict[str, Any] | None) -> float | None:
@@ -316,7 +349,9 @@ async def list_diary_entries() -> list[dict[str, Any]]:
 
 async def list_tasks() -> list[dict[str, Any]]:
     """Забрать все задачи из Notion Tasks — используется pull-синком
-    (плановым и по требованию), а не входящими вебхуками."""
+    (плановым и по требованию), а не входящими вебхуками. Задачи с
+    TaskStatus="archived" (см. archive_task) сюда не попадают — это и есть
+    "корзина" в Mini App."""
     data_source_id, _ = await _get_data_source(settings.notion_tasks_db_id)
 
     tasks: list[dict[str, Any]] = []
@@ -326,7 +361,10 @@ async def list_tasks() -> list[dict[str, Any]]:
         if cursor:
             kwargs["start_cursor"] = cursor
         response = await _client.data_sources.query(**kwargs)
-        tasks.extend(parse_task_page(page) for page in response["results"])
+        for page in response["results"]:
+            parsed = parse_task_page(page)
+            if parsed["task_status"].lower() != "archived":
+                tasks.append(parsed)
         if not response.get("has_more"):
             break
         cursor = response["next_cursor"]

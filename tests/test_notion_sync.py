@@ -47,6 +47,7 @@ def test_parse_task_page_full():
         "priority": "высокий",
         "status": "Done",
         "source": "F1",
+        "task_status": "",
     }
 
 
@@ -64,6 +65,21 @@ def test_parse_task_page_date_property_named_date():
     parsed = parse_task_page(page)
 
     assert parsed["due_date"] == date(2026, 8, 29)
+
+
+def test_parse_task_page_reads_task_status():
+    page = {
+        "id": "abc123",
+        "properties": {
+            "Name": {"title": [{"plain_text": "купить хлеб"}]},
+            "Status": {"select": {"name": "to-do"}},
+            "TaskStatus": {"select": {"name": "archived"}},
+        },
+    }
+
+    parsed = parse_task_page(page)
+
+    assert parsed["task_status"] == "archived"
 
 
 def test_parse_task_page_minimal():

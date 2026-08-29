@@ -1,3 +1,5 @@
+from datetime import date
+
 from src.integrations.notion import DONE_STATUS_CANDIDATES
 from src.models.task import Task
 
@@ -23,13 +25,17 @@ def _serialize(task: Task) -> dict:
     }
 
 
-def build_task_board(tasks: list[Task]) -> dict:
-    """Разбить задачи на "на день" (есть дата) и "без даты", в каждой группе
-    невыполненные сверху по приоритету, выполненные — внизу. Чистая функция —
-    тестируется офлайн, тот же паттерн, что build_morning_digest_text."""
-    dated = sorted((t for t in tasks if t.due_date is not None), key=_sort_key)
-    undated = sorted((t for t in tasks if t.due_date is None), key=_sort_key)
+def build_task_board(tasks: list[Task], today: date) -> dict:
+    """ "Задачи на день" — строго due_date == today, невыполненные сверху по
+    приоритету, выполненные внизу. "Инбокс" — просроченные невыполненные
+    задачи + вообще все задачи без даты (независимо от статуса). Чистая
+    функция — тестируется офлайн, тот же паттерн, что build_morning_digest_text."""
+    todays = sorted((t for t in tasks if t.due_date == today), key=_sort_key)
+    inbox = sorted(
+        (t for t in tasks if t.due_date is None or (t.due_date < today and not _is_done(t))),
+        key=_sort_key,
+    )
     return {
-        "dated": [_serialize(t) for t in dated],
-        "undated": [_serialize(t) for t in undated],
+        "today": [_serialize(t) for t in todays],
+        "inbox": [_serialize(t) for t in inbox],
     }
