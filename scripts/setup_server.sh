@@ -20,6 +20,17 @@ echo "== git =="
 apt-get update -qq
 apt-get install -y -qq git
 
+echo "== swap 2G (подстраховка от OOM при пересборке образов) =="
+if [ -f /swapfile ]; then
+	echo "/swapfile уже существует, пропускаю"
+else
+	fallocate -l 2G /swapfile
+	chmod 600 /swapfile
+	mkswap /swapfile
+	swapon /swapfile
+	echo "/swapfile none swap sw 0 0" >>/etc/fstab
+fi
+
 echo "== ufw (открываю только SSH/HTTP/HTTPS) =="
 apt-get install -y -qq ufw
 ufw allow OpenSSH
