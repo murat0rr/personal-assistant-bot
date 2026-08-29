@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from src.adapters.tasker_webhook import router as tasker_webhook_router
+from src.core.auth import is_authorized
 from src.core.config import settings
 from src.core.db import async_session
 from src.core.notion_sync import sync_tasks_from_notion
@@ -35,7 +36,8 @@ async def health() -> dict[str, str]:
 
 async def get_authorized_user(x_telegram_init_data: str = Header(...)) -> dict:
     user = verify_miniapp_init_data(x_telegram_init_data, settings.telegram_bot_token)
-    if user is None or user.get("id") != settings.telegram_user_id:
+    user_id = user.get("id") if user else None
+    if user_id is None or not await is_authorized(user_id):
         raise HTTPException(status_code=401, detail="unauthorized")
     return user
 

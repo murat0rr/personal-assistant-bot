@@ -21,7 +21,7 @@ _ROUTABLE_FILTER = F.voice | (F.text & ~F.text.startswith("/"))
 
 @router.message(_ROUTABLE_FILTER)
 async def route_message(message: Message) -> None:
-    if not message.from_user or not is_authorized(message.from_user.id):
+    if not message.from_user or not await is_authorized(message.from_user.id):
         await message.answer("Извините, этот бот вам недоступен.")
         return
 

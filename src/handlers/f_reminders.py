@@ -178,7 +178,7 @@ async def check_location_reminders(bot: Bot, lat: float, lon: float) -> None:
 
 @router.message(Command("reminders"))
 async def list_reminders_command(message: Message) -> None:
-    if not message.from_user or not is_authorized(message.from_user.id):
+    if not message.from_user or not await is_authorized(message.from_user.id):
         await message.answer("Извините, этот бот вам недоступен.")
         return
 
@@ -206,7 +206,7 @@ async def list_reminders_command(message: Message) -> None:
 
 @router.callback_query(F.data.startswith("reminder_del:"))
 async def delete_reminder_callback(callback: CallbackQuery) -> None:
-    if not callback.from_user or not is_authorized(callback.from_user.id):
+    if not callback.from_user or not await is_authorized(callback.from_user.id):
         await callback.answer("Недоступно", show_alert=True)
         return
     if not callback.data:

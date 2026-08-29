@@ -39,7 +39,7 @@ def _decode_csv(raw: bytes) -> str:
 
 @router.message(F.document)
 async def handle_finance_csv(message: Message) -> None:
-    if not message.from_user or not is_authorized(message.from_user.id):
+    if not message.from_user or not await is_authorized(message.from_user.id):
         await message.answer("Извините, этот бот вам недоступен.")
         return
 

@@ -133,7 +133,7 @@ async def _finish(bot: Bot, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("diary:"))
 async def handle_button(callback: CallbackQuery, state: FSMContext) -> None:
-    if not callback.from_user or not is_authorized(callback.from_user.id):
+    if not callback.from_user or not await is_authorized(callback.from_user.id):
         await callback.answer("Недоступно", show_alert=True)
         return
     if (
@@ -166,7 +166,11 @@ async def handle_button(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(StateFilter(DiaryStates.highlight, DiaryStates.reflection))
 async def handle_text_answer(message: Message, state: FSMContext) -> None:
-    if not message.from_user or not is_authorized(message.from_user.id) or message.bot is None:
+    if (
+        not message.from_user
+        or not await is_authorized(message.from_user.id)
+        or message.bot is None
+    ):
         return
 
     current = await state.get_state()

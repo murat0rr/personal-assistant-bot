@@ -51,7 +51,7 @@ _MODE_HANDLERS = {
 
 @router.message(F.text.in_(_BUTTON_PROMPTS.keys()))
 async def handle_mode_button(message: Message, state: FSMContext) -> None:
-    if not message.from_user or not is_authorized(message.from_user.id):
+    if not message.from_user or not await is_authorized(message.from_user.id):
         await message.answer("Извините, этот бот вам недоступен.")
         return
 
@@ -63,7 +63,7 @@ async def handle_mode_button(message: Message, state: FSMContext) -> None:
 
 @router.message(StateFilter(*_MODE_HANDLERS.keys()), F.voice | F.text)
 async def handle_mode_content(message: Message, state: FSMContext) -> None:
-    if not message.from_user or not is_authorized(message.from_user.id):
+    if not message.from_user or not await is_authorized(message.from_user.id):
         await message.answer("Извините, этот бот вам недоступен.")
         return
 
@@ -81,7 +81,7 @@ async def handle_mode_content(message: Message, state: FSMContext) -> None:
 
 @router.message(StateFilter(ModeStates.question), F.text | F.voice | F.photo | F.document)
 async def handle_question_button(message: Message, state: FSMContext) -> None:
-    if not message.from_user or not is_authorized(message.from_user.id):
+    if not message.from_user or not await is_authorized(message.from_user.id):
         await message.answer("Извините, этот бот вам недоступен.")
         return
 

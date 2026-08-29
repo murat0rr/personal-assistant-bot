@@ -6,6 +6,7 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str
     telegram_user_id: int
+    bot_access_password: str = "это читинец"
 
     claude_api_key: str = ""
     claude_base_url: str | None = None
