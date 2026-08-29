@@ -110,6 +110,18 @@
          brightness одинаково хорошо работает и в светлой, и в тёмной теме. */
       filter: brightness(1.15);
     }
+    /* Инбокс: необязательная дата прямо в строке ввода — значок календаря
+       внутри поля справа, не отдельная кнопка снаружи. Задача с датой в
+       инбокс не попадёт (см. build_task_board), это ожидаемо. */
+    .input-with-icon { position: relative; flex: 1; min-width: 0; }
+    .input-with-icon input[type="text"] { width: 100%; padding-right: 40px; }
+    .input-with-icon .small-btn {
+      position: absolute;
+      right: 2px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+    .input-with-icon .small-btn.date-set { color: var(--accent); }
     .icon-btn {
       border: none;
       border-radius: 10px;
@@ -294,7 +306,10 @@
       <div id="inbox-list" class="list"></div>
     </div>
     <div class="add-row">
-      <input id="new-inbox-input" type="text" placeholder="Новая задача" />
+      <div class="input-with-icon">
+        <input id="new-inbox-input" type="text" placeholder="Новая задача" />
+        <button id="inbox-date-btn" class="small-btn" aria-label="Задать дату (необязательно)"></button>
+      </div>
       <button id="add-inbox-btn" class="icon-btn" aria-label="Добавить задачу"></button>
     </div>
   </div>
@@ -358,10 +373,35 @@
     const pendingIds = new Set();
 
     const PRIORITY_ORDER = { высокий: 0, средний: 1, низкий: 2 };
+
+    // Порядок внутри списка фиксируется один раз при загрузке доски
+    // (assignTaskOrder, вызывается из loadBoard) и больше не пересчитывается
+    // при отметке/переносе задач — только тогда позиции не "прыгают".
+    // Без этого stable-сортировка всё равно ехала бы: rebucketTask при
+    // любой правке удаляет задачу из массива и добавляет её заново в конец,
+    // и хотя сам sort стабилен, "конец массива" — это уже другое место
+    // относительно остальных задач того же приоритета.
+    let taskOrder = new Map();
+
+    function assignTaskOrder() {
+      taskOrder = new Map();
+      let next = 0;
+      for (const t of [...(boardState.dated_tasks || []), ...(boardState.inbox || [])]) {
+        if (!taskOrder.has(t.id)) taskOrder.set(t.id, next++);
+      }
+    }
+
     function sortTasks(tasks) {
-      // Отмеченные задачи остаются на месте, а не улетают вниз — сортируем
-      // только по приоритету, без резкого перескока при отметке.
-      return [...tasks].sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 3) - (PRIORITY_ORDER[b.priority] ?? 3));
+      return [...tasks].sort((a, b) => {
+        const byPriority = (PRIORITY_ORDER[a.priority] ?? 3) - (PRIORITY_ORDER[b.priority] ?? 3);
+        if (byPriority !== 0) return byPriority;
+        // Новая (только что созданная) задача ещё не попала в taskOrder —
+        // естественно уходит в конец своей группы приоритета, не встревая
+        // между уже расставленными.
+        const oa = taskOrder.has(a.id) ? taskOrder.get(a.id) : Infinity;
+        const ob = taskOrder.has(b.id) ? taskOrder.get(b.id) : Infinity;
+        return oa - ob;
+      });
     }
 
     function removeTaskEverywhere(id) {
@@ -620,6 +660,7 @@
     async function loadBoard() {
       try {
         boardState = await api("/miniapp/api/tasks");
+        assignTaskOrder();
         const firstLoad = weekStart === null;
         if (firstLoad) {
           const tomorrowIso = addDaysIso(boardState.days.today.date, 1);
@@ -744,13 +785,38 @@
       });
     });
 
+    // Необязательная дата прямо в строке создания — значок календаря внутри
+    // поля. Если дату выбрали, задача создаётся сразу с ней и в инбокс,
+    // естественно, не попадёт (build_task_board берёт туда только задачи
+    // без даты или просроченные).
+    let inboxPendingDate = null;
+    const inboxDateBtn = document.getElementById("inbox-date-btn");
+    const inboxDateInput = document.createElement("input");
+    inboxDateBtn.innerHTML = calendarIcon();
+    inboxDateInput.type = "date";
+    inboxDateInput.onchange = () => {
+      inboxPendingDate = inboxDateInput.value || null;
+      inboxDateBtn.classList.toggle("date-set", !!inboxPendingDate);
+    };
+    inboxDateBtn.onclick = () =>
+      inboxDateInput.showPicker ? inboxDateInput.showPicker() : inboxDateInput.click();
+    inboxDateBtn.append(inboxDateInput);
+
+    function resetInboxDateIcon() {
+      inboxPendingDate = null;
+      inboxDateInput.value = "";
+      inboxDateBtn.classList.remove("date-set");
+    }
+
     document.getElementById("add-inbox-btn").innerHTML = plusIcon();
     document.getElementById("add-inbox-btn").onclick = () => {
       const input = document.getElementById("new-inbox-input");
       const value = input.value.trim();
       if (!value) return;
       input.value = "";
-      createTaskFor(null, value);
+      const dueDate = inboxPendingDate;
+      resetInboxDateIcon();
+      createTaskFor(dueDate, value);
     };
     document.getElementById("new-inbox-input").addEventListener("keydown", (e) => {
       if (e.key === "Enter") document.getElementById("add-inbox-btn").click();
