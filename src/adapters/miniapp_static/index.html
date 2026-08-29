@@ -177,6 +177,10 @@
       display: flex;
       z-index: 1;
       background: color-mix(in srgb, var(--card-bg) 85%, white 15%);
+      /* Пока шторка открыта, свайп вправо по всему её полю тоже закрывает —
+         не отдаём горизонтальный жест внешней карусели, вертикальный
+         скролл страницы работает как обычно. */
+      touch-action: pan-y;
     }
     .swipe-btn {
       flex: 0 0 44px;
@@ -611,18 +615,25 @@
     }
 
     const SWIPE_MAX_REVEAL = 220; // 5 кнопок по 44px
-    const SWIPE_OPEN_THRESHOLD = SWIPE_MAX_REVEAL * 0.4; // открыть — нужен заметный протяг
-    const SWIPE_CLOSE_THRESHOLD = 28; // закрыть — хватит лёгкого движения
+    const SWIPE_OPEN_THRESHOLD = SWIPE_MAX_REVEAL * 0.2; // открыть — лёгкий свайп, то же место (зона)
+    const SWIPE_CLOSE_THRESHOLD = 28; // закрыть из зоны — хватит совсем лёгкого движения
 
     // Одна открытая шторка на всё приложение — открытие любой другой её
     // закрывает (см. setupSwipeDrag), плюс общий обработчик клика ниже.
+    // openSwipeRow — хэндл ТЕКУЩЕГО DOM-инстанса шторки; openSwipeTaskId —
+    // id задачи, чья шторка должна быть открыта, переживает render(). Кнопки
+    // важности/события специально не закрывают шторку, а render() внутри
+    // них пересоздаёт всю строку заново — без этого id открытая шторка
+    // "забывалась" бы на первом же тапе по одной из этих кнопок.
     let openSwipeRow = null;
+    let openSwipeTaskId = null;
 
     function closeOpenSwipeRow() {
       if (openSwipeRow) {
         openSwipeRow.close();
         openSwipeRow = null;
       }
+      openSwipeTaskId = null;
     }
 
     // Клик где угодно, пока шторка открыта, закрывает её — включая клик по
@@ -649,7 +660,7 @@
     // справа. Жест стартует только в узкой зоне у правого края (.swipe-zone,
     // см. CSS) — за её пределами палец достаётся внешней карусели
     // вчера/сегодня/неделя, как и на любом другом месте страницы.
-    function setupSwipeDrag(zone, actions) {
+    function setupSwipeDrag(zone, actions, taskId) {
       let startX = 0;
       let startY = 0;
       let curX = 0;
@@ -665,7 +676,17 @@
         close: () => {
           setReveal(0, true);
           open = false;
-          if (openSwipeRow === self) openSwipeRow = null;
+          if (openSwipeRow === self) {
+            openSwipeRow = null;
+            openSwipeTaskId = null;
+          }
+        },
+        // Строка этой задачи только что пересоздана рендером, но её шторка
+        // была открыта до этого (см. openSwipeTaskId) — восстанавливаем без
+        // анимации, будто её никто и не закрывал.
+        reopenInstant: () => {
+          open = true;
+          setReveal(SWIPE_MAX_REVEAL, false);
         },
       };
 
@@ -705,13 +726,74 @@
         if (open && openSwipeRow !== self) {
           closeOpenSwipeRow();
           openSwipeRow = self;
+          openSwipeTaskId = taskId;
         } else if (!open && openSwipeRow === self) {
           openSwipeRow = null;
+          openSwipeTaskId = null;
         }
         dragging = false;
       }
       zone.addEventListener("pointerup", endDrag);
       zone.addEventListener("pointercancel", endDrag);
+
+      // Пока шторка открыта, свайп вправо по всему её полю (не только по
+      // зоне под ней) тоже закрывает — тем же лёгким порогом, что и
+      // открытие. Так же гасим последующий клик по кнопке, если это был
+      // именно свайп, а не тап — иначе после закрытия ещё и сработала бы
+      // кнопка, на которой палец оказался в момент отпускания.
+      let actionsStartX = 0;
+      let actionsDragging = false;
+      let actionsJustDragged = false;
+
+      actions.addEventListener("pointerdown", (e) => {
+        if (!open) return;
+        actionsStartX = e.clientX;
+        actionsDragging = false;
+      });
+      actions.addEventListener("pointermove", (e) => {
+        if (!open) return;
+        const dx = e.clientX - actionsStartX;
+        if (!actionsDragging) {
+          if (dx < 6) return; // движение влево или совсем небольшое — не наш жест
+          actionsDragging = true;
+          try {
+            actions.setPointerCapture(e.pointerId);
+          } catch (err) {
+            // синтетические события в тестах — не критично
+          }
+        }
+        setReveal(Math.max(0, Math.min(SWIPE_MAX_REVEAL, SWIPE_MAX_REVEAL - dx)), false);
+        e.preventDefault();
+      });
+      function endActionsDrag(e) {
+        if (!actionsDragging) return;
+        const dx = e.clientX - actionsStartX;
+        actionsDragging = false;
+        actionsJustDragged = true;
+        // На случай, если браузер вообще не синтезирует click после этого
+        // драга (типично для тач-жестов) — флаг иначе остался бы висеть
+        // true навсегда и глушил бы следующий, уже совсем не связанный тап.
+        setTimeout(() => {
+          actionsJustDragged = false;
+        }, 300);
+        if (dx >= SWIPE_OPEN_THRESHOLD) {
+          self.close();
+        } else {
+          setReveal(SWIPE_MAX_REVEAL, true);
+        }
+      }
+      actions.addEventListener("pointerup", endActionsDrag);
+      actions.addEventListener("pointercancel", endActionsDrag);
+      actions.addEventListener(
+        "click",
+        (e) => {
+          if (!actionsJustDragged) return;
+          actionsJustDragged = false;
+          e.stopPropagation();
+          e.preventDefault();
+        },
+        true
+      );
 
       return self;
     }
@@ -739,8 +821,9 @@
       importantBtn.disabled = isPending;
       importantBtn.setAttribute("aria-label", "Важная задача");
       importantBtn.innerHTML = flagIcon();
+      // Панель специально НЕ закрываем здесь — можно сразу передумать и
+      // тапнуть другой значок, не открывая шторку заново.
       importantBtn.onclick = () => {
-        swipeHandle.close();
         setTaskPriority(task, task.priority === "высокий" ? "средний" : "высокий");
       };
 
@@ -750,7 +833,6 @@
       eventBtn.setAttribute("aria-label", "Событие");
       eventBtn.innerHTML = eventPinIcon();
       eventBtn.onclick = () => {
-        swipeHandle.close();
         setTaskPriority(task, task.priority === "event" ? "средний" : "event");
       };
 
@@ -852,7 +934,14 @@
       content.append(zone);
 
       wrap.append(actions, content);
-      swipeHandle = setupSwipeDrag(zone, actions);
+      swipeHandle = setupSwipeDrag(zone, actions, task.id);
+      if (task.id === openSwipeTaskId) {
+        // Эту же задачу только что пересобрал render() (например, после
+        // тапа по значку важности/события) — её шторка была открыта,
+        // восстанавливаем без анимации.
+        swipeHandle.reopenInstant();
+        openSwipeRow = swipeHandle;
+      }
       return wrap;
     }
 
