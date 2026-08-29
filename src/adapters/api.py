@@ -72,11 +72,10 @@ async def list_tasks(_: dict = Depends(get_authorized_user)) -> dict:
 async def create_task_endpoint(
     payload: CreateTaskRequest, _: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
-    due_date = (
-        date.fromisoformat(payload.due_date)
-        if payload.due_date
-        else datetime.now(ZoneInfo(settings.timezone)).date()
-    )
+    # due_date=None — валидный случай (задача из Инбокса, без даты), не
+    # заменяем его на "сегодня": фронтенд теперь всегда передаёт то, что
+    # реально имел в виду (конкретный день, либо явно null).
+    due_date = date.fromisoformat(payload.due_date) if payload.due_date else None
     page_id, url = await notion.create_task(
         payload.title, due_date, _DEFAULT_PRIORITY, source="MiniApp"
     )

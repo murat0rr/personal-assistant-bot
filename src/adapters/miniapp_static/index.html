@@ -15,7 +15,7 @@
       --accent: var(--tg-theme-button-color, #2481cc);
       --accent-text: var(--tg-theme-button-text-color, #ffffff);
       --pending-bg: rgba(36, 129, 204, 0.1);
-      --week-selected-bg: rgba(36, 129, 204, 0.08);
+      --week-selected-bg: rgba(36, 129, 204, 0.18);
     }
     * { box-sizing: border-box; }
     body {
@@ -232,6 +232,10 @@
   <div class="section">
     <p class="section-label">Инбокс</p>
     <div id="inbox-list" class="list"></div>
+    <div class="add-row">
+      <input id="new-inbox-input" type="text" placeholder="Новая задача" />
+      <button id="add-inbox-btn" class="icon-btn" aria-label="Добавить задачу"></button>
+    </div>
   </div>
 
   <div class="section">
@@ -518,9 +522,20 @@
       renderWeekDetail();
     }
 
+    function addDaysIso(iso, days) {
+      const [y, m, d] = iso.split("-").map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      dt.setUTCDate(dt.getUTCDate() + days);
+      return dt.toISOString().slice(0, 10);
+    }
+
     async function loadBoard() {
       try {
         boardState = await api("/miniapp/api/tasks");
+        if (selectedWeekDate === null) {
+          const tomorrowIso = addDaysIso(boardState.days.today.date, 1);
+          if (boardState.week[tomorrowIso]) selectedWeekDate = tomorrowIso;
+        }
         render();
       } catch (e) {
         document.getElementById("today-list").innerHTML =
@@ -592,7 +607,9 @@
     }
 
     async function createTaskFor(dueDate, title) {
-      if (!dueDate) return;
+      // dueDate === null — валидный случай (задача для инбокса, без даты).
+      // undefined — реальная ошибка (не нашли дату дня-источника).
+      if (dueDate === undefined) return;
       const tempId = "pending-" + Date.now();
       const tempTask = {
         notion_page_id: tempId,
@@ -635,6 +652,18 @@
       input.addEventListener("keydown", (e) => {
         if (e.key === "Enter") btn.click();
       });
+    });
+
+    document.getElementById("add-inbox-btn").innerHTML = plusIcon();
+    document.getElementById("add-inbox-btn").onclick = () => {
+      const input = document.getElementById("new-inbox-input");
+      const value = input.value.trim();
+      if (!value) return;
+      input.value = "";
+      createTaskFor(null, value);
+    };
+    document.getElementById("new-inbox-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") document.getElementById("add-inbox-btn").click();
     });
 
     const _dayLabels = ["Вчера", "Сегодня", "Неделя"];
