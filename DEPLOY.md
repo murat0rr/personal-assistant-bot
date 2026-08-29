@@ -91,6 +91,7 @@ DOMAIN=<твой домен>
 ```bash
 cd /opt/assistant
 docker compose up -d postgres redis
+docker compose build bot
 docker compose run --rm bot uv run alembic upgrade head
 docker compose up --build -d
 docker compose logs bot --tail 30   # убедиться, что стартовало чисто

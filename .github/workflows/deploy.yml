@@ -18,5 +18,6 @@ jobs:
             set -e
             cd /opt/assistant
             git pull
+            docker compose build bot
             docker compose run --rm bot uv run alembic upgrade head
             docker compose up --build -d
