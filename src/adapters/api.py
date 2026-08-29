@@ -171,6 +171,8 @@ async def list_habits_endpoint(_: dict = Depends(get_authorized_user)) -> list[d
 async def create_habit_endpoint(
     payload: CreateHabitRequest, _: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
+    if not settings.notion_habits_db_id:
+        raise HTTPException(status_code=400, detail="Notion Habits не настроен")
     _page_id, url = await notion.create_habit(payload.name)
     return {"status": "ok", "url": url}
 
