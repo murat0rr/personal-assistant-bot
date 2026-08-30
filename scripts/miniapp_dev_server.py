@@ -56,6 +56,8 @@ let _nextId = 1000;
 const _tasks = __TASKS_JSON__;
 let _nextTemplateId = 100;
 const _templates = __TEMPLATES_JSON__;
+let _nextProjectId = 10;
+const _projects = __PROJECTS_JSON__;
 
 function _serialize(t) {
   return {
@@ -66,6 +68,22 @@ function _serialize(t) {
     priority: t.priority,
     done: t.done,
     sort_order: t.sort_order,
+    project_id: t.project_id || null,
+    sphere: t.sphere || null,
+  };
+}
+
+function _serializeProject(p) {
+  const linked = _tasks.filter((t) => t.project_id === p.id && !t.archived);
+  return {
+    id: p.id,
+    title: p.title,
+    description: p.description,
+    sphere: p.sphere,
+    start_date: p.start_date,
+    end_date: p.end_date,
+    task_count: linked.length,
+    done_count: linked.filter((t) => t.done).length,
   };
 }
 
@@ -147,6 +165,10 @@ window.fetch = async (path, options = {}) => {
       t.title = body.title;
     } else if (action === "archive") {
       t.archived = true;
+    } else if (action === "project") {
+      t.project_id = body.project_id;
+    } else if (action === "sphere") {
+      t.sphere = body.sphere;
     }
   } else if (path === "/miniapp/api/briefing") {
     result = { weather: "дев-харнесс, погода не настроена" };
@@ -199,10 +221,31 @@ window.fetch = async (path, options = {}) => {
       t.last_used = due.slice(0, 10);
       result = { id: taskId, title: t.title };
     }
+  } else if (path === "/miniapp/api/projects" && method === "GET") {
+    result = _projects.filter((p) => !p.archived).map((p) => _serializeProject(p));
+  } else if (path === "/miniapp/api/projects" && method === "POST") {
+    const id = _nextProjectId++;
+    const p = {
+      id,
+      title: body.title,
+      description: body.description,
+      sphere: body.sphere,
+      start_date: body.start_date,
+      end_date: body.end_date,
+      archived: false,
+    };
+    _projects.push(p);
+    result = _serializeProject(p);
+  } else if (path.match(/\\/projects\\/(\\d+)\\/archive/)) {
+    const m = path.match(/\\/projects\\/(\\d+)\\/archive/);
+    const p = _projects.find((x) => x.id === Number(m[1]));
+    if (!p) return { ok: false, status: 404, json: async () => ({}) };
+    p.archived = true;
   }
 
   window.__lastTasks = _tasks;
   window.__lastTemplates = _templates;
+  window.__lastProjects = _projects;
   return { ok: true, status: 200, json: async () => result };
 };
 
@@ -346,36 +389,61 @@ def _default_templates() -> list[dict]:
     ]
 
 
-def _build_mock_script(tasks: list[dict], templates: list[dict]) -> str:
+def _default_projects() -> list[dict]:
+    today = date.today()
+    return [
+        {
+            "id": 1,
+            "title": "Подготовка к сессии",
+            "description": "Зачёты и экзамены зимней сессии",
+            "sphere": "учёба",
+            "start_date": today.isoformat(),
+            "end_date": (today + timedelta(days=30)).isoformat(),
+            "archived": False,
+        },
+        {
+            "id": 2,
+            "title": "Без сферы и дат",
+            "description": None,
+            "sphere": None,
+            "start_date": None,
+            "end_date": None,
+            "archived": False,
+        },
+    ]
+
+
+def _build_mock_script(tasks: list[dict], templates: list[dict], projects: list[dict]) -> str:
     today = date.today().isoformat()
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     script = MOCK_SCRIPT.replace("__TASKS_JSON__", json.dumps(tasks, ensure_ascii=False))
     script = script.replace("__TEMPLATES_JSON__", json.dumps(templates, ensure_ascii=False))
+    script = script.replace("__PROJECTS_JSON__", json.dumps(projects, ensure_ascii=False))
     script = script.replace("__TODAY_JSON__", json.dumps(today))
     script = script.replace("__YESTERDAY_JSON__", json.dumps(yesterday))
     return script
 
 
-def build_merged_html(tasks: list[dict], templates: list[dict]) -> bytes:
+def build_merged_html(tasks: list[dict], templates: list[dict], projects: list[dict]) -> bytes:
     html = INDEX_HTML.read_text(encoding="utf-8")
     if TELEGRAM_SCRIPT_TAG not in html:
         raise RuntimeError(
             "index.html изменил структуру — тег telegram-web-app.js не найден, "
             "обнови TELEGRAM_SCRIPT_TAG в scripts/miniapp_dev_server.py"
         )
-    mock = f"<script>{_build_mock_script(tasks, templates)}</script>\n"
+    mock = f"<script>{_build_mock_script(tasks, templates, projects)}</script>\n"
     merged = html.replace(TELEGRAM_SCRIPT_TAG, mock)
     return merged.encode("utf-8")
 
 
 def make_handler(
-    tasks: list[dict], templates: list[dict]
+    tasks: list[dict], templates: list[dict], projects: list[dict]
 ) -> type[http.server.BaseHTTPRequestHandler]:
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 (метод BaseHTTPRequestHandler)
             if self.path in ("/", "/index.html"):
                 try:
-                    body = build_merged_html(tasks, templates)
+                    body = build_merged_html(tasks, templates, projects)
                 except RuntimeError as exc:
                     self.send_response(500)
                     self.end_headers()
@@ -419,11 +487,16 @@ def main() -> None:
         else _default_tasks(args.count)
     )
     templates = _default_templates()
+    projects = _default_projects()
+    # Первая задача набора линкуется на первый проект — чтобы прогресс-бар
+    # в разделе "Проекты" было на чём проверить без ручных действий.
+    if tasks:
+        tasks[0]["project_id"] = projects[0]["id"]
 
-    handler = make_handler(tasks, templates)
+    handler = make_handler(tasks, templates, projects)
     server = http.server.HTTPServer(("127.0.0.1", args.port), handler)
     print(f"Mini App dev-сервер: http://127.0.0.1:{args.port}/  (Ctrl+C — остановить)")
-    print(f"Задач в наборе: {len(tasks)}, шаблонов: {len(templates)}")
+    print(f"Задач в наборе: {len(tasks)}, шаблонов: {len(templates)}, проектов: {len(projects)}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

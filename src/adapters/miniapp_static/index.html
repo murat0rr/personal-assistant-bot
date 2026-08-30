@@ -446,15 +446,13 @@
       box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
     }
 
-    /* Шаблонные задачи (Phase 18) — значок слева от кнопки подтверждения
-       в строке добавления (.small-btn уже даёт нужный приглушённый цвет и
-       размер, свой стиль здесь не нужен), открывает bottom sheet со
-       списком. Постоянный bottom sheet, живёт всё время (как .reorder-scrim) —
-       видимость только через класс. Тот же z-index, что у
-       .list.reorder-active-list — сам список шаблонов внутри тоже может
-       войти в режим переноса и "прорасти" выше .reorder-scrim ровно так
-       же, как обычные списки. */
-    .templates-sheet {
+    /* Постоянный bottom sheet (Phase 18) — общий каркас для любого
+       "выбери из списка" сценария (шаблоны, выбор проекта у задачи и
+       т.д.), живёт всё время (как .reorder-scrim), видимость только
+       через класс. Тот же z-index, что у .list.reorder-active-list —
+       список внутри тоже может войти в режим переноса и "прорасти" выше
+       .reorder-scrim ровно так же, как обычные списки. */
+    .bottom-sheet {
       display: none;
       position: fixed;
       left: 0;
@@ -468,8 +466,8 @@
       overflow-y: auto;
       box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.35);
     }
-    .templates-sheet.visible { display: block; }
-    .templates-sheet-handle {
+    .bottom-sheet.visible { display: block; }
+    .bottom-sheet-handle {
       width: 36px;
       height: 4px;
       border-radius: 2px;
@@ -480,9 +478,102 @@
     /* Подсветка "давно не пользовался" (>= stale_after_days, см.
        core/task_templates.py::_is_stale) — тёплый едва заметный тинт, не
        агрессивная плашка/бейдж, как и было заявлено в требованиях. */
-    .template-row.stale {
+    .template-row.stale,
+    .template-row.picker-selected {
       background: color-mix(in srgb, var(--accent) 6%, transparent);
     }
+
+    /* Проекты (Phase 19) — карточка с прогресс-баром, форма создания
+       разворачивается инлайн внутри того же списка (не отдельный sheet —
+       создание проекта редкое действие, не нужен весь аппарат пикера). */
+    .project-row {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .project-row-top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+    }
+    .project-title {
+      flex: 1;
+      font-size: 15px;
+      font-weight: 500;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .project-sphere-tag {
+      font-size: 12px;
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+      border-radius: 6px;
+      padding: 2px 7px;
+      flex-shrink: 0;
+    }
+    .project-dates {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .project-progress-track {
+      width: 100%;
+      height: 5px;
+      border-radius: 3px;
+      background: color-mix(in srgb, var(--text-muted) 20%, transparent);
+      overflow: hidden;
+    }
+    .project-progress-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+    }
+    .project-progress-label {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .project-form {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+    }
+    .project-form input[type="text"],
+    .project-form input[type="date"] {
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: transparent;
+      color: var(--text);
+      font-size: 14px;
+      width: 100%;
+    }
+    .project-form-dates { display: flex; gap: 8px; }
+    .project-form-dates input { flex: 1; min-width: 0; }
+    .sphere-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .sphere-chip {
+      border: 1px solid var(--hairline);
+      background: transparent;
+      color: var(--text-muted);
+      border-radius: 999px;
+      padding: 5px 11px;
+      font-size: 13px;
+    }
+    .sphere-chip.selected {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--accent-text);
+    }
+    .project-form-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .project-form-actions button {
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 14px;
+    }
+    .project-form-cancel { background: transparent; color: var(--text-muted); }
+    .project-form-submit { background: var(--accent); color: var(--accent-text); }
   </style>
 </head>
 <body>
@@ -524,16 +615,32 @@
   </div>
 
   <div class="section">
+    <p class="section-label section-header" id="projects-header">
+      <span id="projects-title">Проекты</span>
+      <span class="chevron" id="projects-chevron"></span>
+    </p>
+    <div id="projects-body" style="display: none;">
+      <div id="projects-list" class="list"></div>
+    </div>
+  </div>
+
+  <div class="section">
     <p class="section-label">Утренний дайджест</p>
     <div id="digest" class="list digest">Загрузка…</div>
   </div>
 
   <div id="reorder-scrim" class="reorder-scrim"></div>
 
-  <div id="templates-sheet" class="templates-sheet">
-    <div class="templates-sheet-handle"></div>
+  <div id="templates-sheet" class="bottom-sheet">
+    <div class="bottom-sheet-handle"></div>
     <p class="section-label">Шаблоны</p>
     <div id="templates-list" class="list"></div>
+  </div>
+
+  <div id="project-picker-sheet" class="bottom-sheet">
+    <div class="bottom-sheet-handle"></div>
+    <p class="section-label">Проект задачи</p>
+    <div id="project-picker-list" class="list"></div>
   </div>
 
   <script>
@@ -603,6 +710,13 @@
         18
       );
     }
+    // Проекты (Phase 19) — папка, кнопка привязки задачи к проекту.
+    function projectIcon() {
+      return icon(
+        '<path d="M3 6a1 1 0 011-1h5l2 2h9a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V6z"/>',
+        16
+      );
+    }
 
     // ---- Состояние. Рендер идёт из него, без похода в сеть на каждое действие
     // (optimistic UI) — сеть только подтверждает то, что уже видно на экране.
@@ -619,6 +733,14 @@
     // должен создать задачу на ту же дату, что предложила бы обычная
     // строка добавления в этом же списке.
     let templatesPickerDateFor = null;
+
+    // Проекты (Phase 19) — отдельная коллекция + sheet для привязки
+    // задачи к проекту (открывается 5-й кнопкой в свайп-шторке задачи).
+    let projectsData = [];
+    let projectPickerOpen = false;
+    let projectPickerTask = null;
+    let projectFormOpen = false;
+    const SPHERES = ["учёба", "работа", "спорт", "развитие", "отношения"];
 
     // Порядок — ручной (Phase 13), хранится в task.sort_order (float),
     // приходит с бэкенда и обновляется через /reorder при перетаскивании.
@@ -800,7 +922,7 @@
       return row;
     }
 
-    const SWIPE_MAX_REVEAL = 176; // 4 кнопки по 44px
+    const SWIPE_MAX_REVEAL = 220; // 5 кнопок по 44px (Phase 19 — добавилась "Проект")
     const SWIPE_OPEN_THRESHOLD = SWIPE_MAX_REVEAL * 0.2; // открыть — лёгкий свайп, то же место (зона)
     const SWIPE_CLOSE_THRESHOLD = 28; // закрыть из зоны — хватит совсем лёгкого движения
 
@@ -1325,6 +1447,18 @@
       dateBtn.onclick = () => (dateInput.showPicker ? dateInput.showPicker() : dateInput.click());
       dateBtn.append(dateInput);
 
+      // Проект (Phase 19) — открывает picker (тот же bottom sheet
+      // паттерн, что шаблоны), активная привязка подсвечена.
+      const projectBtn = document.createElement("button");
+      projectBtn.className = "swipe-btn" + (task.project_id ? " active" : "");
+      projectBtn.disabled = isPending;
+      projectBtn.setAttribute("aria-label", "Проект");
+      projectBtn.innerHTML = projectIcon();
+      projectBtn.onclick = () => {
+        swipeHandle.close();
+        openProjectPicker(task);
+      };
+
       const archiveBtn = document.createElement("button");
       archiveBtn.className = "swipe-btn swipe-btn-archive";
       archiveBtn.disabled = isPending;
@@ -1332,7 +1466,7 @@
       archiveBtn.innerHTML = archiveIcon();
       archiveBtn.onclick = () => archiveTask(task);
 
-      actions.append(importantBtn, eventBtn, dateBtn, archiveBtn);
+      actions.append(importantBtn, eventBtn, dateBtn, projectBtn, archiveBtn);
 
       const content = document.createElement("div");
       content.className = "swipe-content";
@@ -1674,6 +1808,233 @@
       render();
     }
 
+    // ---- Проекты (Phase 19) — своя коллекция (не часть boardState),
+    // карточка с прогресс-баром + инлайн-форма создания в том же списке.
+
+    function projectProgressPercent(p) {
+      if (!p.task_count) return 0;
+      return Math.round((p.done_count / p.task_count) * 100);
+    }
+
+    function formatProjectDates(p) {
+      const fmt = (iso) => {
+        const [, m, d] = iso.split("-");
+        return `${d}.${m}`;
+      };
+      if (p.start_date && p.end_date) return `${fmt(p.start_date)} – ${fmt(p.end_date)}`;
+      if (p.start_date) return `с ${fmt(p.start_date)}`;
+      if (p.end_date) return `до ${fmt(p.end_date)}`;
+      return "без срока";
+    }
+
+    function renderProjectCard(project) {
+      const row = document.createElement("div");
+      row.className = "row project-row";
+
+      const top = document.createElement("div");
+      top.className = "project-row-top";
+
+      const title = document.createElement("span");
+      title.className = "project-title";
+      title.textContent = project.title;
+      top.append(title);
+
+      if (project.sphere) {
+        const tag = document.createElement("span");
+        tag.className = "project-sphere-tag";
+        tag.textContent = project.sphere;
+        top.append(tag);
+      }
+
+      const archiveBtn = document.createElement("button");
+      archiveBtn.className = "small-btn archive-btn";
+      archiveBtn.setAttribute("aria-label", "Архивировать проект");
+      archiveBtn.innerHTML = archiveIcon();
+      archiveBtn.onclick = () => archiveProject(project);
+      top.append(archiveBtn);
+
+      row.append(top);
+
+      const dates = document.createElement("div");
+      dates.className = "project-dates";
+      dates.textContent = formatProjectDates(project);
+      row.append(dates);
+
+      const track = document.createElement("div");
+      track.className = "project-progress-track";
+      const fill = document.createElement("div");
+      fill.className = "project-progress-fill";
+      fill.style.width = projectProgressPercent(project) + "%";
+      track.append(fill);
+      row.append(track);
+
+      const label = document.createElement("div");
+      label.className = "project-progress-label";
+      label.textContent = `${project.done_count} / ${project.task_count} задач`;
+      row.append(label);
+
+      return row;
+    }
+
+    function renderSphereChips(selected, onSelect) {
+      const wrap = document.createElement("div");
+      wrap.className = "sphere-chips";
+      const options = [["", "без сферы"], ...SPHERES.map((s) => [s, s])];
+      for (const [value, label] of options) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "sphere-chip" + (selected === value ? " selected" : "");
+        chip.textContent = label;
+        chip.onclick = () => onSelect(value);
+        wrap.append(chip);
+      }
+      return wrap;
+    }
+
+    let projectDraft = { title: "", description: "", sphere: "", start: "", end: "" };
+
+    function renderProjectForm() {
+      const row = document.createElement("div");
+      row.className = "row project-form";
+
+      const title = document.createElement("input");
+      title.type = "text";
+      title.placeholder = "Название проекта";
+      title.value = projectDraft.title;
+      title.addEventListener("input", () => (projectDraft.title = title.value));
+      row.append(title);
+
+      const desc = document.createElement("input");
+      desc.type = "text";
+      desc.placeholder = "Описание (необязательно)";
+      desc.value = projectDraft.description;
+      desc.addEventListener("input", () => (projectDraft.description = desc.value));
+      row.append(desc);
+
+      row.append(
+        renderSphereChips(projectDraft.sphere, (value) => {
+          projectDraft.sphere = value;
+          render();
+        })
+      );
+
+      const datesWrap = document.createElement("div");
+      datesWrap.className = "project-form-dates";
+      const startInput = document.createElement("input");
+      startInput.type = "date";
+      startInput.value = projectDraft.start;
+      startInput.addEventListener("change", () => (projectDraft.start = startInput.value));
+      const endInput = document.createElement("input");
+      endInput.type = "date";
+      endInput.value = projectDraft.end;
+      endInput.addEventListener("change", () => (projectDraft.end = endInput.value));
+      datesWrap.append(startInput, endInput);
+      row.append(datesWrap);
+
+      const actionsWrap = document.createElement("div");
+      actionsWrap.className = "project-form-actions";
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "project-form-cancel";
+      cancelBtn.textContent = "Отмена";
+      cancelBtn.onclick = () => {
+        projectFormOpen = false;
+        projectDraft = { title: "", description: "", sphere: "", start: "", end: "" };
+        render();
+      };
+      const submitBtn = document.createElement("button");
+      submitBtn.type = "button";
+      submitBtn.className = "project-form-submit";
+      submitBtn.textContent = "Создать";
+      submitBtn.onclick = () => {
+        if (!projectDraft.title.trim()) return;
+        createProject({ ...projectDraft });
+        projectFormOpen = false;
+        projectDraft = { title: "", description: "", sphere: "", start: "", end: "" };
+      };
+      actionsWrap.append(cancelBtn, submitBtn);
+      row.append(actionsWrap);
+
+      return row;
+    }
+
+    function renderProjectAddRow() {
+      const row = document.createElement("div");
+      row.className = "row add-task-row";
+      const label = document.createElement("span");
+      label.className = "title";
+      label.style.color = "var(--text-muted)";
+      label.textContent = "Новый проект";
+      row.append(label);
+      const btn = document.createElement("button");
+      btn.className = "icon-btn add-task-submit";
+      btn.setAttribute("aria-label", "Новый проект");
+      btn.innerHTML = plusIcon();
+      btn.onclick = () => {
+        projectFormOpen = true;
+        render();
+      };
+      row.append(btn);
+      return row;
+    }
+
+    function renderProjectsList() {
+      const container = document.getElementById("projects-list");
+      container.innerHTML = "";
+      if (projectsData.length === 0 && !projectFormOpen) {
+        renderEmpty(container);
+      } else {
+        for (const p of projectsData) container.append(renderProjectCard(p));
+      }
+      container.append(projectFormOpen ? renderProjectForm() : renderProjectAddRow());
+    }
+
+    function renderProjectsHeader() {
+      const title = document.getElementById("projects-title");
+      title.textContent = projectsData.length ? `Проекты (${projectsData.length})` : "Проекты";
+    }
+
+    // ---- Sheet выбора проекта для задачи (5-я кнопка в свайп-шторке).
+
+    function openProjectPicker(task) {
+      projectPickerTask = task;
+      projectPickerOpen = true;
+      render();
+    }
+
+    function closeProjectPicker() {
+      projectPickerOpen = false;
+      projectPickerTask = null;
+      render();
+    }
+
+    function renderProjectPickerList() {
+      const container = document.getElementById("project-picker-list");
+      container.innerHTML = "";
+      if (!projectPickerTask) return;
+
+      const noneRow = document.createElement("div");
+      noneRow.className = "row template-row";
+      noneRow.textContent = "Без проекта";
+      noneRow.onclick = () => assignTaskProject(projectPickerTask, null);
+      container.append(noneRow);
+
+      for (const p of projectsData) {
+        const row = document.createElement("div");
+        row.className =
+          "row template-row" + (projectPickerTask.project_id === p.id ? " picker-selected" : "");
+        row.textContent = p.title;
+        row.onclick = () => assignTaskProject(projectPickerTask, p.id);
+        container.append(row);
+      }
+      if (projectsData.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "Пока нет проектов — создайте в разделе «Проекты»";
+        container.append(empty);
+      }
+    }
+
     // Черновики строки добавления — переживают пересборку списка. render()
     // перестраивает ВСЕ списки на любое действие в приложении (даже в
     // другом месте), а не только тот, где что-то реально изменилось —
@@ -1955,10 +2316,19 @@
       renderWeekCarousel();
       renderWeekDetail();
       renderTemplatesList();
+      renderProjectsList();
+      renderProjectsHeader();
+      renderProjectPickerList();
       document
         .getElementById("reorder-scrim")
-        .classList.toggle("visible", reorderActiveKey !== null || templatesPickerOpen);
+        .classList.toggle(
+          "visible",
+          reorderActiveKey !== null || templatesPickerOpen || projectPickerOpen
+        );
       document.getElementById("templates-sheet").classList.toggle("visible", templatesPickerOpen);
+      document
+        .getElementById("project-picker-sheet")
+        .classList.toggle("visible", projectPickerOpen);
     }
 
     function addDaysIso(iso, days) {
@@ -2299,6 +2669,89 @@
       }
     }
 
+    // ---- Проекты (Phase 19) — тот же optimistic-паттерн.
+
+    async function loadProjects() {
+      try {
+        projectsData = await api("/miniapp/api/projects");
+      } catch (e) {
+        projectsData = [];
+      }
+      render();
+    }
+
+    async function createProject(draft) {
+      const tempId = "pending-" + Date.now();
+      const tempProject = {
+        id: tempId,
+        title: draft.title.trim(),
+        description: draft.description ? draft.description.trim() : null,
+        sphere: draft.sphere || null,
+        start_date: draft.start || null,
+        end_date: draft.end || null,
+        task_count: 0,
+        done_count: 0,
+      };
+      projectsData.push(tempProject);
+      render();
+      try {
+        const result = await api("/miniapp/api/projects", {
+          method: "POST",
+          body: JSON.stringify({
+            title: tempProject.title,
+            description: tempProject.description,
+            sphere: tempProject.sphere,
+            start_date: tempProject.start_date,
+            end_date: tempProject.end_date,
+          }),
+        });
+        Object.assign(tempProject, result);
+      } catch (e) {
+        projectsData = projectsData.filter((p) => p.id !== tempId);
+        alert("Не удалось создать проект.");
+      } finally {
+        render();
+      }
+    }
+
+    async function archiveProject(project) {
+      const prev = projectsData;
+      projectsData = projectsData.filter((p) => p.id !== project.id);
+      render();
+      try {
+        await api(`/miniapp/api/projects/${encodeURIComponent(project.id)}/archive`, {
+          method: "POST",
+        });
+      } catch (e) {
+        projectsData = prev;
+        alert("Не удалось архивировать проект.");
+        render();
+      }
+    }
+
+    // Привязка задачи к проекту — из picker'а (5-я кнопка свайп-шторки).
+    async function assignTaskProject(task, projectId) {
+      closeProjectPicker();
+      const id = task.id;
+      const prevProjectId = task.project_id;
+      task.project_id = projectId;
+      pendingIds.add(id);
+      render();
+      try {
+        await api(`/miniapp/api/tasks/${encodeURIComponent(id)}/project`, {
+          method: "POST",
+          body: JSON.stringify({ project_id: projectId }),
+        });
+        loadProjects(); // прогресс-бар задетого проекта(ов) мог измениться
+      } catch (e) {
+        task.project_id = prevProjectId;
+        alert("Не удалось привязать проект.");
+      } finally {
+        pendingIds.delete(id);
+        render();
+      }
+    }
+
     // Инбокс свёрнут по умолчанию — только заголовок со счётчиком, тап
     // разворачивает список и поле добавления.
     let inboxExpanded = false;
@@ -2307,6 +2760,15 @@
       inboxExpanded = !inboxExpanded;
       document.getElementById("inbox-body").style.display = inboxExpanded ? "" : "none";
       document.getElementById("inbox-chevron").classList.toggle("expanded", inboxExpanded);
+    };
+
+    // Проекты — тот же паттерн, что Инбокс: свёрнуто по умолчанию.
+    let projectsExpanded = false;
+    document.getElementById("projects-chevron").innerHTML = chevronIcon();
+    document.getElementById("projects-header").onclick = () => {
+      projectsExpanded = !projectsExpanded;
+      document.getElementById("projects-body").style.display = projectsExpanded ? "" : "none";
+      document.getElementById("projects-chevron").classList.toggle("expanded", projectsExpanded);
     };
 
     // Долгое нажатие включает режим переноса в каждом из статических
@@ -2332,6 +2794,8 @@
         exitReorderMode();
       } else if (templatesPickerOpen) {
         closeTemplatesPicker();
+      } else if (projectPickerOpen) {
+        closeProjectPicker();
       }
     });
 
@@ -2528,6 +2992,7 @@
     loadBoard();
     loadDigest();
     loadTemplates();
+    loadProjects();
   </script>
 </body>
 </html>

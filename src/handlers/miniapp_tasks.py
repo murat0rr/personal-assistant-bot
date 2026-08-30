@@ -25,6 +25,8 @@ def _serialize(task: Task) -> dict:
         "priority": task.priority,
         "done": task.done,
         "sort_order": task.sort_order,
+        "project_id": task.project_id,
+        "sphere": task.sphere,
     }
 
 

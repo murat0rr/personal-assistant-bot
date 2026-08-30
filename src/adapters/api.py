@@ -11,6 +11,7 @@ from sqlalchemy import select, update
 
 from src.adapters.tasker_webhook import router as tasker_webhook_router
 from src.core import habits as habits_repo
+from src.core import projects as projects_repo
 from src.core import task_templates as templates_repo
 from src.core.auth import is_authorized
 from src.core.config import settings
@@ -100,6 +101,22 @@ class SetSortOrderRequest(BaseModel):
 
 class BatchArchiveRequest(BaseModel):
     ids: list[int]
+
+
+class CreateProjectRequest(BaseModel):
+    title: str
+    description: str | None = None
+    sphere: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+
+
+class SetTaskProjectRequest(BaseModel):
+    project_id: int | None = None
+
+
+class SetTaskSphereRequest(BaseModel):
+    sphere: str | None = None
 
 
 @app.get("/miniapp/api/tasks")
@@ -224,6 +241,36 @@ async def set_task_title(
     return {"status": "ok"}
 
 
+@app.post("/miniapp/api/tasks/{task_id}/project")
+async def set_task_project(
+    task_id: int, payload: SetTaskProjectRequest, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="not found")
+
+        task.project_id = payload.project_id
+        await session.commit()
+
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/tasks/{task_id}/sphere")
+async def set_task_sphere(
+    task_id: int, payload: SetTaskSphereRequest, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="not found")
+
+        task.sphere = payload.sphere
+        await session.commit()
+
+    return {"status": "ok"}
+
+
 @app.post("/miniapp/api/tasks/{task_id}/archive")
 async def archive_task_endpoint(
     task_id: int, _: dict = Depends(get_authorized_user)
@@ -339,6 +386,37 @@ async def use_template_endpoint(
         return await templates_repo.use_template(template_id, due_date)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="template not found") from exc
+
+
+# Проекты (Phase 19) — своя табличка, отношение к задачам один ко многим
+# (Task.project_id). Прогресс (task_count/done_count) считается на бэкенде
+# при листинге — фронтенду не нужно тянуть все задачи, чтобы нарисовать
+# прогресс-бар карточки проекта.
+@app.get("/miniapp/api/projects")
+async def list_projects_endpoint(_: dict = Depends(get_authorized_user)) -> list[dict]:
+    return await projects_repo.list_projects()
+
+
+@app.post("/miniapp/api/projects")
+async def create_project_endpoint(
+    payload: CreateProjectRequest, _: dict = Depends(get_authorized_user)
+) -> dict:
+    start = date.fromisoformat(payload.start_date) if payload.start_date else None
+    end = date.fromisoformat(payload.end_date) if payload.end_date else None
+    return await projects_repo.create_project(
+        payload.title, payload.description, payload.sphere, start, end
+    )
+
+
+@app.post("/miniapp/api/projects/{project_id}/archive")
+async def archive_project_endpoint(
+    project_id: int, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    try:
+        await projects_repo.archive_project(project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="project not found") from exc
+    return {"status": "ok"}
 
 
 # Лёгкий staging для Mini App (SPEC.md §5) — второй, полностью отдельный от

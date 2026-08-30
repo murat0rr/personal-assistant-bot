@@ -1,7 +1,7 @@
 import time
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -35,6 +35,16 @@ class Task(Base):
     # функция, не вызов: SQLAlchemy зовёт её при каждой вставке новой строки.
     sort_order: Mapped[float] = mapped_column(Float, default=time.time, server_default="0")
     source: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Phase 19/20 — глобальная классификация задачи для аналитики и целей.
+    # sphere — одно из "учёба"/"работа"/"спорт"/"развитие"/"отношения" (та
+    # же таксономия, что и у Goal/Project), но не enum на уровне БД —
+    # список сфер сам может расшириться, не хочется миграции ради этого.
+    # project_id — необязательная привязка к Project (Phase 19), задача
+    # без проекта — обычный случай, не исключение.
+    sphere: Mapped[str | None] = mapped_column(String, nullable=True)
+    project_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("projects.id"), nullable=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
