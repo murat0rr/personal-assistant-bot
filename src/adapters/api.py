@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, update
 
 from src.adapters.tasker_webhook import router as tasker_webhook_router
+from src.core import analytics as analytics_repo
 from src.core import habits as habits_repo
 from src.core import projects as projects_repo
 from src.core import task_templates as templates_repo
@@ -19,6 +20,7 @@ from src.core.db import async_session
 from src.core.telegram_auth import verify_miniapp_init_data
 from src.handlers.f8_habits import check_habit
 from src.handlers.miniapp_tasks import build_task_board
+from src.integrations.claude_client import analyze_productivity
 from src.integrations.weather import get_weather_summary
 from src.models.task import Task
 
@@ -417,6 +419,30 @@ async def archive_project_endpoint(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="project not found") from exc
     return {"status": "ok"}
+
+
+# Аналитика (Phase 24) — гант по проектам переиспользует уже готовый
+# GET /miniapp/api/projects (task_count/done_count/start_date/end_date
+# там уже есть), отдельного эндпоинта под него не заводим.
+@app.get("/miniapp/api/analytics/spheres")
+async def analytics_spheres_endpoint(_: dict = Depends(get_authorized_user)) -> list[dict]:
+    return await analytics_repo.sphere_breakdown()
+
+
+@app.get("/miniapp/api/analytics/month")
+async def analytics_month_endpoint(_: dict = Depends(get_authorized_user)) -> dict:
+    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    return await analytics_repo.month_breakdown(today)
+
+
+@app.get("/miniapp/api/analytics/summary")
+async def analytics_summary_endpoint(_: dict = Depends(get_authorized_user)) -> dict:
+    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    spheres = await analytics_repo.sphere_breakdown()
+    month = await analytics_repo.month_breakdown(today)
+    projects = await projects_repo.list_projects()
+    text = await analyze_productivity(spheres, month, projects)
+    return {"text": text}
 
 
 # Лёгкий staging для Mini App (SPEC.md §5) — второй, полностью отдельный от

@@ -241,6 +241,28 @@ window.fetch = async (path, options = {}) => {
     const p = _projects.find((x) => x.id === Number(m[1]));
     if (!p) return { ok: false, status: 404, json: async () => ({}) };
     p.archived = true;
+  } else if (path === "/miniapp/api/analytics/spheres") {
+    const counts = {};
+    for (const t of _tasks) {
+      if (!t.archived && t.sphere) counts[t.sphere] = (counts[t.sphere] || 0) + 1;
+    }
+    result = Object.keys(counts)
+      .sort()
+      .map((sphere) => ({ sphere, count: counts[sphere] }));
+  } else if (path === "/miniapp/api/analytics/month") {
+    const days = Array.from({ length: 30 }, (_, i) => String(i + 1).padStart(2, "0"));
+    const all_counts = days.map((_, i) => (i % 4 === 0 ? 2 : i % 3 === 0 ? 1 : 0));
+    result = {
+      days,
+      all_counts,
+      projects: _projects
+        .filter((p) => !p.archived)
+        .map((p) => ({ title: p.title, total: 3, counts: all_counts })),
+    };
+  } else if (path === "/miniapp/api/analytics/summary") {
+    result = {
+      text: "дев-харнесс: тут будет текстовая ИИ-аналитика по сферам/месяцу/проектам.",
+    };
   }
 
   window.__lastTasks = _tasks;
@@ -492,6 +514,11 @@ def main() -> None:
     # в разделе "Проекты" было на чём проверить без ручных действий.
     if tasks:
         tasks[0]["project_id"] = projects[0]["id"]
+    # Разные сферы на части задач — чтобы диаграмма "по сферам" в
+    # аналитике было на чём проверить без ручных действий.
+    _spheres_cycle = ["учёба", "работа", "спорт", "развитие", "отношения"]
+    for i, t in enumerate(tasks):
+        t["sphere"] = _spheres_cycle[i % len(_spheres_cycle)]
 
     handler = make_handler(tasks, templates, projects)
     server = http.server.HTTPServer(("127.0.0.1", args.port), handler)

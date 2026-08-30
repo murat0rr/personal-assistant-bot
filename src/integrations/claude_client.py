@@ -638,3 +638,40 @@ async def suggest_tasks_for_today(
         return []
     valid_ids = {item["id"] for item in inbox_items}
     return [i for i in TodaySuggestion.model_validate(tool_use.input).task_ids if i in valid_ids]
+
+
+async def analyze_productivity(spheres: list[dict], month: dict, projects: list[dict]) -> str:
+    """Аналитика (Phase 24) — текстовые наблюдения по сферам/месяцу/
+    проектам: что хорошо, что плохо. Обычный текстовый ответ, без
+    forced tool-use — тут не нужна структура, только читаемый текст."""
+    spheres_text = (
+        "\n".join(f"{s['sphere']}: {s['count']}" for s in spheres) or "(сферы не проставлены)"
+    )
+    projects_text = (
+        "\n".join(f"- {p['title']}: {p['done_count']}/{p['task_count']}" for p in projects)
+        or "(активных проектов нет)"
+    )
+    total_this_month = sum(month.get("all_counts", []))
+    response = await client.messages.create(
+        model=settings.claude_model_sonnet,
+        max_tokens=600,
+        system=(
+            "Проанализируй, как у пользователя распределены задачи по сферам "
+            "жизни, сколько сделано за месяц, и как продвигаются проекты. "
+            "Отметь 2-3 наблюдения: что идёт хорошо, что настораживает "
+            "(перекос в одну сферу, забытая сфера, застрявший проект и "
+            "т.п.). Коротко (4-6 предложений), по-русски, без воды и без "
+            "заголовков-списков — обычный связный текст."
+        ),
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    f"Задачи по сферам:\n{spheres_text}\n\n"
+                    f"Выполнено задач в этом месяце: {total_this_month}\n\n"
+                    f"Проекты (выполнено/всего задач):\n{projects_text}"
+                ),
+            }
+        ],
+    )
+    return "".join(block.text for block in response.content if block.type == "text")
