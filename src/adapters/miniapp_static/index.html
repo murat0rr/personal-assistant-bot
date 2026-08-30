@@ -955,6 +955,21 @@
       return Array.from(row.parentElement.children).filter((n) => n.matches(selector));
     }
 
+    // Текущая FLIP-анимация каждого соседа (см. shiftSibling ниже) — нужна,
+    // чтобы при смене направления свайпа корректно её прервать. Баг,
+    // который здесь чинится: CSS-transition сбрасывался только на
+    // следующий requestAnimationFrame, и если тот же сосед снова попадал
+    // под свап раньше, чем этот кадр наступил (типичная ситуация именно
+    // при развороте направления — палец снова пересекает недавно
+    // пройденную границу), getBoundingClientRect() у "after" замерял
+    // положение с ещё висящим старым transform поверх нового layout —
+    // отсюда наложение/залипание. Web Animations API с явным .cancel()
+    // решает это синхронно, без гонки за кадром (тот же класс бага,
+    // независимо чинили во Flutter — see PR flutter/flutter#173241,
+    // "ReorderableList items jumping when drag direction reverses
+    // mid-animation").
+    const siblingAnimations = new WeakMap();
+
     // immediate — для ручки в режиме переноса: мы уже явно в этом режиме,
     // ждать долгого нажатия незачем, тащим сразу с первого сдвига пальца
     // (armed=true с самого начала — дальше та же логика, что и обычная
@@ -969,11 +984,7 @@
       let startY = 0;
       let compensation = 0; // накопленная поправка от свапов соседей
       let lastDy = 0;
-      // Счётчик переносов этой строки — если строку схватили заново раньше,
-      // чем доспела доводка предыдущего переноса (endDrag), finalize того,
-      // старого, вызова должен молча выйти, а не дёрнуть commitOrder/
-      // render() посреди уже нового активного перетаскивания.
-      let dragGeneration = 0;
+      let settleAnim = null; // доводка ЭТОЙ строки при отпускании (endDrag), если ещё идёт
 
       function applyTransform(dy) {
         lastDy = dy;
@@ -991,25 +1002,28 @@
       // место (FLIP: запоминаем его позицию до перестановки DOM, применяем
       // разницу как мгновенный transform, затем этот transform анимируем в
       // 0) — без этого сосед просто телепортировался бы на новое место.
+      // Порядок важен: "before" читаем ДО отмены старой анимации — это
+      // реальная видимая позиция соседа прямо сейчас, даже если он ещё
+      // едет по недоигранной анимации с прошлого свапа (иначе — тот же
+      // "прыжок к устаревшей стартовой точке", что чинили во Flutter).
+      // А вот "after" должен быть чистым — старую анимацию отменяем
+      // именно между этими двумя замерами, до mutate/после before.
       function shiftSibling(sib, mutate) {
         const before = sib.getBoundingClientRect().top;
+        const prevAnim = siblingAnimations.get(sib);
+        if (prevAnim) prevAnim.cancel();
         mutate();
         const after = sib.getBoundingClientRect().top;
         const delta = before - after;
+        siblingAnimations.delete(sib);
         if (delta === 0) return;
-        sib.style.transition = "none";
-        sib.style.transform = `translateY(${delta}px)`;
-        sib.getBoundingClientRect(); // форсируем reflow — иначе браузер схлопнёт эти два присваивания в одно
-        requestAnimationFrame(() => {
-          sib.style.transition = "transform 160ms ease";
-          sib.style.transform = "";
-          sib.addEventListener(
-            "transitionend",
-            () => {
-              sib.style.transition = "";
-            },
-            { once: true }
-          );
+        const anim = sib.animate(
+          [{ transform: `translateY(${delta}px)` }, { transform: "translateY(0px)" }],
+          { duration: 160, easing: "ease" }
+        );
+        siblingAnimations.set(sib, anim);
+        anim.finished.catch(() => {}).finally(() => {
+          if (siblingAnimations.get(sib) === anim) siblingAnimations.delete(sib);
         });
       }
 
@@ -1063,12 +1077,15 @@
         }
         dragging = true;
         moved = true;
-        dragGeneration++;
+        // Строку схватили заново раньше, чем доспела доводка предыдущего
+        // переноса — прерываем её синхронно (см. shiftSibling выше про
+        // ту же идею для соседей): .cancel() не оставляет зависшего
+        // transition, который иначе ехал бы поверх нового переноса.
+        if (settleAnim) {
+          settleAnim.cancel();
+          settleAnim = null;
+        }
         row.classList.add("reorder-dragging");
-        // На случай, если предыдущая доводка (endDrag) не успела дочистить
-        // transition за собой — без этого первые кадры нового переноса
-        // ехали бы за transition вместо мгновенного 1:1 слежения за пальцем.
-        row.style.transition = "none";
         compensation = 0;
         applyTransform(0);
       }
@@ -1089,34 +1106,32 @@
       function endDrag(commit) {
         clearHold();
         if (dragging) {
-          // Доводка — translateY плавно едет к 0 (это ровно её текущее
-          // место в DOM, все свапы уже применены), тень/приподнятость
-          // снимаем и boardState фиксируем только после того, как переход
-          // реально закончился. Раньше сброс был мгновенным и фиксация
-          // происходила тут же — на резком рывке+отпускании это выглядело
-          // как строка, застрявшая поверх соседней на кадр-другой.
-          const myGeneration = dragGeneration;
-          let finalized = false;
-          const finalize = (e) => {
-            if (finalized) return;
-            if (e && e.propertyName && e.propertyName !== "transform") return;
-            finalized = true;
-            row.removeEventListener("transitionend", finalize);
-            // Строку схватили заново раньше, чем доспела эта доводка — та,
-            // новая, сама отвечает за свою фиксацию, эта уже устарела.
-            if (myGeneration !== dragGeneration) return;
-            row.style.transition = "";
-            row.classList.remove("reorder-dragging");
-            row.style.transform = "";
-            if (commit) commitOrder();
-          };
-          row.style.transition = "transform 180ms cubic-bezier(0.22, 1, 0.36, 1)";
-          row.style.transform = "translateY(0px)";
-          row.addEventListener("transitionend", finalize);
-          // Подстраховка: если переход почему-то не случится (элемент
-          // убрали из DOM, reduced motion и т.п.) — фиксация всё равно
-          // произойдёт, просто без анимации.
-          setTimeout(finalize, 220);
+          // Доводка — translateY плавно едет от текущего положения (то,
+          // что прямо сейчас в row.style.transform) к 0 — это ровно её
+          // место в DOM, все свапы уже применены. Тень/приподнятость
+          // снимаем и boardState фиксируем только после того, как анимация
+          // реально закончилась. Раньше сброс был мгновенным (плюс гонка
+          // за requestAnimationFrame у соседей, см. shiftSibling) — на
+          // резком рывке+отпускании это выглядело как строка, застрявшая
+          // поверх соседней.
+          const anim = row.animate(
+            [{ transform: row.style.transform || "translateY(0px)" }, { transform: "translateY(0px)" }],
+            { duration: 180, easing: "cubic-bezier(0.22, 1, 0.36, 1)" }
+          );
+          settleAnim = anim;
+          anim.finished
+            .then(() => {
+              if (settleAnim !== anim) return; // отменена более новым переносом (см. beginDrag) — уже неактуальна
+              settleAnim = null;
+              row.classList.remove("reorder-dragging");
+              row.style.transform = "";
+              if (commit) commitOrder();
+            })
+            .catch(() => {
+              // anim.cancel() отклоняет finished — ожидаемый путь, когда
+              // строку схватили заново раньше, чем доспела эта доводка
+              // (см. settleAnim.cancel() в beginDrag).
+            });
         }
         dragging = false;
         armed = false;
