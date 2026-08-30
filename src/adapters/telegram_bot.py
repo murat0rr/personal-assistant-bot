@@ -2,11 +2,17 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.storage.redis import RedisStorage
-from aiogram.types import BotCommand, Message
+from aiogram.types import (
+    BotCommand,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    WebAppInfo,
+)
 
 from src.core.auth import is_authorized
 from src.core.config import settings
@@ -51,6 +57,36 @@ async def handle_start(message: Message, state: FSMContext) -> None:
     await message.answer("Привет! Чтобы пользоваться ботом, введи пароль:")
 
 
+@dp.message(Command("staging"))
+async def handle_staging(message: Message) -> None:
+    # Лёгкий staging для Mini App (SPEC.md §5) — открывает /miniapp-staging/
+    # через настоящий Telegram WebView с подписанным initData: обычный
+    # браузер на этот URL получил бы 401 от /miniapp/api/* (initData пуст),
+    # а часть багов (например ненадёжный setPointerCapture в Telegram
+    # WebView) вообще не воспроизводится вне реального клиента — см.
+    # staging_static/README.md за workflow (scp кандидата перед мержем).
+    if not message.from_user or not await is_authorized(message.from_user.id):
+        return
+    if not settings.staging_miniapp_url:
+        await message.answer("Staging не настроен — пусто STAGING_MINIAPP_URL в .env.")
+        return
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Открыть staging Mini App",
+                    web_app=WebAppInfo(url=settings.staging_miniapp_url),
+                )
+            ]
+        ]
+    )
+    await message.answer(
+        "Откроет то, что сейчас лежит в staging_static/ на сервере — "
+        "не обязательно смёрженное в master.",
+        reply_markup=keyboard,
+    )
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     bot = Bot(token=settings.telegram_bot_token)
@@ -59,6 +95,7 @@ async def main() -> None:
         [
             BotCommand(command="start", description="Начать / показать кнопки"),
             BotCommand(command="reminders", description="Список напоминаний"),
+            BotCommand(command="staging", description="Открыть staging Mini App"),
         ]
     )
 

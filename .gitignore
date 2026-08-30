@@ -8,3 +8,8 @@ __pycache__/
 .ngrok.log
 .tools/
 .claude/settings.local.json
+
+# Лёгкий staging для Mini App (см. staging_static/README.md) — контент сюда
+# кладётся через scp на сервер, в репозитории только README-плейсхолдер.
+staging_static/*
+!staging_static/README.md

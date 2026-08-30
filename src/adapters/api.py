@@ -283,6 +283,21 @@ async def mark_habit_checked(habit_id: int, _: dict = Depends(get_authorized_use
     return {"status": "ok", "streak": new_streak}
 
 
+# Лёгкий staging для Mini App (SPEC.md §5) — второй, полностью отдельный от
+# прод-роута static mount на том же бэкенде. index.html здесь кладётся вручную
+# через scp на bind-mounted /app/staging_static (см. docker-compose.yml,
+# staging_static/README.md), без пересборки образа и без отдельного стека
+# контейнеров/БД — /miniapp/api/* (реальные данные, реальная авторизация) те
+# же самые для обоих. check_dir=False — на случай, если bind-mount ещё не
+# успел материализоваться при самом первом старте контейнера: страница просто
+# 404-ит, а не роняет весь api-процесс.
+_STAGING_STATIC_DIR = Path(__file__).parent.parent.parent / "staging_static"
+app.mount(
+    "/miniapp-staging",
+    StaticFiles(directory=_STAGING_STATIC_DIR, html=True, check_dir=False),
+    name="miniapp-staging",
+)
+
 # Mount регистрируем последним: Starlette матчит маршруты по порядку
 # регистрации, и mount-префикс перехватил бы /miniapp/api/... раньше,
 # чем до них дойдёт очередь, если объявить его выше.

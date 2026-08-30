@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     database_url: str = ""
     redis_url: str = ""
     timezone: str = "Europe/Moscow"
+    # Лёгкий staging для Mini App (SPEC.md §5) — полный URL /miniapp-staging/
+    # на проде; пусто = команда /staging отвечает, что не настроено.
+    staging_miniapp_url: str = ""
 
 
 settings = Settings()

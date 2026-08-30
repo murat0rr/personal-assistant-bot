@@ -17,6 +17,29 @@ Runbook для первого деплоя и настройки CI/CD. Конт
 - Локальный докер на Windows-машине остановлен — сервер единственный
   поллер Telegram (два инстанса конфликтуют за `getUpdates`).
 
+## Staging для Mini App
+
+Лёгкий вариант, без второго стека контейнеров/БД (см. SPEC.md §5) —
+`/miniapp-staging/` на том же `api`-контейнере, что и прод, читает
+кандидата в index.html из bind-mounted `staging_static/` на хосте.
+`/miniapp/api/*` (данные, авторизация) общие для обоих — меняется
+только то, какой HTML их вызывает.
+
+Проверить правку перед мержем в `master`:
+
+```bash
+scp src/adapters/miniapp_static/index.html \
+    -i ~/.ssh/assistant_vps root@85.137.24.126:/opt/assistant/staging_static/index.html
+```
+
+Без пересборки/рестарта — файл подхватывается на следующий запрос.
+Дальше `/staging` в боте — открывает через настоящий Telegram WebView
+(нужен `STAGING_MINIAPP_URL=https://shitinez.shop/miniapp-staging/` в
+`.env`; обычный браузер на этот URL получит 401 от `/miniapp/api/*` —
+`initData` пуст без реального Telegram-контекста, а часть багов вроде
+ненадёжного `setPointerCapture` в Telegram WebView вообще не
+воспроизводится вне настоящего клиента).
+
 ## 1. Аренда VPS
 
 [Timeweb Cloud](https://timeweb.cloud/services/cloud-servers) — облачный

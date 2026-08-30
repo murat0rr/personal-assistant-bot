@@ -37,6 +37,12 @@ services:
     restart: unless-stopped
     command: uv run uvicorn src.adapters.api:app --host 0.0.0.0 --port 8000
     env_file: .env
+    volumes:
+      # Лёгкий staging для Mini App (см. SPEC.md §5) — bind mount, а не
+      # часть образа: чтобы проверить кандидата на /miniapp-staging/,
+      # достаточно scp index.html сюда на хост, без пересборки и рестарта
+      # api. Read-only — процесс внутри контейнера сюда не пишет.
+      - ./staging_static:/app/staging_static:ro
     depends_on:
       postgres:
         condition: service_healthy
