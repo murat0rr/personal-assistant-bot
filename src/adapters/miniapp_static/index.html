@@ -1516,14 +1516,20 @@
         row.append(input);
       }
 
-      input.addEventListener("input", () => {
-        draft.text = input.value;
-      });
-
       const submitBtn = document.createElement("button");
       submitBtn.className = "icon-btn add-task-submit";
       submitBtn.setAttribute("aria-label", "Добавить задачу");
       submitBtn.innerHTML = plusIcon();
+      // Пусто — кнопка неяркая (button:disabled уже даёт нужный opacity) и
+      // реально некликабельна, а не просто тусклая на вид: понятно без
+      // подписи, что нажимать пока нечего. Первый же введённый символ
+      // возвращает её к обычному виду.
+      submitBtn.disabled = !draft.text.trim();
+      input.addEventListener("input", () => {
+        draft.text = input.value;
+        submitBtn.disabled = !input.value.trim();
+      });
+
       const submit = () => {
         const value = input.value.trim();
         if (!value) return;
@@ -2099,6 +2105,7 @@
     const carousel = document.getElementById("day-carousel");
     const dayLabel = document.getElementById("day-label");
     const dayDots = Array.from(document.querySelectorAll(".day-dot"));
+    const dayPages = Array.from(document.querySelectorAll(".day-page[data-day]"));
 
     function scrollToDay(index) {
       carousel.scrollTo({ left: carousel.clientWidth * index, behavior: "smooth" });
@@ -2112,6 +2119,22 @@
         dayLabel.textContent = _dayLabels[index] ?? "Сегодня";
       }
       dayDots.forEach((dot, i) => dot.classList.toggle("active", i === index));
+
+      // Карусель дней прокручивается нативно, без единого render() — если
+      // на предыдущем экране был сфокусирован инпут (например, поле новой
+      // задачи), он остаётся ровно тем же DOM-узлом и клавиатура не
+      // закрывается сама, хотя экран уже другой (и, того хуже, набранное
+      // дальше летит в инпут, которого не видно). Сам текст никуда не
+      // девается — черновик уже сохраняется в addTaskDrafts при каждом
+      // input-событии, так что просто снимаем фокус; при возврате на этот
+      // экран заново фокусировать НЕ нужно — только показать, что уже есть.
+      const active = document.activeElement;
+      if (active && active.tagName === "INPUT") {
+        const page = active.closest(".day-page[data-day]");
+        if (page && dayPages[index] !== page) {
+          active.blur();
+        }
+      }
     }
 
     // rAF-троттлинг вместо debounce на таймауте — точки следуют за пальцем
