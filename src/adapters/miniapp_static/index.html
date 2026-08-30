@@ -57,6 +57,14 @@
       --mood-low: #c15c52;
     }
     * { box-sizing: border-box; }
+    /* Подстраховка на все текстовые поля разом (item 1, Phase 34) —
+       браузер/WebView по умолчанию мог подсветить фокус жёлтой рамкой
+       (замечено на Android) там, где конкретный класс поля забыл её
+       сбросить явно (как уже делают .title-edit/.entity-form-field/
+       add-task-row input) — эта строка не заменяет точечные сбросы
+       (они остаются для читаемости причины рядом с каждым полем), а
+       ловит любое текстовое поле, которое кто-то забудет учесть позже. */
+    input[type="text"]:focus { outline: none; }
     html, body {
       margin: 0;
       height: 100%;
@@ -118,12 +126,18 @@
        вьюпорту: 100vh в Telegram WebView не всегда совпадает с реально
        видимой областью (шапка/жесты/полноэкранный режим), из-за чего
        вариант "прижато к экрану" мог оказаться не там, где на самом деле
-       кончается видимый контент. Верхний padding заметно больше видимой
-       полоски — увеличивает зону старта жеста (см. attachScreenTransition),
-       сама полоска визуально не растёт: лишний padding того же цвета
-       фона, что и экран. */
+       кончается видимый контент. margin-top: auto (не фиксированный
+       отступ, item 3, Phase 34) — .screen-content уже flex-column на всю
+       высоту экрана, поэтому при коротком контенте (мало задач) auto
+       выбирает всё свободное место и прижимает полоску к низу видимой
+       области, а при контенте выше экрана свободного места нет — полоска
+       просто идёт сразу за контентом, как и раньше ("привязана к
+       полотну"). Верхний padding заметно больше видимой полоски —
+       увеличивает зону старта жеста (см. attachScreenTransition), сама
+       полоска визуально не растёт: лишний padding того же цвета фона,
+       что и экран. */
     .bottom-pill-wrap {
-      margin-top: 28px;
+      margin-top: auto;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -506,11 +520,23 @@
       padding: 40px 0;
       text-align: center;
     }
-    .sphere-legend { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+    /* Компоновка "график слева, легенда справа" (item 5, Phase 34) —
+       раньше график шёл на всю ширину, легенда под ним; теперь бок о
+       бок, график заметно уже (см. renderSphereChart), так помещаются
+       оба без подписей под столбцами. */
+    .sphere-chart-row { display: flex; align-items: center; gap: 10px; }
+    .sphere-legend { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 0; }
     .sphere-legend-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
     .sphere-swatch { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
-    .sphere-legend-label { flex: 1; color: var(--text); }
-    .sphere-legend-value { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+    .sphere-legend-label {
+      flex: 1;
+      min-width: 0;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .sphere-legend-value { color: var(--text-muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
     .month-project-row {
       display: flex;
       align-items: center;
@@ -555,7 +581,10 @@
       bottom: 0;
       left: 0;
       border-radius: 4px;
-      background: color-mix(in srgb, var(--accent) 55%, white 45%);
+      /* Выполненная часть — темнее (item 2, Phase 34), не светлее: тот
+         же принцип и тот же color-mix к чёрному, что уже использует
+         столбчатая диаграмма по сферам (Phase 33). */
+      background: color-mix(in srgb, var(--accent) 65%, black 35%);
     }
     /* Шкала месяцев + линия "сегодня" (item 10, Phase 29) — иначе
        непонятно, на какой календарный период приходятся полоски. */
@@ -710,6 +739,12 @@
       font-size: 14px;
       margin-bottom: 10px;
     }
+    /* Без этого на некоторых WebView (в т.ч. Android) фокус на текстовом
+       поле подсвечивался жёлтой обводкой браузера по умолчанию — та же
+       причина, по которой её сбрасывают .title-edit и добавление задачи
+       (item 1, Phase 34): единообразно по всем текстовым полям
+       приложения, не только в этой форме. */
+    .entity-form-field:focus { outline: none; }
     .entity-form-dates { display: flex; gap: 8px; margin-bottom: 10px; }
     /* Кнопки дат в форме создания/правки (Phase 28) — открывают
        всплывающий календарь (#date-picker-sheet) вместо нативного
@@ -4531,16 +4566,19 @@
       // столбец на сферу, нижняя часть темнее (выполнено), верхняя —
       // обычный цвет сферы (не выполнено). Тот же приём color-mix, что
       // уже даёт .gantt-bar-progress (только к белому — для
-      // противоположного эффекта, здесь к чёрному — темнее).
+      // противоположного эффекта, здесь к чёрному — темнее). Компоновка
+      // (item 5, Phase 34) — график слева, легенда справа (не друг под
+      // другом): подписи под столбцами убраны (в легенде и так есть
+      // название сферы), столбцы уже, график занимает меньше ширины.
       const max = Math.max(1, ...data.map((s) => s.count));
-      const w = 300;
+      const w = 100;
       const h = 130;
       const padLeft = 20;
-      const padBottom = 18;
+      const padBottom = 4;
       const padTop = 4;
       const plotW = w - padLeft - 4;
       const plotH = h - padTop - padBottom;
-      const barGap = 10;
+      const barGap = 6;
       const barW = (plotW - barGap * (data.length - 1)) / data.length;
 
       const yTicks = Array.from(new Set([0, Math.round(max / 2), max]));
@@ -4572,15 +4610,11 @@
           if (doneH > 0) {
             bar += `<rect x="${x}" y="${doneY}" width="${barW}" height="${doneH}" fill="${darker}"/>`;
           }
-          const labelX = x + barW / 2;
-          bar +=
-            `<text x="${labelX}" y="${h - 3}" font-size="8" fill="var(--text-muted)" text-anchor="middle">` +
-            `${s.sphere.slice(0, 4)}</text>`;
           return bar;
         })
         .join("");
 
-      const svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">${gridLines}${bars}</svg>`;
+      const svg = `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="flex-shrink:0">${gridLines}${bars}</svg>`;
       const legend = data
         .map(
           (s) =>
@@ -4589,7 +4623,7 @@
             `<span class="sphere-legend-value">${s.done}/${s.count} · ${Math.round((s.count / total) * 100)}%</span></div>`
         )
         .join("");
-      el.innerHTML += svg + `<div class="sphere-legend">${legend}</div>`;
+      el.innerHTML += `<div class="sphere-chart-row">${svg}<div class="sphere-legend">${legend}</div></div>`;
     }
 
     function renderMonthChart(data) {
@@ -5000,6 +5034,14 @@
       return "mood-low";
     }
 
+    function pluralizeRu(n, one, few, many) {
+      const mod10 = n % 10;
+      const mod100 = n % 100;
+      if (mod10 === 1 && mod100 !== 11) return one;
+      if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+      return many;
+    }
+
     // Рисует сетку одного месяца в конкретный контейнер — вызывается три
     // раза на каждый renderMonthCalendar() (пред./тек./след. панель
     // карусели), поэтому ничего не берёт из глобального calYear/calMonth
@@ -5073,10 +5115,20 @@
           const isPastDay = todayIso !== null && iso < todayIso;
           const dayEvents = events[iso];
           if (!isPastDay && dayEvents && dayEvents.length) {
+            // БАГ (Phase 34, item 4): при 2+ событиях "заголовок +N" почти
+            // всегда обрезался по CSS-эллипсису ДО того места, где стоит
+            // "+N" — счётчик был физически не виден, выглядело как одно
+            // (криво обрезанное) событие вместо явных "2 события". При
+            // нескольких событиях показываем короткое "N событие/события/
+            // событий" вместо заголовка — оно всегда короче тайла и
+            // никогда не обрезается; заголовок остаётся только когда
+            // событие ровно одно.
             const label = document.createElement("span");
             label.className = "month-cal-event-text";
             label.textContent =
-              dayEvents.length > 1 ? `${dayEvents[0]} +${dayEvents.length - 1}` : dayEvents[0];
+              dayEvents.length > 1
+                ? `${dayEvents.length} ${pluralizeRu(dayEvents.length, "событие", "события", "событий")}`
+                : dayEvents[0];
             btn.append(label);
           } else if (isPastDay && moods[iso] != null) {
             const dot = document.createElement("span");

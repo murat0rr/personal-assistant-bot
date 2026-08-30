@@ -746,11 +746,14 @@ async def analyze_productivity(spheres: list[dict], month: dict, projects: list[
     if not summary.enough_data and not summary.spheres:
         return "Пока недостаточно данных для анализа."
 
-    lines = " ".join(f"{s.sphere.capitalize()} — {s.status}." for s in summary.spheres)
+    # Каждая сфера на своей строке, совет — отдельным абзацем (item 6,
+    # Phase 34): раньше всё склеивалось в одну сплошную строку через
+    # пробел — читалось некрасиво, особенно с 5 сферами разом.
+    lines = "\n".join(f"{s.sphere.capitalize()} — {s.status}." for s in summary.spheres)
     if not summary.enough_data:
         return lines or "Пока недостаточно данных для анализа."
     if summary.advice:
-        return f"{lines} {summary.advice}"
+        return f"{lines}\n\n{summary.advice}"
     return lines
 
 
