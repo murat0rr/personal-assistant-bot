@@ -1663,6 +1663,22 @@
       return res.json();
     }
 
+    // Экранирование текста перед подстановкой в innerHTML (Phase 39,
+    // ревизия безопасности) — заголовки задач/проектов/целей и текст
+    // дневника приходят с сервера как обычный пользовательский текст, не
+    // HTML; большинство мест в этом файле и так рендерят через
+    // textContent (безопасно по умолчанию), но там, где строка собирается
+    // в один общий HTML-блок через шаблонную строку (графики аналитики,
+    // ревью дня), надо явно экранировать — иначе `<`/`>` в заголовке
+    // задачи стали бы настоящей разметкой. Раньше в одном месте (ИИ-текст)
+    // было временное `replace(/</g, "&lt;")` — заменено на этот общий
+    // helper везде, где нашлась та же дыра.
+    function escapeHtml(str) {
+      const div = document.createElement("div");
+      div.textContent = str == null ? "" : String(str);
+      return div.innerHTML;
+    }
+
     function icon(inner, size) {
       return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="${size}" height="${size}">${inner}</svg>`;
     }
@@ -4785,7 +4801,7 @@
         .map(
           (s) =>
             `<div class="sphere-legend-row"><span class="sphere-swatch" style="background:${sphereColor(s.sphere)}"></span>` +
-            `<span class="sphere-legend-label">${s.sphere}</span>` +
+            `<span class="sphere-legend-label">${escapeHtml(s.sphere)}</span>` +
             `<span class="sphere-legend-value">${s.done}/${s.count} · ${Math.round((s.count / total) * 100)}%</span></div>`
         )
         .join("");
@@ -4862,7 +4878,7 @@
           .slice(0, 6)
           .map(
             (p) =>
-              `<div class="month-project-row"><span class="month-project-title">${p.title}</span>` +
+              `<div class="month-project-row"><span class="month-project-title">${escapeHtml(p.title)}</span>` +
               `<span class="month-project-count">${p.total}</span></div>`
           )
           .join("");
@@ -4921,7 +4937,7 @@
           const progressWidth = width * (pct / 100);
           return (
             '<div class="gantt-row">' +
-            `<div class="gantt-row-label"><span class="gantt-row-title">${p.title}</span>` +
+            `<div class="gantt-row-label"><span class="gantt-row-title">${escapeHtml(p.title)}</span>` +
             `<span class="gantt-row-meta">${formatShortDate(p.start_date)}–${formatShortDate(p.end_date)} · ${p.done_count}/${p.task_count} · ${pct}%</span></div>` +
             '<div class="gantt-track">' +
             `<div class="gantt-bar" style="left:${left}%;width:${width}%;"></div>` +
@@ -4936,7 +4952,7 @@
     function renderAiSummary(text) {
       const el = document.getElementById("analytics-ai");
       el.innerHTML = '<p class="chart-title">ИИ-аналитика</p>';
-      el.innerHTML += `<div class="ai-summary-text">${text ? text.replace(/</g, "&lt;") : "Пока не набралось данных для анализа."}</div>`;
+      el.innerHTML += `<div class="ai-summary-text">${text ? escapeHtml(text) : "Пока не набралось данных для анализа."}</div>`;
     }
 
     async function loadAnalytics() {
@@ -5546,7 +5562,7 @@
         el.innerHTML =
           `<p class="day-info-title">${label} — ревью дня</p>` +
           `<div class="day-info-ratings">${ratingLine("физ.", entry.physical)}${ratingLine("соц.", entry.social)}${ratingLine("продукт.", entry.productivity)}${ratingLine("счастье", entry.happiness)}</div>` +
-          (entry.highlight ? `<div>${entry.highlight}</div>` : "");
+          (entry.highlight ? `<div>${escapeHtml(entry.highlight)}</div>` : "");
       } catch (e) {
         el.innerHTML = `<p class="day-info-title">${label}</p><div style="color:var(--text-muted)">Не удалось загрузить.</div>`;
       }

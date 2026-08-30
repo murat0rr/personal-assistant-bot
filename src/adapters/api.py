@@ -4,11 +4,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
+from typing import Annotated
 from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import AfterValidator, BaseModel
 from sqlalchemy import select, update
 
 from src.adapters.tasker_webhook import router as tasker_webhook_router
@@ -31,6 +32,29 @@ from src.integrations.weather import get_weather_summary
 from src.models.task import Task
 
 _DEFAULT_PRIORITY = "средний"
+
+# Тот же закрытый список, что и SPHERES на фронтенде (index.html) — там
+# это просто набор кнопок выбора, но само API до ревизии безопасности
+# (Phase 39) принимало в поле sphere любую строку без проверки: обычный
+# фронтенд никогда не отправит ничего другого, но прямой запрос к API
+# (с валидной подписью initData) мог бы записать произвольный текст,
+# который потом рендерился в аналитике без экранирования (см. Phase 39,
+# escapeHtml в index.html — сам XSS уже закрыт на выводе, эта проверка
+# на входе — дополнительный слой, не даёт мусору попасть в БД вообще).
+_SPHERES = {"учёба", "работа", "спорт", "развитие", "отношения"}
+
+
+def _validate_sphere(value: str | None) -> str | None:
+    if value is not None and value not in _SPHERES:
+        raise ValueError(f"недопустимая сфера: {value!r}")
+    return value
+
+
+SphereField = Annotated[str | None, AfterValidator(_validate_sphere)]
+# Пидантик проверяет базовый тип (str, без None) раньше AfterValidator,
+# так что в _validate_sphere value тут гарантированно не None — можно
+# переиспользовать ту же функцию для обязательного варианта поля.
+RequiredSphereField = Annotated[str, AfterValidator(_validate_sphere)]
 
 
 def _parse_due_date(value: str) -> datetime:
@@ -127,7 +151,7 @@ class BatchArchiveRequest(BaseModel):
 class CreateProjectRequest(BaseModel):
     title: str
     description: str | None = None
-    sphere: str | None = None
+    sphere: SphereField = None
     start_date: str | None = None
     end_date: str | None = None
     color: str | None = None
@@ -139,7 +163,7 @@ class SetTaskProjectRequest(BaseModel):
 
 
 class SetTaskSphereRequest(BaseModel):
-    sphere: str | None = None
+    sphere: SphereField = None
 
 
 class SetDoneRequest(BaseModel):
@@ -153,13 +177,13 @@ class SetColorRequest(BaseModel):
 class EditProjectRequest(BaseModel):
     title: str | None = None
     description: str | None = None
-    sphere: str | None = None
+    sphere: SphereField = None
     start_date: str | None = None
     end_date: str | None = None
 
 
 class CreateGoalRequest(BaseModel):
-    sphere: str
+    sphere: RequiredSphereField
     tier: str
     text: str
     analyze: bool = False
@@ -172,7 +196,7 @@ class SetGoalTextRequest(BaseModel):
 
 class EditGoalRequest(BaseModel):
     text: str | None = None
-    sphere: str | None = None
+    sphere: SphereField = None
     tier: str | None = None
     reference_date: str | None = None
 

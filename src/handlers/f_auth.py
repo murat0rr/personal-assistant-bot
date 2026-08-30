@@ -1,4 +1,5 @@
 import logging
+import secrets
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -29,7 +30,12 @@ async def handle_password_attempt(message: Message, state: FSMContext) -> None:
 
     entered = (message.text or "").strip().lower()
     expected = settings.bot_access_password.strip().lower()
-    if entered != expected:
+    # secrets.compare_digest — сравнение за постоянное время (Phase 39,
+    # ревизия безопасности): обычное `!=` возвращает результат тем
+    # быстрее, чем раньше совпадение оборвалось, — теоретическая утечка
+    # пароля по времени ответа. Тот же приём уже используется для
+    # секрета вебхуков Tasker (см. _verify_secret).
+    if not secrets.compare_digest(entered, expected):
         await message.answer("Неверный пароль, попробуй ещё раз.")
         return
 
