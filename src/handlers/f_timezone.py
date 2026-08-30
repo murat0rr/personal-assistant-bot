@@ -1,9 +1,8 @@
-"""Команда /timezone (Phase 39) — определяет часовой пояс и координаты
-пользователя по живой геопозиции из Telegram, вместо статичного
-settings.timezone/settings.weather_city из .env. См. src/core/user_location.py
-за тем, как это применяется к остальному приложению, и SPEC.md за
-обоснованием ограничения "работает только на основного владельца, пока
-нет полноценной многопользовательской авторизации"."""
+"""Команда /timezone (Phase 39, стала по-настоящему многопользовательской
+в Phase 40) — определяет часовой пояс и координаты пользователя по живой
+геопозиции из Telegram, вместо статичного settings.timezone/
+settings.weather_city из .env. См. src/core/user_location.py за тем, как
+это применяется к остальному приложению."""
 
 import logging
 
@@ -50,6 +49,7 @@ async def handle_location(
         return
     if not message.location:
         return
+    user_id = message.from_user.id
 
     lat, lon = message.location.latitude, message.location.longitude
     tz_name = await resolve_timezone(lat, lon)
@@ -62,30 +62,24 @@ async def handle_location(
         return
 
     label = await reverse_geocode_label(lat, lon)
-    await save_location_for(message.from_user.id, lat, lon, tz_name, label)
+    await save_location_for(user_id, lat, lon, tz_name, label)
 
-    is_owner = message.from_user.id == settings.telegram_user_id
-    where = f" ({label})" if label else ""
-    if is_owner:
-        # Основной владелец — его часовой пояс управляет расписанием
-        # планировщика и погодой во всём приложении (см.
-        # src/core/user_location.py). Применяем немедленно, без
-        # перезапуска процесса: settings — обычный мутируемый объект, а
-        # уже зарегистрированные джобы пересобираются явно (см.
-        # reschedule_for_timezone — CronTrigger резолвит tzinfo один раз
-        # при создании, менять scheduler.timezone задним числом бесполезно).
+    # Часовой пояс каждого пользователя управляет ЕГО ЛИЧНЫМ расписанием
+    # (Phase 40 — у каждого свои джобы) и его личной погодой — применяем
+    # сразу, без перезапуска процесса: reschedule_for_timezone пересобирает
+    # именно его джобы (CronTrigger резолвит tzinfo один раз при
+    # создании, просто поменять что-то задним числом нельзя).
+    if user_id == settings.telegram_user_id:
+        # Основной владелец — его зона ещё и дефолт settings.timezone для
+        # всего, что пока не стало per-user (см. user_location.py).
+        # settings — обычный мутируемый pydantic-объект, применяется
+        # немедленно, без правок в каждом месте использования.
         settings.timezone = tz_name
-        reschedule_for_timezone(scheduler, bot, storage, tz_name)
-        logger.info("Часовой пояс владельца обновлён: %s%s", tz_name, where)
-        text = f"Готово! Часовой пояс: {tz_name}{where}. Расписание уже пересчитано."
-    else:
-        # Пока нет полноценной многопользовательской авторизации (см.
-        # SPEC.md) — сохраняем на будущее, но ни на расписание, ни на
-        # погоду это пока не влияет, честно предупреждаем об этом.
-        text = (
-            f"Сохранил: {tz_name}{where}. Но пока часовой пояс и расписание "
-            "бота настраивает только основной пользователь — на твои "
-            "напоминания это ещё не влияет."
-        )
+    await reschedule_for_timezone(scheduler, bot, storage, user_id, tz_name)
+    logger.info("Часовой пояс обновлён (%s): %s", user_id, tz_name)
 
-    await message.answer(text, reply_markup=ReplyKeyboardRemove())
+    where = f" ({label})" if label else ""
+    await message.answer(
+        f"Готово! Часовой пояс: {tz_name}{where}. Расписание уже пересчитано.",
+        reply_markup=ReplyKeyboardRemove(),
+    )

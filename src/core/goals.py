@@ -50,11 +50,21 @@ def _serialize(goal: Goal) -> dict:
 
 
 async def create_goal(
-    sphere: str, tier: str, period_start: date | None, period_end: date | None, text: str
+    user_id: int,
+    sphere: str,
+    tier: str,
+    period_start: date | None,
+    period_end: date | None,
+    text: str,
 ) -> dict:
     async with async_session() as session:
         goal = Goal(
-            sphere=sphere, tier=tier, period_start=period_start, period_end=period_end, text=text
+            user_id=user_id,
+            sphere=sphere,
+            tier=tier,
+            period_start=period_start,
+            period_end=period_end,
+            text=text,
         )
         session.add(goal)
         await session.commit()
@@ -63,7 +73,12 @@ async def create_goal(
 
 
 async def create_goal_now(
-    sphere: str, tier: str, text: str, today: date, reference_date: date | None = None
+    user_id: int,
+    sphere: str,
+    tier: str,
+    text: str,
+    today: date,
+    reference_date: date | None = None,
 ) -> dict:
     """Ручное создание цели из Mini App (Phase 26) — период считается по
     тиру и опорной дате. `reference_date` (Phase 28) — выбрана
@@ -72,11 +87,21 @@ async def create_goal_now(
     дата, прежнее поведение."""
     bounds = GOAL_TIER_BOUNDS.get(tier)
     period_start, period_end = bounds(reference_date or today) if bounds else (None, None)
-    return await create_goal(sphere, tier, period_start, period_end, text)
+    return await create_goal(user_id, sphere, tier, period_start, period_end, text)
+
+
+async def _get_owned(session, goal_id: int, user_id: int) -> Goal:
+    """Проверка владения (Phase 40) — см. projects.py::_get_owned за тем
+    же обоснованием."""
+    goal = await session.get(Goal, goal_id)
+    if goal is None or goal.user_id != user_id:
+        raise ValueError("goal not found")
+    return goal
 
 
 async def update_goal(
     goal_id: int,
+    user_id: int,
     today: date,
     text: str | None = None,
     sphere: str | None = None,
@@ -89,9 +114,7 @@ async def update_goal(
     дата), не редактируется напрямую: пересчитывается заново, если
     поменялся тир и/или опорная дата (иначе остаётся как был)."""
     async with async_session() as session:
-        goal = await session.get(Goal, goal_id)
-        if goal is None:
-            raise ValueError("goal not found")
+        goal = await _get_owned(session, goal_id, user_id)
         if text is not None:
             goal.text = text
         if sphere is not None:
@@ -108,7 +131,7 @@ async def update_goal(
 
 
 async def list_goals_for_period(
-    tier: str, period_start: date | None, period_end: date | None
+    user_id: int, tier: str, period_start: date | None, period_end: date | None
 ) -> list[dict]:
     """Цели конкретного тира за конкретный период (по точному совпадению
     границ — все цели одного захода установки целей делятся ровно одним
@@ -116,6 +139,7 @@ async def list_goals_for_period(
     async with async_session() as session:
         result = await session.execute(
             select(Goal).where(
+                Goal.user_id == user_id,
                 Goal.tier == tier,
                 Goal.period_start == period_start,
                 Goal.period_end == period_end,
@@ -125,37 +149,33 @@ async def list_goals_for_period(
     return [_serialize(g) for g in goals]
 
 
-async def list_active_goals() -> list[dict]:
+async def list_active_goals(user_id: int) -> list[dict]:
     """Все неархивированные цели, любых тиров/периодов — для Mini App
     (Phase 26): переключатель сам группирует по тиру на фронтенде."""
     async with async_session() as session:
-        result = await session.execute(select(Goal).where(Goal.archived.is_(False)))
+        result = await session.execute(
+            select(Goal).where(Goal.archived.is_(False), Goal.user_id == user_id)
+        )
         goals = result.scalars().all()
     return [_serialize(g) for g in goals]
 
 
-async def set_goal_done(goal_id: int, done: bool) -> None:
+async def set_goal_done(goal_id: int, user_id: int, done: bool) -> None:
     async with async_session() as session:
-        goal = await session.get(Goal, goal_id)
-        if goal is None:
-            raise ValueError("goal not found")
+        goal = await _get_owned(session, goal_id, user_id)
         goal.done = done
         await session.commit()
 
 
-async def archive_goal(goal_id: int) -> None:
+async def archive_goal(goal_id: int, user_id: int) -> None:
     async with async_session() as session:
-        goal = await session.get(Goal, goal_id)
-        if goal is None:
-            raise ValueError("goal not found")
+        goal = await _get_owned(session, goal_id, user_id)
         goal.archived = True
         await session.commit()
 
 
-async def set_goal_text(goal_id: int, text: str) -> None:
+async def set_goal_text(goal_id: int, user_id: int, text: str) -> None:
     async with async_session() as session:
-        goal = await session.get(Goal, goal_id)
-        if goal is None:
-            raise ValueError("goal not found")
+        goal = await _get_owned(session, goal_id, user_id)
         goal.text = text
         await session.commit()

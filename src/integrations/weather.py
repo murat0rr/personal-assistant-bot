@@ -3,7 +3,7 @@ import logging
 import httpx
 
 from src.core.config import settings
-from src.core.user_location import get_owner_location
+from src.core.user_location import get_user_location
 
 logger = logging.getLogger(__name__)
 
@@ -49,15 +49,21 @@ def _format_weather(weather_code: int, temp_c: float, wind_kmh: float) -> str:
     return f"{emoji} {round(temp_c)}°C, ветер {round(wind_kmh)} км/ч"
 
 
-async def _resolve_coordinates(client: httpx.AsyncClient) -> tuple[float, float] | None:
-    # Живая геопозиция из /timezone (Phase 39) — приоритетнее статичного
-    # weather_city из .env: точнее (конкретная точка, не центр города по
-    # имени) и не требует лишнего geocoding-запроса на каждый вызов.
-    owner = await get_owner_location()
-    if owner and owner.latitude is not None and owner.longitude is not None:
-        return owner.latitude, owner.longitude
+async def _resolve_coordinates(
+    client: httpx.AsyncClient, user_id: int
+) -> tuple[float, float] | None:
+    # Живая геопозиция из /timezone (Phase 39, персонально у каждого с
+    # Phase 40) — приоритетнее статичного weather_city из .env: точнее
+    # (конкретная точка, не центр города по имени) и не требует лишнего
+    # geocoding-запроса на каждый вызов. weather_city — запасной вариант
+    # только для владельца (единственное, для чего он вообще задан в
+    # .env) — остальные пользователи без /timezone просто не получат
+    # погоду в сводке, это ожидаемо, не ошибка.
+    location = await get_user_location(user_id)
+    if location and location.latitude is not None and location.longitude is not None:
+        return location.latitude, location.longitude
 
-    if not settings.weather_city:
+    if user_id != settings.telegram_user_id or not settings.weather_city:
         return None
 
     geo_response = await client.get(
@@ -72,10 +78,10 @@ async def _resolve_coordinates(client: httpx.AsyncClient) -> tuple[float, float]
     return results[0]["latitude"], results[0]["longitude"]
 
 
-async def get_weather_summary() -> str | None:
+async def get_weather_summary(user_id: int) -> str | None:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            coords = await _resolve_coordinates(client)
+            coords = await _resolve_coordinates(client, user_id)
             if coords is None:
                 return None
             latitude, longitude = coords

@@ -1,7 +1,6 @@
 import logging
 import time
-from datetime import date, datetime
-from zoneinfo import ZoneInfo
+from datetime import date
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
@@ -10,10 +9,10 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy import select
 
 from src.core.auth import is_authorized
-from src.core.config import settings
 from src.core.db import async_session
 from src.core.goals import create_goal, list_goals_for_period
 from src.core.projects import create_project, find_project_by_title, list_projects
+from src.core.user_location import user_today
 from src.integrations.claude_client import generate_tasks_from_goals, propose_projects_from_goals
 from src.models.task import Task
 
@@ -54,7 +53,12 @@ def _sphere_keyboard(done_spheres: list[str]) -> InlineKeyboardMarkup:
 
 
 async def start_goal_flow(
-    bot: Bot, state: FSMContext, tier: str, period_start: date | None, period_end: date | None
+    bot: Bot,
+    state: FSMContext,
+    user_id: int,
+    tier: str,
+    period_start: date | None,
+    period_end: date | None,
 ) -> None:
     await state.update_data(
         tier=tier,
@@ -64,7 +68,7 @@ async def start_goal_flow(
     )
     label = _TIER_LABELS[tier]
     await bot.send_message(
-        chat_id=settings.telegram_user_id,
+        chat_id=user_id,
         text=f"Пора поставить цели на {label}. Выбери сферу — напишешь цель, я её сохраню.",
         reply_markup=_sphere_keyboard([]),
     )
@@ -109,7 +113,9 @@ async def handle_goal_text(message: Message, state: FSMContext) -> None:
     period_start = date.fromisoformat(data["period_start"]) if data["period_start"] else None
     period_end = date.fromisoformat(data["period_end"]) if data["period_end"] else None
 
-    await create_goal(sphere, tier, period_start, period_end, message.text.strip())
+    await create_goal(
+        message.from_user.id, sphere, tier, period_start, period_end, message.text.strip()
+    )
 
     done_spheres = [*data.get("done_spheres", []), sphere]
     await state.update_data(done_spheres=done_spheres)
@@ -147,16 +153,16 @@ async def handle_goal_done(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.message.answer("Ни одной цели не задано — в следующий раз.")
         return
 
-    await _finish_tier(callback.message.bot, tier, period_start, period_end)
+    await _finish_tier(callback.message.bot, callback.from_user.id, tier, period_start, period_end)
 
 
 async def _finish_tier(
-    bot: Bot, tier: str, period_start: date | None, period_end: date | None
+    bot: Bot, user_id: int, tier: str, period_start: date | None, period_end: date | None
 ) -> None:
-    goals = await list_goals_for_period(tier, period_start, period_end)
+    goals = await list_goals_for_period(user_id, tier, period_start, period_end)
     if tier not in _TASK_GENERATING_TIERS:
         await bot.send_message(
-            chat_id=settings.telegram_user_id,
+            chat_id=user_id,
             text=f"Цели на {_TIER_LABELS[tier]} сохранены.",
         )
         return
@@ -167,16 +173,18 @@ async def _finish_tier(
     # find_project_by_title никогда не найдёт проект, которого на
     # момент генерации задач ещё не существовало в БД).
     if tier == "monthly":
-        await _propose_projects_for_month(bot, goals)
+        await _propose_projects_for_month(bot, user_id, goals)
 
     async with async_session() as session:
         existing_titles = [
             row[0]
             for row in (
-                await session.execute(select(Task.title).where(Task.archived.is_(False)))
+                await session.execute(
+                    select(Task.title).where(Task.archived.is_(False), Task.user_id == user_id)
+                )
             ).all()
         ]
-    active_projects = await list_projects()
+    active_projects = await list_projects(user_id)
 
     generated = await generate_tasks_from_goals(
         goals, existing_titles, active_projects, period_start, period_end
@@ -187,8 +195,9 @@ async def _finish_tier(
             for item in generated:
                 project = None
                 if item.project_title:
-                    project = await find_project_by_title(item.project_title)
+                    project = await find_project_by_title(user_id, item.project_title)
                 task = Task(
+                    user_id=user_id,
                     title=item.title,
                     due_date=None,
                     priority="средний",
@@ -204,26 +213,28 @@ async def _finish_tier(
     if created_titles:
         names = "\n".join(f"— {t}" for t in created_titles)
         await bot.send_message(
-            chat_id=settings.telegram_user_id,
+            chat_id=user_id,
             text=f"Цели на {_TIER_LABELS[tier]} сохранены. Добавил задачи в инбокс:\n{names}",
         )
     else:
         await bot.send_message(
-            chat_id=settings.telegram_user_id,
+            chat_id=user_id,
             text=f"Цели на {_TIER_LABELS[tier]} сохранены.",
         )
 
 
-async def _propose_projects_for_month(bot: Bot, goals: list[dict]) -> None:
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
+async def _propose_projects_for_month(bot: Bot, user_id: int, goals: list[dict]) -> None:
+    today = await user_today(user_id)
     proposals = await propose_projects_from_goals(goals, today)
     if not proposals:
         return
     names = []
     for p in proposals:
-        await create_project(p.title, p.description or None, p.sphere, p.start_date, p.end_date)
+        await create_project(
+            user_id, p.title, p.description or None, p.sphere, p.start_date, p.end_date
+        )
         names.append(f"— {p.title} ({p.start_date.isoformat()} – {p.end_date.isoformat()})")
     await bot.send_message(
-        chat_id=settings.telegram_user_id,
+        chat_id=user_id,
         text="По итогам месячных целей создал проекты:\n" + "\n".join(names),
     )

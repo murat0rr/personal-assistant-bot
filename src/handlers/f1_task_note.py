@@ -1,11 +1,10 @@
 import logging
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from aiogram.types import Message
 
-from src.core.config import settings
 from src.core.db import async_session
+from src.core.user_location import user_today
 from src.integrations.claude_client import extract_task_fields
 from src.models.task import Task
 
@@ -13,12 +12,15 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_task_note(message: Message, text: str) -> None:
+    if not message.from_user:
+        return
     try:
-        today = datetime.now(ZoneInfo(settings.timezone)).date()
+        today = await user_today(message.from_user.id)
         fields = await extract_task_fields(text, today)
 
         async with async_session() as session:
             task = Task(
+                user_id=message.from_user.id,
                 title=fields.title,
                 # due_date в БД — timestamp; голосовая/текстовая задача времени
                 # не задаёт, поэтому дата целиком идёт на полночь (конвенция

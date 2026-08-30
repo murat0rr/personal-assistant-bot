@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Integer, String
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -11,6 +11,10 @@ class Project(Base):
     __tablename__ = "projects"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Многопользовательность (Phase 40) — см. Task.user_id.
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False
+    )
     title: Mapped[str] = mapped_column(String)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     # Та же таксономия, что у Task.sphere/Goal.sphere — не enum на уровне

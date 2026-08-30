@@ -1,7 +1,6 @@
 import logging
 import time
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import date, datetime, timedelta
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
@@ -10,8 +9,8 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy import select
 
 from src.core.auth import is_authorized
-from src.core.config import settings
 from src.core.db import async_session
+from src.core.user_location import user_today
 from src.integrations.claude_client import suggest_tasks_for_today
 from src.models.task import Task
 
@@ -29,28 +28,24 @@ _ADVICE_KEYBOARD = InlineKeyboardMarkup(
 )
 
 
-def _fsm_state(bot: Bot, storage: BaseStorage) -> FSMContext:
-    key = StorageKey(
-        bot_id=bot.id,
-        chat_id=settings.telegram_user_id,
-        user_id=settings.telegram_user_id,
-    )
+def _fsm_state(bot: Bot, storage: BaseStorage, user_id: int) -> FSMContext:
+    key = StorageKey(bot_id=bot.id, chat_id=user_id, user_id=user_id)
     return FSMContext(storage=storage, key=key)
 
 
-async def send_morning_advice(bot: Bot, storage: BaseStorage) -> None:
+async def send_morning_advice(bot: Bot, storage: BaseStorage, user_id: int, today: date) -> None:
     """Утренний совет (Phase 23) — отдельное сообщение вслед за
     дайджестом: смотрит на вчера/сегодня/инбокс, предлагает подтянуть
     что-то из инбокса на сегодня с учётом нагрузки. Кнопки "Добавить"/
     "Не сегодня" под сообщением — сами task_id хранятся в FSM-данных
     (не в callback_data — список id может не влезть в лимит Telegram)."""
-    tz = ZoneInfo(settings.timezone)
-    today = datetime.now(tz).date()
     yesterday = today - timedelta(days=1)
 
     async with async_session() as session:
         result = await session.execute(
-            select(Task).where(Task.archived.is_(False), Task.done.is_(False))
+            select(Task).where(
+                Task.archived.is_(False), Task.done.is_(False), Task.user_id == user_id
+            )
         )
         tasks = result.scalars().all()
 
@@ -76,10 +71,10 @@ async def send_morning_advice(bot: Bot, storage: BaseStorage) -> None:
     if not lines:
         return
 
-    state = _fsm_state(bot, storage)
+    state = _fsm_state(bot, storage, user_id)
     await state.update_data(advice_task_ids=suggested_ids)
     await bot.send_message(
-        chat_id=settings.telegram_user_id,
+        chat_id=user_id,
         text=f"💡 Из инбокса на сегодня стоит подтянуть:\n{lines}",
         reply_markup=_ADVICE_KEYBOARD,
     )
@@ -112,12 +107,12 @@ async def handle_advice_button(callback: CallbackQuery, state: FSMContext) -> No
         await callback.answer("Ладно, не сегодня")
         return
 
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    today = await user_today(callback.from_user.id)
     due = datetime.combine(today, datetime.min.time())
     async with async_session() as session:
         for task_id in task_ids:
             task = await session.get(Task, task_id)
-            if task is None or task.due_date is not None:
+            if task is None or task.due_date is not None or task.user_id != callback.from_user.id:
                 continue
             task.due_date = due
             task.sort_order = time.time()

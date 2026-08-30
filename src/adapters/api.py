@@ -201,12 +201,26 @@ class EditGoalRequest(BaseModel):
     reference_date: str | None = None
 
 
+async def _get_owned_task(session, task_id: int, uid: int) -> Task:
+    """Проверка владения (Phase 40) — тот же принцип, что
+    core/projects.py::_get_owned, но задачи (в отличие от проектов/
+    целей/шаблонов) правятся напрямую в api.py, не через репозиторный
+    слой, так что helper здесь, а не в src/core/*."""
+    task = await session.get(Task, task_id)
+    if task is None or task.user_id != uid:
+        raise HTTPException(status_code=404, detail="not found")
+    return task
+
+
 @app.get("/miniapp/api/tasks")
-async def list_tasks(_: dict = Depends(get_authorized_user)) -> dict:
+async def list_tasks(user: dict = Depends(get_authorized_user)) -> dict:
+    uid = user["id"]
     # Postgres — единственный источник правды для задач (Phase 10), поэтому
     # это простое чтение без похода куда-либо ещё.
     async with async_session() as session:
-        result = await session.execute(select(Task).where(Task.archived.is_(False)))
+        result = await session.execute(
+            select(Task).where(Task.archived.is_(False), Task.user_id == uid)
+        )
         tasks = result.scalars().all()
 
     today = datetime.now(ZoneInfo(settings.timezone)).date()
@@ -215,7 +229,7 @@ async def list_tasks(_: dict = Depends(get_authorized_user)) -> dict:
 
 @app.post("/miniapp/api/tasks")
 async def create_task_endpoint(
-    payload: CreateTaskRequest, _: dict = Depends(get_authorized_user)
+    payload: CreateTaskRequest, user: dict = Depends(get_authorized_user)
 ) -> dict:
     # due_date=None — валидный случай (задача из Инбокса, без даты), не
     # заменяем его на "сегодня": фронтенд всегда передаёт то, что реально
@@ -224,6 +238,7 @@ async def create_task_endpoint(
 
     async with async_session() as session:
         task = Task(
+            user_id=user["id"],
             title=payload.title,
             due_date=due_date,
             priority=_DEFAULT_PRIORITY,
@@ -238,13 +253,10 @@ async def create_task_endpoint(
 
 @app.post("/miniapp/api/tasks/{task_id}/done")
 async def mark_task_done(
-    task_id: int, payload: MarkDoneRequest, _: dict = Depends(get_authorized_user)
+    task_id: int, payload: MarkDoneRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if task is None:
-            raise HTTPException(status_code=404, detail="not found")
-
+        task = await _get_owned_task(session, task_id, user["id"])
         task.done = payload.done
         await session.commit()
 
@@ -253,13 +265,10 @@ async def mark_task_done(
 
 @app.post("/miniapp/api/tasks/{task_id}/due-date")
 async def set_task_due_date(
-    task_id: int, payload: SetDueDateRequest, _: dict = Depends(get_authorized_user)
+    task_id: int, payload: SetDueDateRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if task is None:
-            raise HTTPException(status_code=404, detail="not found")
-
+        task = await _get_owned_task(session, task_id, user["id"])
         task.due_date = _parse_due_date(payload.due_date)
         # Перенос на другой день — та же группа "новая/перенесённая — в
         # конец", что и при создании (Phase 13): задача уезжает в конец
@@ -273,13 +282,10 @@ async def set_task_due_date(
 
 @app.post("/miniapp/api/tasks/{task_id}/priority")
 async def set_task_priority(
-    task_id: int, payload: SetPriorityRequest, _: dict = Depends(get_authorized_user)
+    task_id: int, payload: SetPriorityRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if task is None:
-            raise HTTPException(status_code=404, detail="not found")
-
+        task = await _get_owned_task(session, task_id, user["id"])
         task.priority = payload.priority
         # Смена приоритета может переместить задачу между группой событий
         # и обычных — тоже в конец новой группы, тем же правилом.
@@ -291,13 +297,10 @@ async def set_task_priority(
 
 @app.post("/miniapp/api/tasks/{task_id}/reorder")
 async def reorder_task(
-    task_id: int, payload: SetSortOrderRequest, _: dict = Depends(get_authorized_user)
+    task_id: int, payload: SetSortOrderRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if task is None:
-            raise HTTPException(status_code=404, detail="not found")
-
+        task = await _get_owned_task(session, task_id, user["id"])
         task.sort_order = payload.sort_order
         await session.commit()
 
@@ -306,17 +309,14 @@ async def reorder_task(
 
 @app.post("/miniapp/api/tasks/{task_id}/title")
 async def set_task_title(
-    task_id: int, payload: SetTitleRequest, _: dict = Depends(get_authorized_user)
+    task_id: int, payload: SetTitleRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     title = payload.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="empty title")
 
     async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if task is None:
-            raise HTTPException(status_code=404, detail="not found")
-
+        task = await _get_owned_task(session, task_id, user["id"])
         task.title = title
         await session.commit()
 
@@ -325,13 +325,10 @@ async def set_task_title(
 
 @app.post("/miniapp/api/tasks/{task_id}/project")
 async def set_task_project(
-    task_id: int, payload: SetTaskProjectRequest, _: dict = Depends(get_authorized_user)
+    task_id: int, payload: SetTaskProjectRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if task is None:
-            raise HTTPException(status_code=404, detail="not found")
-
+        task = await _get_owned_task(session, task_id, user["id"])
         task.project_id = payload.project_id
         await session.commit()
 
@@ -340,13 +337,10 @@ async def set_task_project(
 
 @app.post("/miniapp/api/tasks/{task_id}/sphere")
 async def set_task_sphere(
-    task_id: int, payload: SetTaskSphereRequest, _: dict = Depends(get_authorized_user)
+    task_id: int, payload: SetTaskSphereRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if task is None:
-            raise HTTPException(status_code=404, detail="not found")
-
+        task = await _get_owned_task(session, task_id, user["id"])
         task.sphere = payload.sphere
         await session.commit()
 
@@ -355,13 +349,10 @@ async def set_task_sphere(
 
 @app.post("/miniapp/api/tasks/{task_id}/archive")
 async def archive_task_endpoint(
-    task_id: int, _: dict = Depends(get_authorized_user)
+    task_id: int, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if task is None:
-            raise HTTPException(status_code=404, detail="not found")
-
+        task = await _get_owned_task(session, task_id, user["id"])
         task.archived = True
         await session.commit()
 
@@ -370,7 +361,7 @@ async def archive_task_endpoint(
 
 @app.post("/miniapp/api/tasks/archive-batch")
 async def archive_tasks_batch(
-    payload: BatchArchiveRequest, _: dict = Depends(get_authorized_user)
+    payload: BatchArchiveRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     # Режим переноса (Phase 14) — задачи помечаются "на удаление" локально
     # во фронтенде и реально архивируются одним запросом только при выходе
@@ -378,15 +369,22 @@ async def archive_tasks_batch(
     if not payload.ids:
         return {"status": "ok"}
     async with async_session() as session:
-        await session.execute(update(Task).where(Task.id.in_(payload.ids)).values(archived=True))
+        # user_id в WHERE — тот же принцип, что task_templates_repo
+        # ::archive_templates_batch: batch-операция не должна суметь
+        # задеть чужую задачу, даже если id угадан/подсмотрен.
+        await session.execute(
+            update(Task)
+            .where(Task.id.in_(payload.ids), Task.user_id == user["id"])
+            .values(archived=True)
+        )
         await session.commit()
 
     return {"status": "ok"}
 
 
 @app.get("/miniapp/api/briefing")
-async def briefing(_: dict = Depends(get_authorized_user)) -> dict:
-    return {"weather": await get_weather_summary()}
+async def briefing(user: dict = Depends(get_authorized_user)) -> dict:
+    return {"weather": await get_weather_summary(user["id"])}
 
 
 class CreateHabitRequest(BaseModel):
@@ -394,22 +392,25 @@ class CreateHabitRequest(BaseModel):
 
 
 @app.get("/miniapp/api/habits")
-async def list_habits_endpoint(_: dict = Depends(get_authorized_user)) -> list[dict]:
-    return await habits_repo.list_habits()
+async def list_habits_endpoint(user: dict = Depends(get_authorized_user)) -> list[dict]:
+    return await habits_repo.list_habits(user["id"])
 
 
 @app.post("/miniapp/api/habits")
 async def create_habit_endpoint(
-    payload: CreateHabitRequest, _: dict = Depends(get_authorized_user)
+    payload: CreateHabitRequest, user: dict = Depends(get_authorized_user)
 ) -> dict:
-    habit = await habits_repo.create_habit(payload.name)
+    habit = await habits_repo.create_habit(user["id"], payload.name)
     return {"status": "ok", "id": habit["id"]}
 
 
 @app.post("/miniapp/api/habits/{habit_id}/check")
-async def mark_habit_checked(habit_id: int, _: dict = Depends(get_authorized_user)) -> dict:
+async def mark_habit_checked(habit_id: int, user: dict = Depends(get_authorized_user)) -> dict:
     today = datetime.now(ZoneInfo(settings.timezone)).date()
-    new_streak = await check_habit(habit_id, today)
+    try:
+        new_streak = await check_habit(habit_id, user["id"], today)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="habit not found") from exc
     return {"status": "ok", "streak": new_streak}
 
 
@@ -417,24 +418,24 @@ async def mark_habit_checked(habit_id: int, _: dict = Depends(get_authorized_use
 # логика делегируется src/core/task_templates.py (репозиторный слой,
 # как у habits, а не инлайн-SQLAlchemy, как у задач).
 @app.get("/miniapp/api/templates")
-async def list_templates_endpoint(_: dict = Depends(get_authorized_user)) -> list[dict]:
+async def list_templates_endpoint(user: dict = Depends(get_authorized_user)) -> list[dict]:
     today = datetime.now(ZoneInfo(settings.timezone)).date()
-    return await templates_repo.list_templates(today)
+    return await templates_repo.list_templates(user["id"], today)
 
 
 @app.post("/miniapp/api/templates")
 async def create_template_endpoint(
-    payload: SetTitleRequest, _: dict = Depends(get_authorized_user)
+    payload: SetTitleRequest, user: dict = Depends(get_authorized_user)
 ) -> dict:
-    return await templates_repo.create_template(payload.title)
+    return await templates_repo.create_template(user["id"], payload.title)
 
 
 @app.post("/miniapp/api/templates/{template_id}/reorder")
 async def reorder_template_endpoint(
-    template_id: int, payload: SetSortOrderRequest, _: dict = Depends(get_authorized_user)
+    template_id: int, payload: SetSortOrderRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     try:
-        await templates_repo.reorder_template(template_id, payload.sort_order)
+        await templates_repo.reorder_template(template_id, user["id"], payload.sort_order)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="template not found") from exc
     return {"status": "ok"}
@@ -442,10 +443,10 @@ async def reorder_template_endpoint(
 
 @app.post("/miniapp/api/templates/{template_id}/title")
 async def rename_template_endpoint(
-    template_id: int, payload: SetTitleRequest, _: dict = Depends(get_authorized_user)
+    template_id: int, payload: SetTitleRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     try:
-        await templates_repo.rename_template(template_id, payload.title)
+        await templates_repo.rename_template(template_id, user["id"], payload.title)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="template not found") from exc
     return {"status": "ok"}
@@ -453,19 +454,19 @@ async def rename_template_endpoint(
 
 @app.post("/miniapp/api/templates/archive-batch")
 async def archive_templates_batch_endpoint(
-    payload: BatchArchiveRequest, _: dict = Depends(get_authorized_user)
+    payload: BatchArchiveRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
-    await templates_repo.archive_templates_batch(payload.ids)
+    await templates_repo.archive_templates_batch(user["id"], payload.ids)
     return {"status": "ok"}
 
 
 @app.post("/miniapp/api/templates/{template_id}/use")
 async def use_template_endpoint(
-    template_id: int, payload: SetDueDateRequest, _: dict = Depends(get_authorized_user)
+    template_id: int, payload: SetDueDateRequest, user: dict = Depends(get_authorized_user)
 ) -> dict:
     due_date = _parse_due_date(payload.due_date)
     try:
-        return await templates_repo.use_template(template_id, due_date)
+        return await templates_repo.use_template(template_id, user["id"], due_date)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="template not found") from exc
 
@@ -475,30 +476,33 @@ async def use_template_endpoint(
 # при листинге — фронтенду не нужно тянуть все задачи, чтобы нарисовать
 # прогресс-бар карточки проекта.
 @app.get("/miniapp/api/projects")
-async def list_projects_endpoint(_: dict = Depends(get_authorized_user)) -> list[dict]:
-    return await projects_repo.list_projects()
+async def list_projects_endpoint(user: dict = Depends(get_authorized_user)) -> list[dict]:
+    return await projects_repo.list_projects(user["id"])
 
 
 @app.post("/miniapp/api/projects")
 async def create_project_endpoint(
-    payload: CreateProjectRequest, _: dict = Depends(get_authorized_user)
+    payload: CreateProjectRequest, user: dict = Depends(get_authorized_user)
 ) -> dict:
+    uid = user["id"]
     start = date.fromisoformat(payload.start_date) if payload.start_date else None
     end = date.fromisoformat(payload.end_date) if payload.end_date else None
     project = await projects_repo.create_project(
-        payload.title, payload.description, payload.sphere, start, end, payload.color
+        uid, payload.title, payload.description, payload.sphere, start, end, payload.color
     )
     if payload.analyze:
-        await _analyze_and_link_project(project["id"], project["title"], project["description"])
+        await _analyze_and_link_project(
+            uid, project["id"], project["title"], project["description"]
+        )
     return project
 
 
 @app.post("/miniapp/api/projects/{project_id}/archive")
 async def archive_project_endpoint(
-    project_id: int, _: dict = Depends(get_authorized_user)
+    project_id: int, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     try:
-        await projects_repo.archive_project(project_id)
+        await projects_repo.archive_project(project_id, user["id"])
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="project not found") from exc
     return {"status": "ok"}
@@ -506,10 +510,10 @@ async def archive_project_endpoint(
 
 @app.post("/miniapp/api/projects/{project_id}/done")
 async def set_project_done_endpoint(
-    project_id: int, payload: SetDoneRequest, _: dict = Depends(get_authorized_user)
+    project_id: int, payload: SetDoneRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     try:
-        await projects_repo.set_project_done(project_id, payload.done)
+        await projects_repo.set_project_done(project_id, user["id"], payload.done)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="project not found") from exc
     return {"status": "ok"}
@@ -517,10 +521,10 @@ async def set_project_done_endpoint(
 
 @app.post("/miniapp/api/projects/{project_id}/color")
 async def set_project_color_endpoint(
-    project_id: int, payload: SetColorRequest, _: dict = Depends(get_authorized_user)
+    project_id: int, payload: SetColorRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     try:
-        await projects_repo.set_project_color(project_id, payload.color)
+        await projects_repo.set_project_color(project_id, user["id"], payload.color)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="project not found") from exc
     return {"status": "ok"}
@@ -528,13 +532,14 @@ async def set_project_color_endpoint(
 
 @app.post("/miniapp/api/projects/{project_id}/edit")
 async def edit_project_endpoint(
-    project_id: int, payload: EditProjectRequest, _: dict = Depends(get_authorized_user)
+    project_id: int, payload: EditProjectRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     start = date.fromisoformat(payload.start_date) if payload.start_date else None
     end = date.fromisoformat(payload.end_date) if payload.end_date else None
     try:
         await projects_repo.update_project(
             project_id,
+            user["id"],
             title=payload.title,
             description=payload.description,
             sphere=payload.sphere,
@@ -546,7 +551,7 @@ async def edit_project_endpoint(
     return {"status": "ok"}
 
 
-async def _unlinked_candidate_tasks(field: str) -> list[dict]:
+async def _unlinked_candidate_tasks(user_id: int, field: str) -> list[dict]:
     """Задачи без привязки (field — "project_id" или "sphere") из
     инбокса и всех будущих дат — кандидаты для "проанализировать и
     добавить" (Phase 26). Прошлые/просроченные не трогаем — это уже
@@ -565,31 +570,41 @@ async def _unlinked_candidate_tasks(field: str) -> list[dict]:
                 Task.done.is_(False),
                 column.is_(None),
                 (Task.due_date.is_(None) | (Task.due_date >= today_start)),
+                Task.user_id == user_id,
             )
         )
         return [{"id": row[0], "title": row[1]} for row in result.all()]
 
 
-async def _analyze_and_link_project(project_id: int, title: str, description: str | None) -> int:
-    candidates = await _unlinked_candidate_tasks("project_id")
+async def _analyze_and_link_project(
+    user_id: int, project_id: int, title: str, description: str | None
+) -> int:
+    candidates = await _unlinked_candidate_tasks(user_id, "project_id")
     matched_ids = await find_tasks_for_entity(title, description, candidates)
     if not matched_ids:
         return 0
     async with async_session() as session:
         await session.execute(
-            update(Task).where(Task.id.in_(matched_ids)).values(project_id=project_id)
+            update(Task)
+            .where(Task.id.in_(matched_ids), Task.user_id == user_id)
+            .values(project_id=project_id)
         )
         await session.commit()
     return len(matched_ids)
 
 
 @app.post("/miniapp/api/projects/{project_id}/analyze")
-async def analyze_project_endpoint(project_id: int, _: dict = Depends(get_authorized_user)) -> dict:
-    projects = await projects_repo.list_projects()
+async def analyze_project_endpoint(
+    project_id: int, user: dict = Depends(get_authorized_user)
+) -> dict:
+    uid = user["id"]
+    projects = await projects_repo.list_projects(uid)
     project = next((p for p in projects if p["id"] == project_id), None)
     if project is None:
         raise HTTPException(status_code=404, detail="project not found")
-    linked = await _analyze_and_link_project(project_id, project["title"], project["description"])
+    linked = await _analyze_and_link_project(
+        uid, project_id, project["title"], project["description"]
+    )
     return {"linked": linked}
 
 
@@ -597,26 +612,29 @@ async def analyze_project_endpoint(project_id: int, _: dict = Depends(get_author
 # считается сервером по тиру и сегодняшней дате (см. core/goals.py::
 # create_goal_now) — фронтенд его не присылает.
 @app.get("/miniapp/api/goals")
-async def list_goals_endpoint(_: dict = Depends(get_authorized_user)) -> list[dict]:
-    return await goals_repo.list_active_goals()
+async def list_goals_endpoint(user: dict = Depends(get_authorized_user)) -> list[dict]:
+    return await goals_repo.list_active_goals(user["id"])
 
 
 @app.post("/miniapp/api/goals")
 async def create_goal_endpoint(
-    payload: CreateGoalRequest, _: dict = Depends(get_authorized_user)
+    payload: CreateGoalRequest, user: dict = Depends(get_authorized_user)
 ) -> dict:
+    uid = user["id"]
     today = datetime.now(ZoneInfo(settings.timezone)).date()
     reference_date = date.fromisoformat(payload.reference_date) if payload.reference_date else None
     goal = await goals_repo.create_goal_now(
-        payload.sphere, payload.tier, payload.text, today, reference_date
+        uid, payload.sphere, payload.tier, payload.text, today, reference_date
     )
     if payload.analyze:
-        candidates = await _unlinked_candidate_tasks("sphere")
+        candidates = await _unlinked_candidate_tasks(uid, "sphere")
         matched_ids = await find_tasks_for_entity(goal["text"], None, candidates)
         if matched_ids:
             async with async_session() as session:
                 await session.execute(
-                    update(Task).where(Task.id.in_(matched_ids)).values(sphere=payload.sphere)
+                    update(Task)
+                    .where(Task.id.in_(matched_ids), Task.user_id == uid)
+                    .values(sphere=payload.sphere)
                 )
                 await session.commit()
     return goal
@@ -624,10 +642,10 @@ async def create_goal_endpoint(
 
 @app.post("/miniapp/api/goals/{goal_id}/done")
 async def set_goal_done_endpoint(
-    goal_id: int, payload: SetDoneRequest, _: dict = Depends(get_authorized_user)
+    goal_id: int, payload: SetDoneRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     try:
-        await goals_repo.set_goal_done(goal_id, payload.done)
+        await goals_repo.set_goal_done(goal_id, user["id"], payload.done)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="goal not found") from exc
     return {"status": "ok"}
@@ -635,10 +653,10 @@ async def set_goal_done_endpoint(
 
 @app.post("/miniapp/api/goals/{goal_id}/archive")
 async def archive_goal_endpoint(
-    goal_id: int, _: dict = Depends(get_authorized_user)
+    goal_id: int, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     try:
-        await goals_repo.archive_goal(goal_id)
+        await goals_repo.archive_goal(goal_id, user["id"])
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="goal not found") from exc
     return {"status": "ok"}
@@ -646,10 +664,10 @@ async def archive_goal_endpoint(
 
 @app.post("/miniapp/api/goals/{goal_id}/text")
 async def set_goal_text_endpoint(
-    goal_id: int, payload: SetGoalTextRequest, _: dict = Depends(get_authorized_user)
+    goal_id: int, payload: SetGoalTextRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     try:
-        await goals_repo.set_goal_text(goal_id, payload.text)
+        await goals_repo.set_goal_text(goal_id, user["id"], payload.text)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="goal not found") from exc
     return {"status": "ok"}
@@ -657,13 +675,14 @@ async def set_goal_text_endpoint(
 
 @app.post("/miniapp/api/goals/{goal_id}/edit")
 async def edit_goal_endpoint(
-    goal_id: int, payload: EditGoalRequest, _: dict = Depends(get_authorized_user)
+    goal_id: int, payload: EditGoalRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     today = datetime.now(ZoneInfo(settings.timezone)).date()
     reference_date = date.fromisoformat(payload.reference_date) if payload.reference_date else None
     try:
         await goals_repo.update_goal(
             goal_id,
+            user["id"],
             today,
             text=payload.text,
             sphere=payload.sphere,
@@ -676,51 +695,74 @@ async def edit_goal_endpoint(
 
 
 @app.post("/miniapp/api/goals/{goal_id}/analyze")
-async def analyze_goal_endpoint(goal_id: int, _: dict = Depends(get_authorized_user)) -> dict:
-    goals = await goals_repo.list_active_goals()
+async def analyze_goal_endpoint(goal_id: int, user: dict = Depends(get_authorized_user)) -> dict:
+    uid = user["id"]
+    goals = await goals_repo.list_active_goals(uid)
     goal = next((g for g in goals if g["id"] == goal_id), None)
     if goal is None:
         raise HTTPException(status_code=404, detail="goal not found")
-    candidates = await _unlinked_candidate_tasks("sphere")
+    candidates = await _unlinked_candidate_tasks(uid, "sphere")
     matched_ids = await find_tasks_for_entity(goal["text"], None, candidates)
     if matched_ids:
         async with async_session() as session:
             await session.execute(
-                update(Task).where(Task.id.in_(matched_ids)).values(sphere=goal["sphere"])
+                update(Task)
+                .where(Task.id.in_(matched_ids), Task.user_id == uid)
+                .values(sphere=goal["sphere"])
             )
             await session.commit()
     return {"linked": len(matched_ids)}
+
+
+def _is_owner(user_id: int) -> bool:
+    return user_id == settings.telegram_user_id
+
+
+# Дневник и заметки — пока только у основного владельца (Phase 40,
+# явное решение при обсуждении многопользовательской авторизации):
+# и то, и другое живёт в Notion, привязанном к одному конкретному
+# воркспейсу/токену, не к отдельному Telegram-пользователю. Остальным
+# авторизованным — не тихая пустота и не ошибка, а понятный ответ, что
+# функция ещё не готова для них конкретно (см. _NOT_READY_FOR_OTHERS).
+_NOT_READY_FOR_OTHERS = "Дневник и заметки пока доступны только основному пользователю."
 
 
 # Месячный календарь (Phase 26) — только события (priority="event"), не
 # вся загрузка дня (для этого есть график месяца в аналитике).
 @app.get("/miniapp/api/calendar/month")
 async def calendar_month_endpoint(
-    month: str, _: dict = Depends(get_authorized_user)
+    month: str, user: dict = Depends(get_authorized_user)
 ) -> dict[str, list[str]]:
     year_str, month_str = month.split("-")
-    return await calendar_view.month_events(int(year_str), int(month_str))
+    return await calendar_view.month_events(user["id"], int(year_str), int(month_str))
 
 
 # Индикатор "как прошёл день" в плитках месячного календаря (Phase 27) —
 # средний балл вечерней рефлексии по дням, где она заполнена (см.
-# calendar_view.month_diary_moods).
+# calendar_view.month_diary_moods). Дневник — только у владельца (см.
+# _NOT_READY_FOR_OTHERS выше) — остальные получают пустую карту, плитки
+# просто не подсвечиваются, без ошибки.
 @app.get("/miniapp/api/calendar/month-moods")
 async def calendar_month_moods_endpoint(
-    month: str, _: dict = Depends(get_authorized_user)
+    month: str, user: dict = Depends(get_authorized_user)
 ) -> dict[str, float]:
+    if not _is_owner(user["id"]):
+        return {}
     year_str, month_str = month.split("-")
     return await calendar_view.month_diary_moods(int(year_str), int(month_str))
 
 
 # Дневник (Phase 26) — ревью прошедшего дня в расширенном экране; сам
-# дневник по-прежнему только в Notion (Diary), тут просто читаем и
-# фильтруем по дате на своей стороне (list_diary_entries — маленький
-# датасет, без серверной фильтрации).
+# дневник по-прежнему только в Notion (Diary) и только у владельца (см.
+# _NOT_READY_FOR_OTHERS) — тут просто читаем и фильтруем по дате на
+# своей стороне (list_diary_entries — маленький датасет, без серверной
+# фильтрации).
 @app.get("/miniapp/api/diary/{entry_date}")
 async def diary_day_endpoint(
-    entry_date: str, _: dict = Depends(get_authorized_user)
+    entry_date: str, user: dict = Depends(get_authorized_user)
 ) -> dict | None:
+    if not _is_owner(user["id"]):
+        raise HTTPException(status_code=403, detail=_NOT_READY_FOR_OTHERS)
     target = date.fromisoformat(entry_date)
     entries = await list_diary_entries()
     entry = next((e for e in entries if e["entry_date"] == target), None)
@@ -739,22 +781,23 @@ async def diary_day_endpoint(
 # GET /miniapp/api/projects (task_count/done_count/start_date/end_date
 # там уже есть), отдельного эндпоинта под него не заводим.
 @app.get("/miniapp/api/analytics/spheres")
-async def analytics_spheres_endpoint(_: dict = Depends(get_authorized_user)) -> list[dict]:
-    return await analytics_repo.sphere_breakdown()
+async def analytics_spheres_endpoint(user: dict = Depends(get_authorized_user)) -> list[dict]:
+    return await analytics_repo.sphere_breakdown(user["id"])
 
 
 @app.get("/miniapp/api/analytics/month")
-async def analytics_month_endpoint(_: dict = Depends(get_authorized_user)) -> dict:
+async def analytics_month_endpoint(user: dict = Depends(get_authorized_user)) -> dict:
     today = datetime.now(ZoneInfo(settings.timezone)).date()
-    return await analytics_repo.month_breakdown(today)
+    return await analytics_repo.month_breakdown(user["id"], today)
 
 
 @app.get("/miniapp/api/analytics/summary")
-async def analytics_summary_endpoint(_: dict = Depends(get_authorized_user)) -> dict:
+async def analytics_summary_endpoint(user: dict = Depends(get_authorized_user)) -> dict:
+    uid = user["id"]
     today = datetime.now(ZoneInfo(settings.timezone)).date()
-    spheres = await analytics_repo.sphere_breakdown()
-    month = await analytics_repo.month_breakdown(today)
-    projects = await projects_repo.list_projects()
+    spheres = await analytics_repo.sphere_breakdown(uid)
+    month = await analytics_repo.month_breakdown(uid, today)
+    projects = await projects_repo.list_projects(uid)
     text = await analyze_productivity(spheres, month, projects)
     return {"text": text}
 

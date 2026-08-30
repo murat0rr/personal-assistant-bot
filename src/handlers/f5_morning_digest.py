@@ -1,9 +1,7 @@
-from datetime import date, datetime
-from zoneinfo import ZoneInfo
+from datetime import date
 
 from sqlalchemy import select
 
-from src.core.config import settings
 from src.core.db import async_session
 from src.models.task import Task
 
@@ -29,12 +27,16 @@ def build_morning_digest_text(tasks: list[Task], today: date) -> str:
     return "\n".join(lines)
 
 
-async def build_morning_digest() -> str:
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
-
+async def build_morning_digest(user_id: int, today: date) -> str:
+    # today приходит от вызывающего (Phase 40 — у каждого пользователя
+    # своя джоба в своём часовом поясе, см. scheduler/jobs.py), а не
+    # считается тут по глобальному settings.timezone.
     async with async_session() as session:
         query = select(Task).where(
-            Task.due_date.is_not(None), Task.done.is_(False), Task.archived.is_(False)
+            Task.due_date.is_not(None),
+            Task.done.is_(False),
+            Task.archived.is_(False),
+            Task.user_id == user_id,
         )
         result = await session.execute(query)
         tasks = list(result.scalars().all())

@@ -1,11 +1,9 @@
 import logging
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from aiogram.types import Message
 
-from src.core.config import settings
 from src.core.recurring_tasks import create_rule
+from src.core.user_location import user_today
 from src.integrations.claude_client import ReminderPlan, parse_reminder
 
 logger = logging.getLogger(__name__)
@@ -47,8 +45,11 @@ async def handle_new_recurring_task(message: Message, text: str) -> None:
     складывается RecurringTaskRule. Реальные Task-строки появляются
     только на факт наступившего дня — см.
     scheduler/jobs.py::_materialize_recurring_tasks_job."""
+    if not message.from_user:
+        return
+
     try:
-        today = datetime.now(ZoneInfo(settings.timezone)).date()
+        today = await user_today(message.from_user.id)
         plan = await parse_reminder(text, today)
     except Exception:
         logger.exception("Не удалось разобрать повторяющуюся задачу: %r", text)
@@ -64,6 +65,6 @@ async def handle_new_recurring_task(message: Message, text: str) -> None:
         return
 
     value = _plan_to_value(plan)
-    await create_rule(plan.text, plan.schedule_kind, value)
+    await create_rule(message.from_user.id, plan.text, plan.schedule_kind, value)
     schedule_desc = _describe_schedule(plan.schedule_kind, value)
     await message.answer(f"Готово, буду создавать задачу: «{plan.text}» ({schedule_desc})")

@@ -11,12 +11,14 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 
+from src.core.auth import list_authorized_user_ids
 from src.core.config import settings
 from src.core.db import async_session
 from src.core.goals import GOAL_TIER_BOUNDS
 from src.core.habits import list_habits
 from src.core.recurring_tasks import materialize_due_rules
 from src.core.task_templates import create_ai_template, list_templates
+from src.core.user_location import user_timezone, user_today
 from src.handlers.f4_diary import DiaryStates, ask_question
 from src.handlers.f9_finance import FINANCE_GUIDE
 from src.handlers.f11_weekly_review import build_weekly_review
@@ -32,39 +34,51 @@ from src.models.task import Task
 
 logger = logging.getLogger(__name__)
 
+# Три джобы ниже (screen_time_digest, finance_reminder, evening_diary)
+# остаются только у владельца (Phase 40, см. их регистрацию в конце
+# _job_specs) — не потому что "ещё не доделано", а потому что они
+# завязаны на что-то физически единственное: конкретный телефон с
+# MacroDroid (экранное время), конкретный банк/выписка (финансы),
+# Notion-дневник одного воркспейса (см. TECHDEBT.md — то же ограничение,
+# что у заметок/дневника в api.py::_NOT_READY_FOR_OTHERS).
 
-async def _materialize_recurring_tasks_job(bot: Bot) -> None:
+
+async def _materialize_recurring_tasks_job(bot: Bot, user_id: int) -> None:
     """До утренней сводки (08:00) — материализует сегодняшние occurrence
     повторяющихся задач как обычные Task-строки, ничего не создавая
     заранее (см. core/recurring_tasks.py). Дальше и утренняя сводка, и
     Mini App видят их как обычные задачи — специальной логики под них
     нигде больше не нужно."""
-    logger.info("Материализую повторяющиеся задачи на сегодня")
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
-    created = await materialize_due_rules(today)
+    logger.info("Материализую повторяющиеся задачи на сегодня (%s)", user_id)
+    today = await user_today(user_id)
+    created = await materialize_due_rules(user_id, today)
     if created:
         logger.info("Создано повторяющихся задач: %s", len(created))
 
 
-async def _morning_digest(bot: Bot, storage: BaseStorage) -> None:
-    logger.info("Формирую утреннюю сводку")
-    text = await build_morning_briefing()
-    await bot.send_message(chat_id=settings.telegram_user_id, text=text)
+async def _morning_digest(bot: Bot, storage: BaseStorage, user_id: int) -> None:
+    logger.info("Формирую утреннюю сводку (%s)", user_id)
+    today = await user_today(user_id)
+    text = await build_morning_briefing(user_id, today)
+    await bot.send_message(chat_id=user_id, text=text)
     # Совет по задачам на сегодня (Phase 23) — отдельным сообщением
     # следом, не смешивая с самой сводкой (у него своя интерактивная
     # клавиатура "Добавить"/"Не сегодня").
     try:
-        await send_morning_advice(bot, storage)
+        await send_morning_advice(bot, storage, user_id, today)
     except Exception:
         logger.exception("Не удалось отправить совет по задачам на сегодня")
 
 
-async def _reminders_job(bot: Bot) -> None:
-    logger.info("Проверяю напоминания")
-    await check_reminders(bot)
+async def _reminders_job(bot: Bot, user_id: int) -> None:
+    logger.info("Проверяю напоминания (%s)", user_id)
+    today = await user_today(user_id)
+    await check_reminders(bot, user_id, today)
 
 
 async def _evening_diary(bot: Bot, storage: BaseStorage) -> None:
+    # Только владелец (см. _OWNER_ONLY_JOB_NAMES) — дневник в Notion,
+    # один воркспейс.
     logger.info("Запускаю вечерний опрос дневника")
     key = StorageKey(
         bot_id=bot.id,
@@ -76,17 +90,19 @@ async def _evening_diary(bot: Bot, storage: BaseStorage) -> None:
     await ask_question(bot, state, DiaryStates.physical)
 
 
-async def _tidy_inbox_job(bot: Bot) -> None:
+async def _tidy_inbox_job(bot: Bot, user_id: int) -> None:
     """Ночной разбор инбокса (Phase 22) — причёсывает заголовки задач в
     инбоксе (та же выборка, что build_task_board: без даты или
     просроченные невыполненные), не трогая смысл. Отчитывается только
     если что-то реально поменялось — тихая ночь без изменений не должна
     ничего слать."""
-    logger.info("Разбираю инбокс")
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    logger.info("Разбираю инбокс (%s)", user_id)
+    today = await user_today(user_id)
 
     async with async_session() as session:
-        result = await session.execute(select(Task).where(Task.archived.is_(False)))
+        result = await session.execute(
+            select(Task).where(Task.archived.is_(False), Task.user_id == user_id)
+        )
         tasks = result.scalars().all()
     board = build_task_board(list(tasks), today)
     inbox_tasks = {t["id"]: t for t in board["inbox"]}
@@ -107,7 +123,7 @@ async def _tidy_inbox_job(bot: Bot) -> None:
             if not new_title or new_title == old_title:
                 continue
             task = await session.get(Task, ids[item.index])
-            if task is None:
+            if task is None or task.user_id != user_id:
                 continue
             task.title = new_title
             changes.append((old_title, new_title))
@@ -117,47 +133,38 @@ async def _tidy_inbox_job(bot: Bot) -> None:
     if changes:
         lines = "\n".join(f"— «{old}» → «{new}»" for old, new in changes)
         await bot.send_message(
-            chat_id=settings.telegram_user_id,
+            chat_id=user_id,
             text=f"🧹 Причесал заголовки в инбоксе:\n{lines}",
         )
 
 
-async def _cleanup_old_messages(bot: Bot) -> None:
-    tz = ZoneInfo(settings.timezone)
+async def _cleanup_old_messages(bot: Bot, user_id: int) -> None:
+    tz = await user_timezone(user_id)
     now = datetime.now(tz)
     today = now.date()
     # Telegram физически не даёт удалить сообщение старше 48 часов — после
     # этого порога дальнейшие попытки бессмысленны, строку можно забыть.
-    # До порога — БАГ (найден при разборе жалобы "очистка не работает"):
-    # строка удалялась из chat_messages независимо от того, удалилось ли
-    # само сообщение в Telegram. Любая временная ошибка (сеть, недоступен
-    # API и т.п.) на bot.delete_message молча "забывала" сообщение
-    # навсегда — повторной попытки на следующий день уже не было, а лог
-    # всё равно бодро отчитывался «удалено N», хотя на самом деле не
-    # удалялось ничего. Теперь строка удаляется из БД только если
-    # сообщение реально удалено (или Telegram явно говорит, что удалять
-    # больше нечего) — иначе остаётся и уйдёт в следующую попытку ночью.
+    # Строка удаляется из БД только если сообщение реально удалено (или
+    # Telegram явно говорит, что удалять больше нечего) — иначе остаётся
+    # и уйдёт в следующую попытку ночью (см. TECHDEBT-история этого фикса
+    # в SPEC.md, Phase 38).
     give_up_after = now - timedelta(hours=47)
 
     deleted = 0
     async with async_session() as session:
-        result = await session.execute(select(ChatMessage))
+        # chat_id, не только сам факт "сообщение существует" (Phase 40) —
+        # message_id уникален только внутри одного чата, у разных
+        # пользователей могут быть строки с одинаковым message_id (см.
+        # models/chat_message.py).
+        result = await session.execute(select(ChatMessage).where(ChatMessage.chat_id == user_id))
         candidates = [
             row for row in result.scalars().all() if row.sent_at.astimezone(tz).date() < today
         ]
 
         for row in candidates:
             try:
-                await bot.delete_message(
-                    chat_id=settings.telegram_user_id, message_id=row.message_id
-                )
+                await bot.delete_message(chat_id=user_id, message_id=row.message_id)
             except TelegramBadRequest:
-                # Уже удалено вручную, чат недоступен и т.п. — Telegram
-                # прямо сказал "нечего удалять" или "нельзя". Если ещё не
-                # уткнулись в 48-часовой порог — оставляем строку на
-                # повторную попытку следующей ночью (мало ли API
-                # подглючило именно сейчас); иначе дальше пытаться нет
-                # смысла — забываем.
                 if row.sent_at >= give_up_after:
                     continue
             await session.delete(row)
@@ -165,15 +172,21 @@ async def _cleanup_old_messages(bot: Bot) -> None:
 
         await session.commit()
 
-    logger.info("Автоочистка чата: удалено %s из %s сообщений", deleted, len(candidates))
+    logger.info(
+        "Автоочистка чата (%s): удалено %s из %s сообщений", user_id, deleted, len(candidates)
+    )
 
 
 async def _finance_reminder_job(bot: Bot) -> None:
+    # Только владелец (см. _OWNER_ONLY_JOB_NAMES) — инструкция специфична
+    # для его собственного банка.
     logger.info("Напоминаю про выписку за месяц")
     await bot.send_message(chat_id=settings.telegram_user_id, text=FINANCE_GUIDE)
 
 
 async def _screen_time_digest(bot: Bot) -> None:
+    # Только владелец (см. _OWNER_ONLY_JOB_NAMES) — экранное время
+    # приходит с одного конкретного телефона через MacroDroid.
     tz = ZoneInfo(settings.timezone)
     yesterday = (datetime.now(tz) - timedelta(days=1)).date()
 
@@ -191,56 +204,55 @@ async def _screen_time_digest(bot: Bot) -> None:
     )
 
 
-async def _weekly_review(bot: Bot) -> None:
-    logger.info("Собираю итоги недели")
-    text = await build_weekly_review()
-    await bot.send_message(chat_id=settings.telegram_user_id, text=text)
+async def _weekly_review(bot: Bot, user_id: int) -> None:
+    logger.info("Собираю итоги недели (%s)", user_id)
+    today = await user_today(user_id)
+    text = await build_weekly_review(user_id, today)
+    await bot.send_message(chat_id=user_id, text=text)
 
 
-async def _habit_reminders(bot: Bot) -> None:
-    logger.info("Проверяю несделанные привычки")
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
-    habits = await list_habits()
+async def _habit_reminders(bot: Bot, user_id: int) -> None:
+    logger.info("Проверяю несделанные привычки (%s)", user_id)
+    today = await user_today(user_id)
+    habits = await list_habits(user_id)
     missed = [h for h in habits if h["target_frequency"] == "daily" and h["last_checked"] != today]
     if not missed:
         return
     names = "\n".join(f"— {h['name']}" for h in missed)
     await bot.send_message(
-        chat_id=settings.telegram_user_id,
+        chat_id=user_id,
         text=f"⏰ Не забудь отметить привычки за сегодня:\n{names}",
     )
 
 
-async def _goal_prompt_job(bot: Bot, storage: BaseStorage, tier: str) -> None:
-    logger.info("Запускаю опрос целей: %s", tier)
-    key = StorageKey(
-        bot_id=bot.id,
-        chat_id=settings.telegram_user_id,
-        user_id=settings.telegram_user_id,
-    )
+async def _goal_prompt_job(bot: Bot, storage: BaseStorage, user_id: int, tier: str) -> None:
+    logger.info("Запускаю опрос целей: %s (%s)", tier, user_id)
+    key = StorageKey(bot_id=bot.id, chat_id=user_id, user_id=user_id)
     state = FSMContext(storage=storage, key=key)
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    today = await user_today(user_id)
     bounds = GOAL_TIER_BOUNDS[tier](today)
-    await start_goal_flow(bot, state, tier, *bounds)
+    await start_goal_flow(bot, state, user_id, tier, *bounds)
 
 
-async def _suggest_templates_job(bot: Bot) -> None:
+async def _suggest_templates_job(bot: Bot, user_id: int) -> None:
     """Раз в неделю (воскресенье, 09:00) — смотрит на заголовки задач за
     последние 7 дней и предлагает новые шаблоны частых задач через Claude
     (см. claude_client.suggest_new_templates). Не чаще 1 раза в неделю —
     ровно как попросили."""
-    logger.info("Анализирую частые задачи для новых шаблонов")
-    tz = ZoneInfo(settings.timezone)
+    logger.info("Анализирую частые задачи для новых шаблонов (%s)", user_id)
+    tz = await user_timezone(user_id)
     # due_date в БД — naive timestamp (локальное время без tz), см.
     # models/task.py — сравнение тоже должно быть naive, иначе asyncpg
     # ругается на offset-aware datetime для timestamp without time zone.
     since = (datetime.now(tz) - timedelta(days=7)).replace(tzinfo=None)
 
     async with async_session() as session:
-        result = await session.execute(select(Task.title).where(Task.due_date >= since))
+        result = await session.execute(
+            select(Task.title).where(Task.due_date >= since, Task.user_id == user_id)
+        )
         recent_titles = [row[0] for row in result.all()]
 
-    existing = await list_templates(datetime.now(tz).date())
+    existing = await list_templates(user_id, datetime.now(tz).date())
     existing_titles = [t["title"] for t in existing]
 
     suggestions = await suggest_new_templates(recent_titles, existing_titles)
@@ -249,50 +261,54 @@ async def _suggest_templates_job(bot: Bot) -> None:
         return
 
     for title in suggestions:
-        await create_ai_template(title)
+        await create_ai_template(user_id, title)
 
     names = "\n".join(f"— {title}" for title in suggestions)
     await bot.send_message(
-        chat_id=settings.telegram_user_id,
+        chat_id=user_id,
         text=f"✨ Добавил новые шаблоны частых задач по итогам недели:\n{names}",
     )
 
 
-def _job_specs(bot: Bot, storage: BaseStorage) -> list[tuple[str, Any, dict, list]]:
-    """Единый источник правды для расписания всех джобов — используется и
-    setup_scheduler (первичная регистрация), и reschedule_for_timezone
-    (Phase 39, команда /timezone: пересобирает триггеры на новый часовой
-    пояс в рантайме). id у каждого джоба стабильный и явный — нужен,
-    чтобы reschedule_job мог найти конкретный джоб позже."""
-    return [
-        ("morning_digest", _morning_digest, {"hour": 8, "minute": 0}, [bot, storage]),
-        ("reminders", _reminders_job, {"hour": 8, "minute": 0}, [bot]),
-        ("screen_time_digest", _screen_time_digest, {"hour": 8, "minute": 0}, [bot]),
-        ("finance_reminder", _finance_reminder_job, {"day": 1, "hour": 8, "minute": 0}, [bot]),
+def _job_specs(
+    bot: Bot, storage: BaseStorage, user_id: int, tz_name: str
+) -> list[tuple[str, Any, dict, list]]:
+    """Единый источник правды для расписания джобов ОДНОГО пользователя
+    (Phase 40 — раньше был один глобальный набор джобов на всё
+    приложение, теперь у каждого авторизованного свой, в своём часовом
+    поясе). id каждого джоба включает user_id — раньше на одно имя джобы
+    приходился один-единственный экземпляр, теперь их по одному на
+    пользователя, id должны быть уникальны в рамках всего scheduler.
+    Используется и register_jobs_for_user (первичная регистрация), и
+    reschedule_for_timezone (Phase 39/40, команда /timezone: пересобирает
+    триггеры ЭТОГО пользователя на новый часовой пояс в рантайме)."""
+    is_owner = user_id == settings.telegram_user_id
+    specs: list[tuple[str, Any, dict, list]] = [
+        ("morning_digest", _morning_digest, {"hour": 8, "minute": 0}, [bot, storage, user_id]),
+        ("reminders", _reminders_job, {"hour": 8, "minute": 0}, [bot, user_id]),
         (
             "weekly_review",
             _weekly_review,
             {"day_of_week": "sun", "hour": 19, "minute": 0},
-            [bot],
+            [bot, user_id],
         ),
-        ("habit_reminders", _habit_reminders, {"hour": 20, "minute": 0}, [bot]),
-        ("evening_diary", _evening_diary, {"hour": 21, "minute": 0}, [bot, storage]),
-        ("cleanup_old_messages", _cleanup_old_messages, {"hour": 0, "minute": 5}, [bot]),
+        ("habit_reminders", _habit_reminders, {"hour": 20, "minute": 0}, [bot, user_id]),
+        ("cleanup_old_messages", _cleanup_old_messages, {"hour": 0, "minute": 5}, [bot, user_id]),
         # Материализация повторяющихся задач (Phase 21) — до утренней сводки.
         (
             "materialize_recurring_tasks",
             _materialize_recurring_tasks_job,
             {"hour": 7, "minute": 0},
-            [bot],
+            [bot, user_id],
         ),
         # Разбор инбокса (Phase 22) — ночью, до материализации повторяющихся
         # (07:00) и утренней сводки (08:00), не пересекается с ними.
-        ("tidy_inbox", _tidy_inbox_job, {"hour": 3, "minute": 0}, [bot]),
+        ("tidy_inbox", _tidy_inbox_job, {"hour": 3, "minute": 0}, [bot, user_id]),
         (
             "suggest_templates",
             _suggest_templates_job,
             {"day_of_week": "sun", "hour": 9, "minute": 0},
-            [bot],
+            [bot, user_id],
         ),
         # Цели (Phase 20) — недельные каждое воскресенье; месячные в начале
         # месяца; годовые — только в январе. Раздельные дни (2/4 числа),
@@ -301,41 +317,79 @@ def _job_specs(bot: Bot, storage: BaseStorage) -> list[tuple[str, Any, dict, lis
             "goal_prompt_weekly",
             _goal_prompt_job,
             {"day_of_week": "sun", "hour": 12, "minute": 0},
-            [bot, storage, "weekly"],
+            [bot, storage, user_id, "weekly"],
         ),
         (
             "goal_prompt_monthly",
             _goal_prompt_job,
             {"day": 2, "hour": 10, "minute": 0},
-            [bot, storage, "monthly"],
+            [bot, storage, user_id, "monthly"],
         ),
         (
             "goal_prompt_yearly",
             _goal_prompt_job,
             {"day": 4, "hour": 10, "minute": 0, "month": 1},
-            [bot, storage, "yearly"],
+            [bot, storage, user_id, "yearly"],
         ),
+    ]
+    if is_owner:
+        specs += [
+            ("screen_time_digest", _screen_time_digest, {"hour": 8, "minute": 0}, [bot]),
+            (
+                "finance_reminder",
+                _finance_reminder_job,
+                {"day": 1, "hour": 8, "minute": 0},
+                [bot],
+            ),
+            ("evening_diary", _evening_diary, {"hour": 21, "minute": 0}, [bot, storage]),
+        ]
+    return [
+        (f"{name}:{user_id}", func, {**trigger, "timezone": tz_name}, args)
+        for name, func, trigger, args in specs
     ]
 
 
-def setup_scheduler(bot: Bot, storage: BaseStorage) -> AsyncIOScheduler:
+async def register_jobs_for_user(
+    scheduler: AsyncIOScheduler, bot: Bot, storage: BaseStorage, user_id: int
+) -> None:
+    """Регистрирует (или полностью пересобирает — replace_existing) весь
+    личный набор джобов одного пользователя. Вызывается на старте для
+    каждого уже авторизованного (см. setup_scheduler) и сразу при
+    успешной авторизации нового пользователя (см. handlers/f_auth.py)."""
+    tz_name = str(await user_timezone(user_id))
+    for job_id, func, trigger_kwargs, args in _job_specs(bot, storage, user_id, tz_name):
+        scheduler.add_job(
+            func, CronTrigger(**trigger_kwargs), args=args, id=job_id, replace_existing=True
+        )
+
+
+def unregister_jobs_for_user(scheduler: AsyncIOScheduler, user_id: int) -> None:
+    """Снимает все личные джобы пользователя — на будущее (если появится
+    возможность отозвать доступ), сейчас ничего не вызывает эту функцию."""
+    suffix = f":{user_id}"
+    for job in scheduler.get_jobs():
+        if job.id.endswith(suffix):
+            scheduler.remove_job(job.id)
+
+
+async def setup_scheduler(bot: Bot, storage: BaseStorage) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
-    for job_id, func, trigger_kwargs, args in _job_specs(bot, storage):
-        scheduler.add_job(func, CronTrigger(**trigger_kwargs), args=args, id=job_id)
+    for user_id in await list_authorized_user_ids():
+        await register_jobs_for_user(scheduler, bot, storage, user_id)
     return scheduler
 
 
-def reschedule_for_timezone(
-    scheduler: AsyncIOScheduler, bot: Bot, storage: BaseStorage, tz_name: str
+async def reschedule_for_timezone(
+    scheduler: AsyncIOScheduler, bot: Bot, storage: BaseStorage, user_id: int, tz_name: str
 ) -> None:
-    """Часовой пояс сменился в рантайме (команда /timezone,
-    handlers/f_timezone.py) — пересобирает триггеры всех джобов на новую
-    зону. AsyncIOScheduler(timezone=...) задаёт таймзону по умолчанию
-    только для триггеров, у которых она явно не указана, и делает это
-    один раз в момент создания триггера (CronTrigger резолвит tzinfo при
-    конструировании, не держит живую ссылку на scheduler.timezone) —
-    просто поменять scheduler.timezone задним числом ничего не даст,
-    нужно явно пересоздать CronTrigger с новым timezone для каждого
-    джоба."""
-    for job_id, _func, trigger_kwargs, _args in _job_specs(bot, storage):
-        scheduler.reschedule_job(job_id, trigger=CronTrigger(**trigger_kwargs, timezone=tz_name))
+    """Часовой пояс пользователя сменился в рантайме (команда /timezone,
+    handlers/f_timezone.py) — пересобирает триггеры ЕГО ЛИЧНЫХ джобов на
+    новую зону (не всех пользователей — у каждого своя). CronTrigger
+    резолвит tzinfo один раз при создании (не держит живую ссылку на
+    scheduler.timezone), так что нужно явно пересоздать каждый триггер,
+    не просто поменять атрибут задним числом."""
+    for job_id, func, trigger_kwargs, args in _job_specs(bot, storage, user_id, tz_name):
+        if scheduler.get_job(job_id) is not None:
+            scheduler.reschedule_job(job_id, trigger=CronTrigger(**trigger_kwargs))
+        else:
+            scheduler.add_job(func, CronTrigger(**trigger_kwargs), args=args, id=job_id)

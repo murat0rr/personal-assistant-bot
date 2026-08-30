@@ -2,7 +2,6 @@ import calendar
 import logging
 from datetime import date, datetime
 from math import asin, cos, radians, sin, sqrt
-from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
@@ -12,6 +11,7 @@ from sqlalchemy import select
 from src.core.auth import is_authorized
 from src.core.config import settings
 from src.core.db import async_session
+from src.core.user_location import user_timezone, user_today
 from src.integrations.claude_client import ReminderPlan, parse_reminder
 from src.integrations.geocoding import geocode
 from src.models.reminder import Reminder
@@ -107,8 +107,12 @@ def _is_due(reminder: Reminder, today: date) -> bool:
 
 
 async def handle_new_reminder(message: Message, text: str) -> None:
+    if not message.from_user:
+        return
+    user_id = message.from_user.id
+
     try:
-        today = datetime.now(ZoneInfo(settings.timezone)).date()
+        today = await user_today(user_id)
         plan = await parse_reminder(text, today)
     except Exception:
         logger.exception("Не удалось разобрать напоминание: %r", text)
@@ -128,10 +132,11 @@ async def handle_new_reminder(message: Message, text: str) -> None:
     async with async_session() as session:
         session.add(
             Reminder(
+                user_id=user_id,
                 text=plan.text,
                 schedule_kind=plan.schedule_kind,
                 schedule_value=value,
-                created_at=datetime.now(ZoneInfo(settings.timezone)),
+                created_at=datetime.now(await user_timezone(user_id)),
             )
         )
         await session.commit()
@@ -141,15 +146,13 @@ async def handle_new_reminder(message: Message, text: str) -> None:
     )
 
 
-async def check_reminders(bot: Bot) -> None:
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
-
+async def check_reminders(bot: Bot, user_id: int, today: date) -> None:
     async with async_session() as session:
-        result = await session.execute(select(Reminder))
+        result = await session.execute(select(Reminder).where(Reminder.user_id == user_id))
         due = [r for r in result.scalars().all() if _is_due(r, today)]
 
         for reminder in due:
-            await bot.send_message(chat_id=settings.telegram_user_id, text=f"🔔 {reminder.text}")
+            await bot.send_message(chat_id=user_id, text=f"🔔 {reminder.text}")
             if reminder.schedule_kind == "once":
                 await session.delete(reminder)
             else:
@@ -157,16 +160,27 @@ async def check_reminders(bot: Bot) -> None:
 
         await session.commit()
 
-    logger.info("Проверка напоминаний: сработало %s", len(due))
+    logger.info("Проверка напоминаний (%s): сработало %s", user_id, len(due))
 
 
 async def check_location_reminders(bot: Bot, lat: float, lon: float) -> None:
+    # Геовебхук от Tasker/MacroDroid привязан к одному конкретному
+    # физическому телефону (Phase 9) — так же, как экранное время (см.
+    # models/screen_time.py) это неизбежно телефон основного владельца,
+    # не абстрактный "текущий пользователь". Гео-напоминания поэтому
+    # тоже пока только его — как и дневник/заметки, честное ограничение,
+    # не забытый случай (см. TECHDEBT.md).
+    owner_id = settings.telegram_user_id
     async with async_session() as session:
-        result = await session.execute(select(Reminder).where(Reminder.schedule_kind == "location"))
+        result = await session.execute(
+            select(Reminder).where(
+                Reminder.schedule_kind == "location", Reminder.user_id == owner_id
+            )
+        )
         matched = [r for r in result.scalars().all() if _is_within_radius(r, lat, lon)]
 
         for reminder in matched:
-            await bot.send_message(chat_id=settings.telegram_user_id, text=f"🔔 {reminder.text}")
+            await bot.send_message(chat_id=owner_id, text=f"🔔 {reminder.text}")
             # Гео-напоминания одноразовые — сработало и удалилось, как "once".
             await session.delete(reminder)
 
@@ -183,7 +197,9 @@ async def list_reminders_command(message: Message) -> None:
         return
 
     async with async_session() as session:
-        result = await session.execute(select(Reminder))
+        result = await session.execute(
+            select(Reminder).where(Reminder.user_id == message.from_user.id)
+        )
         reminders = result.scalars().all()
 
     if not reminders:
@@ -215,7 +231,10 @@ async def delete_reminder_callback(callback: CallbackQuery) -> None:
     reminder_id = int(callback.data.split(":")[1])
     async with async_session() as session:
         reminder = await session.get(Reminder, reminder_id)
-        if reminder is not None:
+        # Проверка владения (Phase 40) — не только "существует", но и
+        # "моё": чужой reminder_id, угаданный/подсмотренный в старой
+        # клавиатуре, не должен быть удалим.
+        if reminder is not None and reminder.user_id == callback.from_user.id:
             await session.delete(reminder)
             await session.commit()
 

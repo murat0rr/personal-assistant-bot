@@ -15,7 +15,7 @@ from aiogram.types import (
     WebAppInfo,
 )
 
-from src.core.auth import is_authorized
+from src.core.auth import ensure_owner_authorized, is_authorized
 from src.core.config import settings
 from src.core.message_tracking import attach_message_tracking, track_incoming
 from src.core.orchestrator import router as orchestrator_router
@@ -99,6 +99,13 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     bot = Bot(token=settings.telegram_bot_token)
     attach_message_tracking(bot)
+    # Гарантируем строку в authorized_users для владельца (Phase 40) —
+    # почти все данные теперь ссылаются на эту таблицу по FK (user_id),
+    # без строки там ничего нельзя было бы создать от его имени. Раньше
+    # (Phase 10-39) is_authorized() пускала его в обход этой таблицы —
+    # сама эта проверка остаётся (устойчивость к недоступной на старте
+    # БД), но данные всё равно должны на что-то ссылаться.
+    await ensure_owner_authorized()
     # Подтягиваем сохранённый командой /timezone часовой пояс владельца
     # поверх статичного settings.timezone из .env (Phase 39) — до
     # setup_scheduler, чтобы планировщик сразу стартовал в правильной
@@ -127,12 +134,16 @@ async def main() -> None:
 
     # Задачи и привычки теперь в Postgres (Phase 10) — никакого синка с
     # Notion перед стартом планировщика больше не нужно, джобы стартуют
-    # безусловно.
-    scheduler = setup_scheduler(bot, dp.storage)
+    # безусловно. С Phase 40 — свой набор джобов на каждого уже
+    # авторизованного пользователя (см. list_authorized_user_ids), не
+    # один глобальный набор на всё приложение.
+    scheduler = await setup_scheduler(bot, dp.storage)
     scheduler.start()
-    # /timezone (Phase 39) пересобирает триггеры джобов в рантайме — нужен
-    # доступ к scheduler/storage из хендлера, aiogram подставляет их как
-    # именованные параметры из workflow_data (bot передаётся автоматически).
+    # /timezone (Phase 39) пересобирает триггеры джобов в рантайме, а
+    # новый пароль-вход (Phase 40, f_auth.py) регистрирует джобы нового
+    # пользователя сразу — обоим нужен доступ к scheduler/storage из
+    # хендлера, aiogram подставляет их как именованные параметры из
+    # workflow_data (bot передаётся автоматически).
     dp["scheduler"] = scheduler
     dp["storage"] = dp.storage
 

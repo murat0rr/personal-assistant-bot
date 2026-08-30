@@ -8,7 +8,7 @@ from src.integrations.notion import list_diary_entries
 from src.models.task import Task
 
 
-async def month_events(year: int, month: int) -> dict[str, list[str]]:
+async def month_events(user_id: int, year: int, month: int) -> dict[str, list[str]]:
     """Для месячного календаря в Mini App (Phase 26) — только задачи-
     события (priority="event"), не все задачи: требование явно про
     события, не про общую загрузку дня (для неё есть график месяца в
@@ -24,6 +24,7 @@ async def month_events(year: int, month: int) -> dict[str, list[str]]:
                 Task.archived.is_(False),
                 Task.priority == "event",
                 Task.due_date.is_not(None),
+                Task.user_id == user_id,
             )
         )
         rows = [(row[0].date(), row[1]) for row in result.all()]

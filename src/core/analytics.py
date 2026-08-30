@@ -8,7 +8,7 @@ from src.models.project import Project
 from src.models.task import Task
 
 
-async def sphere_breakdown() -> list[dict]:
+async def sphere_breakdown(user_id: int) -> list[dict]:
     """Процентное соотношение задач по сферам (Phase 24) — все
     неархивированные задачи со сферой, вне зависимости от статуса
     "готово": это снимок того, как распределены намерения по сферам
@@ -17,7 +17,9 @@ async def sphere_breakdown() -> list[dict]:
     "расщеплённого" сегмента в тортике на фронтенде."""
     async with async_session() as session:
         result = await session.execute(
-            select(Task.sphere, Task.done).where(Task.archived.is_(False), Task.sphere.is_not(None))
+            select(Task.sphere, Task.done).where(
+                Task.archived.is_(False), Task.sphere.is_not(None), Task.user_id == user_id
+            )
         )
         rows = result.all()
 
@@ -33,7 +35,7 @@ async def sphere_breakdown() -> list[dict]:
     ]
 
 
-async def month_breakdown(today: date) -> dict:
+async def month_breakdown(user_id: int, today: date) -> dict:
     """График месяца (Phase 24) — по каждому дню текущего месяца сколько
     задач выполнено (не "стоит на этот день" — именно завершено, это
     отражает реальную продуктивность, а не план), плюс та же разбивка
@@ -48,16 +50,21 @@ async def month_breakdown(today: date) -> dict:
                 Task.archived.is_(False),
                 Task.done.is_(True),
                 Task.due_date.is_not(None),
+                Task.user_id == user_id,
             )
         )
         rows = [(due.date(), project_id) for due, project_id in result.all()]
 
         project_titles: dict[int, str] = {}
-        proj_result = await session.execute(select(Task.project_id).distinct())
+        proj_result = await session.execute(
+            select(Task.project_id).where(Task.user_id == user_id).distinct()
+        )
         project_ids = {pid for (pid,) in proj_result.all() if pid is not None}
         if project_ids:
             projects = (
-                await session.execute(select(Project).where(Project.id.in_(project_ids)))
+                await session.execute(
+                    select(Project).where(Project.id.in_(project_ids), Project.user_id == user_id)
+                )
             ).scalars()
             project_titles = {p.id: p.title for p in projects}
 

@@ -16,33 +16,39 @@ def _serialize(habit: Habit) -> dict:
     }
 
 
-async def list_habits() -> list[dict]:
+async def list_habits(user_id: int) -> list[dict]:
     """Тот же по форме список словарей, что раньше отдавал
     notion.list_habits() — build_briefing_text/build_weekly_review_text
     от смены источника не зависят."""
     async with async_session() as session:
-        result = await session.execute(select(Habit))
+        result = await session.execute(select(Habit).where(Habit.user_id == user_id))
         return [_serialize(h) for h in result.scalars().all()]
 
 
-async def create_habit(name: str) -> dict:
+async def create_habit(user_id: int, name: str) -> dict:
     async with async_session() as session:
-        habit = Habit(name=name)
+        habit = Habit(user_id=user_id, name=name)
         session.add(habit)
         await session.commit()
         await session.refresh(habit)
         return _serialize(habit)
 
 
-async def get_habit(habit_id: int) -> dict:
+async def get_habit(habit_id: int, user_id: int) -> dict:
     async with async_session() as session:
         habit = await session.get(Habit, habit_id)
+        if habit is None or habit.user_id != user_id:
+            raise ValueError("habit not found")
         return _serialize(habit)
 
 
-async def update_habit_check(habit_id: int, new_streak: int, checked_on: date) -> None:
+async def update_habit_check(
+    habit_id: int, user_id: int, new_streak: int, checked_on: date
+) -> None:
     async with async_session() as session:
         habit = await session.get(Habit, habit_id)
+        if habit is None or habit.user_id != user_id:
+            raise ValueError("habit not found")
         habit.streak = new_streak
         habit.last_checked = checked_on
         await session.commit()

@@ -1,3 +1,5 @@
+from datetime import date
+
 from src.core.habits import list_habits
 from src.handlers.f5_morning_digest import build_morning_digest
 from src.integrations.weather import get_weather_summary
@@ -17,9 +19,9 @@ def build_briefing_text(tasks_text: str, weather_line: str | None, habits: list[
     return "\n\n".join(parts)
 
 
-async def build_morning_briefing() -> str:
-    tasks_text = await build_morning_digest()
-    weather_line = await get_weather_summary()
-    habits = await list_habits()
+async def build_morning_briefing(user_id: int, today: date) -> str:
+    tasks_text = await build_morning_digest(user_id, today)
+    weather_line = await get_weather_summary(user_id)
+    habits = await list_habits(user_id)
 
     return build_briefing_text(tasks_text, weather_line, habits)

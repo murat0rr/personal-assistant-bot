@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -17,6 +17,10 @@ class RecurringTaskRule(Base):
     # от повторной материализации в один день, что last_fired_date у
     # Reminder (schedule_kind/schedule_value — тот же паттерн оттуда же).
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Многопользовательность (Phase 40) — см. Task.user_id.
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False
+    )
     title: Mapped[str] = mapped_column(String)
     schedule_kind: Mapped[str] = mapped_column(String)
     schedule_value: Mapped[dict] = mapped_column(JSON)

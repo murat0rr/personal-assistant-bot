@@ -1,7 +1,7 @@
 import time
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -18,6 +18,14 @@ class Task(Base):
     # legacy_notion_id оставлен только для истории/отладки, в логике не
     # используется.
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Многопользовательность (Phase 40) — чья это задача. FK на
+    # authorized_users.telegram_user_id (не users.id — своей таблицы
+    # users нет, пароль-гейт из F14 стал единственным источником личности
+    # пользователя). При миграции все существующие строки получили
+    # settings.telegram_user_id (владелец) — ничего не потерялось.
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False
+    )
     legacy_notion_id: Mapped[str | None] = mapped_column(String, nullable=True)
     title: Mapped[str] = mapped_column(String)
     # timestamp, а не date — гибкость для задач-событий со временем начала

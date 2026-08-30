@@ -9,6 +9,13 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_note(message: Message, text: str) -> None:
+    # Заметки живут в Notion, привязанном к одному воркспейсу — пока
+    # только у основного владельца (Phase 40, то же решение, что для
+    # дневника, см. api.py::_NOT_READY_FOR_OTHERS и TECHDEBT.md).
+    if not message.from_user or message.from_user.id != settings.telegram_user_id:
+        await message.answer("Заметки пока доступны только основному пользователю.")
+        return
+
     if not settings.notion_notes_db_id:
         await message.answer("Notion пока не настроен — база Notes не подключена.")
         return

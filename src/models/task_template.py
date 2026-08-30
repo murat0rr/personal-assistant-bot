@@ -1,7 +1,7 @@
 import time
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, Integer, String
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -12,6 +12,10 @@ class TaskTemplate(Base):
     __tablename__ = "task_templates"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Многопользовательность (Phase 40) — см. Task.user_id.
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False
+    )
     title: Mapped[str] = mapped_column(String)
     # Ручной порядок (тот же приём, что Task.sort_order, Phase 13) — новый
     # шаблон уходит в конец без лишних правок в местах создания.

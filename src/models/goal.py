@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Integer, String
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -11,6 +11,10 @@ class Goal(Base):
     __tablename__ = "goals"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Многопользовательность (Phase 40) — см. Task.user_id.
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False
+    )
     # Та же таксономия, что Task.sphere/Project.sphere — не enum на
     # уровне БД (см. Task.sphere). У целей, в отличие от проектов, сфера
     # обязательна: весь смысл этой сущности — сгруппировать намерения по

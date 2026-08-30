@@ -11,8 +11,8 @@ def _next_streak(current_streak: int, last_checked: date | None, today: date) ->
     return 1
 
 
-async def check_habit(habit_id: int, today: date) -> int:
-    habit = await get_habit(habit_id)
+async def check_habit(habit_id: int, user_id: int, today: date) -> int:
+    habit = await get_habit(habit_id, user_id)
     new_streak = _next_streak(habit["streak"], habit["last_checked"], today)
-    await update_habit_check(habit_id, new_streak, today)
+    await update_habit_check(habit_id, user_id, new_streak, today)
     return new_streak
