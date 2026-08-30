@@ -314,3 +314,176 @@ async def summarize_diary(answers_text: str) -> str:
         messages=[{"role": "user", "content": answers_text}],
     )
     return "".join(block.text for block in response.content if block.type == "text")
+
+
+_GENERATE_TASKS_FROM_GOALS_TOOL = {
+    "name": "generate_tasks",
+    "description": (
+        "Разбить недельные/месячные цели пользователя по сферам жизни на "
+        "конкретные выполнимые задачи с датами внутри периода."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "tasks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Краткая, конкретная задача"},
+                        "due_date": {
+                            "type": "string",
+                            "description": "Дата YYYY-MM-DD внутри периода цели",
+                        },
+                        "sphere": {
+                            "type": "string",
+                            "description": "Сфера, к которой относится задача",
+                        },
+                        "project_title": {
+                            "type": ["string", "null"],
+                            "description": (
+                                "Название существующего проекта из списка, если задача "
+                                "явно относится к одному из них, иначе null."
+                            ),
+                        },
+                    },
+                    "required": ["title", "due_date", "sphere"],
+                },
+            },
+        },
+        "required": ["tasks"],
+    },
+}
+
+
+class GeneratedGoalTask(BaseModel):
+    title: str
+    due_date: date
+    sphere: str
+    project_title: str | None = None
+
+
+class GeneratedGoalTasks(BaseModel):
+    tasks: list[GeneratedGoalTask]
+
+
+async def generate_tasks_from_goals(
+    goals: list[dict],
+    existing_titles: list[str],
+    projects: list[dict],
+    period_start: date,
+    period_end: date,
+) -> list[GeneratedGoalTask]:
+    """Раскладывает цели (недельные/месячные, см. handlers/f_goals.py) на
+    конкретные задачи с датами внутри периода, с учётом рабочего графика
+    5/2 по 8 часов (будни — меньше свободного времени на личные задачи,
+    выходные — больше) и уже существующих задач, чтобы не дублировать."""
+    goals_text = "\n".join(f"[{g['sphere']}] {g['text']}" for g in goals)
+    projects_text = (
+        "\n".join(f"- {p['title']}: {p.get('description') or ''}" for p in projects)
+        or "(активных проектов нет)"
+    )
+    response = await client.messages.create(
+        model=settings.claude_model_sonnet,
+        max_tokens=1500,
+        system=(
+            f"Период: с {period_start.isoformat()} по {period_end.isoformat()}. "
+            "Пользователь работает по графику 5/2 (Пн-Пт, полный день) — в будни "
+            "у него мало свободного времени на личные задачи (примерно 1-2 "
+            "несложные задачи вечером), в выходные значительно больше "
+            "(4-5 задач). Распредели цели пользователя по сферам жизни на "
+            "конкретные, выполнимые задачи с датами строго внутри периода, "
+            "равномерно, не перегружая будни. Не дублируй уже существующие "
+            "задачи (список ниже). Если задача явно относится к одному из "
+            "текущих проектов — укажи его точное название, иначе null."
+        ),
+        tools=[_GENERATE_TASKS_FROM_GOALS_TOOL],
+        tool_choice={"type": "tool", "name": "generate_tasks"},
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    f"Цели:\n{goals_text}\n\n"
+                    f"Уже существующие задачи:\n{chr(10).join(existing_titles) or '(нет)'}\n\n"
+                    f"Текущие проекты:\n{projects_text}"
+                ),
+            }
+        ],
+    )
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+    if tool_use is None:
+        return []
+    return GeneratedGoalTasks.model_validate(tool_use.input).tasks
+
+
+_PROPOSE_PROJECTS_TOOL = {
+    "name": "propose_projects",
+    "description": (
+        "Предложить новые проекты на основе месячных целей пользователя, "
+        "если какая-то цель складывается в конкретную многошаговую инициативу."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "projects": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "description": {"type": "string"},
+                        "sphere": {"type": "string"},
+                        "start_date": {"type": "string", "description": "YYYY-MM-DD"},
+                        "end_date": {"type": "string", "description": "YYYY-MM-DD"},
+                    },
+                    "required": ["title", "sphere", "start_date", "end_date"],
+                },
+                "description": (
+                    "0-3 проекта. Пустой список, если ни одна цель не тянет на "
+                    "отдельный проект — не выдумывай проект ради галочки."
+                ),
+            },
+        },
+        "required": ["projects"],
+    },
+}
+
+
+class ProposedProject(BaseModel):
+    title: str
+    description: str = ""
+    sphere: str
+    start_date: date
+    end_date: date
+
+
+class ProposedProjects(BaseModel):
+    projects: list[ProposedProject]
+
+
+async def propose_projects_from_goals(goals: list[dict], today: date) -> list[ProposedProject]:
+    """Раз в месяц, после того как заданы месячные цели по всем сферам —
+    смотрит, не складывается ли какая-то цель в конкретную многошаговую
+    инициативу (см. handlers/f_goals.py), и если да — предлагает Project
+    со сроками по контексту цели."""
+    goals_text = "\n".join(f"[{g['sphere']}] {g['text']}" for g in goals)
+    response = await client.messages.create(
+        model=settings.claude_model_sonnet,
+        max_tokens=1000,
+        system=(
+            f"Сегодня {today.isoformat()}. Вот месячные цели пользователя по "
+            "сферам жизни. Если какая-то цель — это на самом деле крупная "
+            "многошаговая инициатива (а не просто повторяющееся намерение), "
+            "предложи под неё проект со сроками, разумно вытекающими из "
+            "контекста цели (обычно в пределах текущего месяца или чуть "
+            "дальше). Не предлагай проект под каждую цель — только там, где "
+            "это реально имеет смысл."
+        ),
+        tools=[_PROPOSE_PROJECTS_TOOL],
+        tool_choice={"type": "tool", "name": "propose_projects"},
+        messages=[{"role": "user", "content": f"Месячные цели:\n{goals_text}"}],
+    )
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+    if tool_use is None:
+        return []
+    return ProposedProjects.model_validate(tool_use.input).projects

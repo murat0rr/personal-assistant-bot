@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
@@ -18,6 +18,7 @@ from src.handlers.f4_diary import DiaryStates, ask_question
 from src.handlers.f9_finance import FINANCE_GUIDE
 from src.handlers.f11_weekly_review import build_weekly_review
 from src.handlers.f12_briefing import build_morning_briefing
+from src.handlers.f_goals import start_goal_flow
 from src.handlers.f_reminders import check_reminders
 from src.integrations.claude_client import suggest_new_templates
 from src.models.chat_message import ChatMessage
@@ -118,6 +119,51 @@ async def _habit_reminders(bot: Bot) -> None:
     )
 
 
+def _week_bounds(today: date) -> tuple[date, date]:
+    # Цели на "предстоящую неделю" — джоба стреляет в воскресенье, значит
+    # следующий понедельник всегда tomorrow (today.weekday()==6).
+    monday = today + timedelta(days=(7 - today.weekday()) % 7 or 7)
+    return monday, monday + timedelta(days=6)
+
+
+def _month_bounds(today: date) -> tuple[date, date]:
+    start = today.replace(day=1)
+    next_month = start.replace(day=28) + timedelta(days=4)
+    end = next_month.replace(day=1) - timedelta(days=1)
+    return start, end
+
+
+def _quarter_bounds(today: date) -> tuple[date, date]:
+    quarter_start_month = ((today.month - 1) // 3) * 3 + 1
+    start = today.replace(month=quarter_start_month, day=1)
+    end_month = quarter_start_month + 2
+    next_month = start.replace(month=end_month, day=28) + timedelta(days=4)
+    end = next_month.replace(day=1) - timedelta(days=1)
+    return start, end
+
+
+def _year_bounds(today: date) -> tuple[date, date]:
+    return today.replace(month=1, day=1), today.replace(month=12, day=31)
+
+
+async def _goal_prompt_job(bot: Bot, storage: BaseStorage, tier: str) -> None:
+    logger.info("Запускаю опрос целей: %s", tier)
+    key = StorageKey(
+        bot_id=bot.id,
+        chat_id=settings.telegram_user_id,
+        user_id=settings.telegram_user_id,
+    )
+    state = FSMContext(storage=storage, key=key)
+    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    bounds = {
+        "weekly": _week_bounds,
+        "monthly": _month_bounds,
+        "quarterly": _quarter_bounds,
+        "yearly": _year_bounds,
+    }[tier](today)
+    await start_goal_flow(bot, state, tier, *bounds)
+
+
 async def _suggest_templates_job(bot: Bot) -> None:
     """Раз в неделю (воскресенье, 09:00) — смотрит на заголовки задач за
     последние 7 дней и предлагает новые шаблоны частых задач через Claude
@@ -164,5 +210,27 @@ def setup_scheduler(bot: Bot, storage: BaseStorage) -> AsyncIOScheduler:
     scheduler.add_job(_cleanup_old_messages, CronTrigger(hour=0, minute=5), args=[bot])
     scheduler.add_job(
         _suggest_templates_job, CronTrigger(day_of_week="sun", hour=9, minute=0), args=[bot]
+    )
+    # Цели (Phase 20) — недельные каждое воскресенье; месячные в начале
+    # месяца; квартальные/годовые — только в месяцы начала квартала/года.
+    # Раздельные дни (2/3/4 числа), чтобы не наваливать несколько
+    # опросов в одно утро.
+    scheduler.add_job(
+        _goal_prompt_job,
+        CronTrigger(day_of_week="sun", hour=12, minute=0),
+        args=[bot, storage, "weekly"],
+    )
+    scheduler.add_job(
+        _goal_prompt_job, CronTrigger(day=2, hour=10, minute=0), args=[bot, storage, "monthly"]
+    )
+    scheduler.add_job(
+        _goal_prompt_job,
+        CronTrigger(day=3, hour=10, minute=0, month="1,4,7,10"),
+        args=[bot, storage, "quarterly"],
+    )
+    scheduler.add_job(
+        _goal_prompt_job,
+        CronTrigger(day=4, hour=10, minute=0, month=1),
+        args=[bot, storage, "yearly"],
     )
     return scheduler

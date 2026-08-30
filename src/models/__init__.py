@@ -1,5 +1,6 @@
 from src.models.authorized_user import AuthorizedUser
 from src.models.chat_message import ChatMessage
+from src.models.goal import Goal
 from src.models.habit import Habit
 from src.models.project import Project
 from src.models.reminder import Reminder
@@ -17,4 +18,5 @@ __all__ = [
     "AuthorizedUser",
     "TaskTemplate",
     "Project",
+    "Goal",
 ]
