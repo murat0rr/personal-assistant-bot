@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from src.adapters.tasker_webhook import router as tasker_webhook_router
 from src.core import habits as habits_repo
@@ -76,6 +76,10 @@ class SetTitleRequest(BaseModel):
 
 class SetSortOrderRequest(BaseModel):
     sort_order: float
+
+
+class BatchArchiveRequest(BaseModel):
+    ids: list[int]
 
 
 @app.get("/miniapp/api/tasks")
@@ -210,6 +214,22 @@ async def archive_task_endpoint(
             raise HTTPException(status_code=404, detail="not found")
 
         task.archived = True
+        await session.commit()
+
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/tasks/archive-batch")
+async def archive_tasks_batch(
+    payload: BatchArchiveRequest, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    # Режим переноса (Phase 14) — задачи помечаются "на удаление" локально
+    # во фронтенде и реально архивируются одним запросом только при выходе
+    # из режима (кнопка "Готово"), без похода в сеть на каждую отдельно.
+    if not payload.ids:
+        return {"status": "ok"}
+    async with async_session() as session:
+        await session.execute(update(Task).where(Task.id.in_(payload.ids)).values(archived=True))
         await session.commit()
 
     return {"status": "ok"}
