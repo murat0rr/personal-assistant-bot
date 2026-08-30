@@ -13,6 +13,7 @@ from sqlalchemy import select
 from src.core.config import settings
 from src.core.db import async_session
 from src.core.habits import list_habits
+from src.core.recurring_tasks import materialize_due_rules
 from src.core.task_templates import create_ai_template, list_templates
 from src.handlers.f4_diary import DiaryStates, ask_question
 from src.handlers.f9_finance import FINANCE_GUIDE
@@ -26,6 +27,19 @@ from src.models.screen_time import ScreenTime
 from src.models.task import Task
 
 logger = logging.getLogger(__name__)
+
+
+async def _materialize_recurring_tasks_job(bot: Bot) -> None:
+    """До утренней сводки (08:00) — материализует сегодняшние occurrence
+    повторяющихся задач как обычные Task-строки, ничего не создавая
+    заранее (см. core/recurring_tasks.py). Дальше и утренняя сводка, и
+    Mini App видят их как обычные задачи — специальной логики под них
+    нигде больше не нужно."""
+    logger.info("Материализую повторяющиеся задачи на сегодня")
+    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    created = await materialize_due_rules(today)
+    if created:
+        logger.info("Создано повторяющихся задач: %s", len(created))
 
 
 async def _morning_digest(bot: Bot) -> None:
@@ -208,6 +222,8 @@ def setup_scheduler(bot: Bot, storage: BaseStorage) -> AsyncIOScheduler:
     scheduler.add_job(_habit_reminders, CronTrigger(hour=20, minute=0), args=[bot])
     scheduler.add_job(_evening_diary, CronTrigger(hour=21, minute=0), args=[bot, storage])
     scheduler.add_job(_cleanup_old_messages, CronTrigger(hour=0, minute=5), args=[bot])
+    # Материализация повторяющихся задач (Phase 21) — до утренней сводки.
+    scheduler.add_job(_materialize_recurring_tasks_job, CronTrigger(hour=7, minute=0), args=[bot])
     scheduler.add_job(
         _suggest_templates_job, CronTrigger(day_of_week="sun", hour=9, minute=0), args=[bot]
     )
