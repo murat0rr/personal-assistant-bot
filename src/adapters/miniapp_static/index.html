@@ -17,9 +17,12 @@
       --pending-bg: rgba(36, 129, 204, 0.1);
     }
     * { box-sizing: border-box; }
-    body {
+    html, body {
       margin: 0;
-      padding: 16px;
+      height: 100%;
+      overflow: hidden; /* скроллит каждый .app-screen сам по себе, не body */
+    }
+    body {
       font-family: -apple-system, "Segoe UI", sans-serif;
       background: var(--bg);
       color: var(--text);
@@ -33,6 +36,70 @@
       user-select: none;
       -webkit-touch-callout: none;
     }
+    /* Главный и расширенный экран (Phase 25) — два .app-screen друг под
+       другом внутри #screen-stack, переключаются перетаскиванием снизу
+       (см. attachScreenTransition в JS). Каждый скроллится независимо —
+       раньше это делал body целиком, теперь body сам не скроллит (см.
+       html,body выше), только конкретный видимый экран. */
+    #screen-stack {
+      position: fixed;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 200vh;
+      transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    #screen-stack.dragging { transition: none; }
+    .app-screen {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 100vh;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 16px;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+    }
+    #main-screen { top: 0; }
+    #extended-screen { top: 100vh; }
+    /* Плоская "галочка"-подсказка внизу каждого экрана — одновременно и
+       подсказка направления (всегда свайп вверх, см. JS), и запасная
+       кнопка на тап для тех, кто жест не найдёт. */
+    /* sticky, не просто margin-top:auto — если контент экрана длиннее
+       одного viewport (много задач), полоска всё равно должна быть
+       доступна без докрутки до самого конца: короткий контент — она
+       естественно внизу; длинный — прилипает к низу видимой области при
+       скролле. */
+    .bottom-pill-wrap {
+      flex-shrink: 0;
+      margin-top: auto;
+      position: sticky;
+      bottom: 0;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 10px 0 4px;
+      touch-action: none;
+      cursor: ns-resize;
+    }
+    .screen-chevron {
+      width: 34px;
+      height: 10px;
+      color: var(--text-muted);
+      opacity: 0.5;
+      transition: color 0.15s ease, opacity 0.15s ease;
+    }
+    .screen-chevron.armed { color: var(--accent); opacity: 1; }
+    .pill-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+      transition: color 0.15s ease;
+    }
+    .pill-label.armed { color: var(--accent); }
     .section { margin-bottom: 24px; }
     .section-label {
       font-size: 13px;
@@ -562,28 +629,46 @@
        через класс. Тот же z-index, что у .list.reorder-active-list —
        список внутри тоже может войти в режим переноса и "прорасти" выше
        .reorder-scrim ровно так же, как обычные списки. */
+    /* Позиция шторки — фиксированная (не по высоте контента): начинается
+       примерно в середине экрана, заканчивается у самого низа (внутренний
+       отступ снизу — см. .bottom-sheet > .list). top в vh, а не в % от
+       .bottom-sheet (высота которого сама fixed) — так поведение
+       предсказуемо при любой высоте viewport Telegram WebView. */
     .bottom-sheet {
       display: none;
       position: fixed;
       left: 0;
       right: 0;
       bottom: 0;
+      top: 44vh;
       z-index: 26;
       background: var(--bg);
       border-radius: 16px 16px 0 0;
-      padding: 8px 16px calc(16px + env(safe-area-inset-bottom, 0px));
-      max-height: 70vh;
-      overflow-y: auto;
       box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.35);
+      flex-direction: column;
     }
-    .bottom-sheet.visible { display: block; }
+    .bottom-sheet.visible { display: flex; }
     .bottom-sheet-handle {
       width: 36px;
       height: 4px;
       border-radius: 2px;
       background: var(--text-muted);
       opacity: 0.4;
-      margin: 6px auto 12px;
+      margin: 10px auto 6px;
+      flex-shrink: 0;
+      transition: background-color 0.15s ease, opacity 0.15s ease;
+    }
+    .bottom-sheet-handle.armed { background: var(--accent); opacity: 1; }
+    .bottom-sheet > .section-label { flex-shrink: 0; padding: 0 16px 8px; margin: 0; }
+    /* Список — единственное, что реально скроллится; ручка и заголовок
+       остаются на месте, чтобы жест "докрутил до края — потянул дальше"
+       (см. attachSheetOverswipeClose) видел границу именно списка. */
+    .bottom-sheet > .list {
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+      padding: 0 16px calc(16px + env(safe-area-inset-bottom, 0px));
     }
     /* Подсветка "давно не пользовался" (>= stale_after_days, см.
        core/task_templates.py::_is_stale) — тёплый едва заметный тинт, не
@@ -687,6 +772,8 @@
   </style>
 </head>
 <body>
+<div id="screen-stack">
+  <div id="main-screen" class="app-screen">
   <div class="section">
     <p class="section-label" id="day-label">Сегодня</p>
     <div class="day-carousel" id="day-carousel">
@@ -725,6 +812,18 @@
   </div>
 
   <div class="section">
+    <p class="section-label">Утренний дайджест</p>
+    <div id="digest" class="list digest">Загрузка…</div>
+  </div>
+
+  <div class="bottom-pill-wrap" id="pill-main">
+    <svg class="screen-chevron" viewBox="0 0 34 10"><path d="M2 8 L17 2 L32 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span class="pill-label">Расширенная аналитика</span>
+  </div>
+  </div>
+
+  <div id="extended-screen" class="app-screen">
+  <div class="section">
     <p class="section-label section-header" id="projects-header">
       <span id="projects-title">Проекты</span>
       <span class="chevron" id="projects-chevron"></span>
@@ -750,10 +849,12 @@
     </div>
   </div>
 
-  <div class="section">
-    <p class="section-label">Утренний дайджест</p>
-    <div id="digest" class="list digest">Загрузка…</div>
+  <div class="bottom-pill-wrap" id="pill-extended">
+    <svg class="screen-chevron" viewBox="0 0 34 10"><path d="M2 8 L17 2 L32 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span class="pill-label">Основной экран</span>
   </div>
+  </div>
+</div>
 
   <div id="reorder-scrim" class="reorder-scrim"></div>
 
@@ -2290,26 +2391,270 @@
       let timer = null;
       let startX = 0;
       let startY = 0;
+      let pointerId = null;
       function clear() {
         clearTimeout(timer);
         timer = null;
+        pointerId = null;
       }
       container.addEventListener("pointerdown", (e) => {
         if (isReorderActive(listKey)) return;
         if (e.target.closest(".checkbox, .small-btn, .icon-btn, .swipe-zone, .swipe-actions, input")) return;
         startX = e.clientX;
         startY = e.clientY;
-        clear();
+        pointerId = e.pointerId;
+        clearTimeout(timer);
         timer = setTimeout(() => enterReorderMode(listKey), REORDER_HOLD_MS);
       });
-      container.addEventListener("pointermove", (e) => {
-        if (!timer) return;
+      // pointermove/up/cancel — на document, а не на container: тот же
+      // приём, что и у остальных жестов переноса в приложении (см.
+      // setupDragReorder/attachSheetOverswipeClose) — реальное движение
+      // пальца в Telegram WebView не всегда продолжает попадать именно в
+      // исходный контейнер, значит и таймер долгого нажатия рискует не
+      // очиститься движением, если слушать только на нём самом.
+      document.addEventListener("pointermove", (e) => {
+        if (!timer || e.pointerId !== pointerId) return;
         if (Math.abs(e.clientX - startX) > REORDER_MOVE_THRESHOLD || Math.abs(e.clientY - startY) > REORDER_MOVE_THRESHOLD) {
           clear();
         }
       });
-      container.addEventListener("pointerup", clear);
-      container.addEventListener("pointercancel", clear);
+      document.addEventListener("pointerup", (e) => {
+        if (e.pointerId === pointerId) clear();
+      });
+      document.addEventListener("pointercancel", (e) => {
+        if (e.pointerId === pointerId) clear();
+      });
+    }
+
+    // Оверсвайп списка внутри bottom sheet — докрутил список до края
+    // (верх или низ), продолжаешь тянуть — вся шторка следует за пальцем;
+    // отпустил дальше порога — закрывается. Большая активная зона (весь
+    // список, не узкая ручка) и слушатели на document — тот же приём, что
+    // и у drag-реордера (Phase 13): не зависим от надёжности
+    // setPointerCapture в Telegram WebView.
+    const SHEET_CLOSE_THRESHOLD = 90;
+
+    function attachSheetOverswipeClose(sheetEl, listEl, closeFn, isBlockedFn) {
+      const handle = sheetEl.querySelector(".bottom-sheet-handle");
+      let dragging = false;
+      let mode = null; // 'top' | 'bottom' | null — пока не решили, куда тянут
+      let startY = 0;
+      let dy = 0;
+
+      function atTop() {
+        return listEl.scrollTop <= 0;
+      }
+      function atBottom() {
+        return listEl.scrollTop + listEl.clientHeight >= listEl.scrollHeight - 1;
+      }
+
+      listEl.addEventListener("pointerdown", (e) => {
+        if (isBlockedFn && isBlockedFn()) return;
+        dragging = true;
+        mode = null;
+        startY = e.clientY;
+        dy = 0;
+      });
+
+      document.addEventListener(
+        "pointermove",
+        (e) => {
+          if (!dragging) return;
+          const currentDy = e.clientY - startY;
+
+          if (mode === null) {
+            if (currentDy > 4 && atTop()) mode = "top";
+            else if (currentDy < -4 && atBottom()) mode = "bottom";
+            else return; // обычный скролл списка — не мешаем
+          }
+          if (mode === "top" && currentDy < 0) {
+            mode = null;
+            sheetEl.style.transform = "";
+            handle.classList.remove("armed");
+            return;
+          }
+          if (mode === "bottom" && currentDy > 0) {
+            mode = null;
+            sheetEl.style.transform = "";
+            handle.classList.remove("armed");
+            return;
+          }
+
+          e.preventDefault();
+          dy = currentDy;
+          sheetEl.style.transform = `translateY(${currentDy}px)`;
+          handle.classList.toggle("armed", Math.abs(currentDy) > SHEET_CLOSE_THRESHOLD);
+        },
+        { passive: false }
+      );
+
+      document.addEventListener("pointerup", () => {
+        if (!dragging) return;
+        dragging = false;
+        handle.classList.remove("armed");
+        if (Math.abs(dy) > SHEET_CLOSE_THRESHOLD) closeFn();
+        sheetEl.style.transform = "";
+        mode = null;
+        dy = 0;
+      });
+    }
+
+    // Переход главный ⇄ расширенный экран (Phase 25) — всегда свайп ВВЕРХ
+    // (снизу того экрана, что сейчас виден), с отставанием от пальца по
+    // расстоянию (не по времени — фиксированный коэффициент, не таймер),
+    // подсветкой шеврона и вибро после ~0.5с удержания. Раз оба перехода
+    // делаются одним и тем же направлением жеста, а не разными (главный
+    // всегда сверху стека, расширенный всегда прямо под ним) — при
+    // возврате с расширенного на главный временно переставляем main на
+    // третий слот (сразу под extended), чтобы жест естественным образом
+    // "тянул к следующему", а после доезда мгновенно (без transition)
+    // возвращаем main на нулевой слот — тот же приём, что уже
+    // используется в недельной карусели (перестановка данных панелей
+    // после доезда), только тут переставляется позиция экрана, а не
+    // данные внутри него — DOM с обработчиками/id не дублируется.
+    function attachScreenTransition() {
+      const stack = document.getElementById("screen-stack");
+      const mainScreen = document.getElementById("main-screen");
+      const pillMain = document.getElementById("pill-main");
+      const pillExtended = document.getElementById("pill-extended");
+
+      const DAMPING = 0.55;
+      const OPEN_THRESHOLD_PX = 70; // «стандартный» свайп, не доля высоты экрана
+      const HAPTIC_DELAY_MS = 500;
+
+      let showingMain = true;
+
+      function vh() {
+        return window.innerHeight;
+      }
+
+      function setupPill(pillEl) {
+        let dragging = false;
+        let startY = 0;
+        let lastRaw = 0;
+        let pointerId = null;
+        let hapticTimer = null;
+
+        pillEl.addEventListener("pointerdown", (e) => {
+          dragging = true;
+          pointerId = e.pointerId;
+          startY = e.clientY;
+          lastRaw = 0;
+          stack.classList.add("dragging");
+          // Уходим с расширенного на главный — временно "подставляем" main
+          // третьим слотом под extended, чтобы жест тянул в естественную
+          // сторону (см. комментарий выше).
+          if (!showingMain) mainScreen.style.top = vh() * 2 + "px";
+
+          clearTimeout(hapticTimer);
+          hapticTimer = setTimeout(() => {
+            if (!dragging) return;
+            tg?.HapticFeedback?.impactOccurred("medium");
+          }, HAPTIC_DELAY_MS);
+        });
+
+        document.addEventListener("pointermove", (e) => {
+          if (!dragging || e.pointerId !== pointerId) return;
+          const raw = Math.max(0, startY - e.clientY); // >0 когда тянут вверх
+          lastRaw = raw;
+          const eased = raw * DAMPING;
+          const base = showingMain ? 0 : -vh();
+          // Диапазон зависит от направления: main->extended едет в
+          // [-vh, 0], а extended->main — в [-2vh, -vh] (main временно на
+          // третьем слоте, см. pointerdown выше) — иначе на втором
+          // направлении clamp по [-vh,0] обрезал бы движение сразу же.
+          const rangeMin = showingMain ? -vh() : -2 * vh();
+          const rangeMax = showingMain ? 0 : -vh();
+          const clamped = Math.max(rangeMin, Math.min(rangeMax, base - eased));
+          stack.style.transform = `translateY(${clamped}px)`;
+
+          const engaged = raw > OPEN_THRESHOLD_PX;
+          pillEl.querySelector(".screen-chevron").classList.toggle("armed", engaged);
+          pillEl.querySelector(".pill-label").classList.toggle("armed", engaged);
+        });
+
+        document.addEventListener("pointerup", (e) => {
+          if (!dragging || e.pointerId !== pointerId) return;
+          dragging = false;
+          clearTimeout(hapticTimer);
+          stack.classList.remove("dragging");
+          pillEl.querySelector(".screen-chevron").classList.remove("armed");
+          pillEl.querySelector(".pill-label").classList.remove("armed");
+
+          const raw = lastRaw;
+          const base = showingMain ? 0 : -vh();
+
+          if (raw > OPEN_THRESHOLD_PX) {
+            const willShowMain = !showingMain;
+            stack.style.transform = `translateY(${willShowMain ? -2 * vh() : -vh()}px)`;
+            if (willShowMain) {
+              // Доехали до временного третьего слота — мгновенно, без
+              // transition, возвращаем main на его настоящее место (слот 0)
+              // и стек в исходное translateY(0). Контент идентичен, скачка
+              // не видно.
+              const settle = () => {
+                stack.classList.add("dragging"); // отключить transition на кадр
+                mainScreen.style.top = "0";
+                stack.style.transform = "translateY(0px)";
+                // force reflow, потом вернуть transition
+                void stack.offsetHeight;
+                stack.classList.remove("dragging");
+              };
+              stack.addEventListener("transitionend", settle, { once: true });
+            }
+            showingMain = willShowMain;
+          } else {
+            stack.style.transform = `translateY(${base}px)`;
+            if (!showingMain) mainScreen.style.top = "0"; // не доехали — вернуть слот сразу
+          }
+        });
+
+        // Прерванный жест (например, входящий звонок) — как отпускание до
+        // порога: пружинит назад, никакого перехода.
+        document.addEventListener("pointercancel", (e) => {
+          if (!dragging || e.pointerId !== pointerId) return;
+          dragging = false;
+          clearTimeout(hapticTimer);
+          stack.classList.remove("dragging");
+          pillEl.querySelector(".screen-chevron").classList.remove("armed");
+          pillEl.querySelector(".pill-label").classList.remove("armed");
+          const base = showingMain ? 0 : -vh();
+          stack.style.transform = `translateY(${base}px)`;
+          if (!showingMain) mainScreen.style.top = "0";
+        });
+      }
+
+      setupPill(pillMain);
+      setupPill(pillExtended);
+
+      // Тап по подписи — страховка для тех, кто не найдёт жест.
+      pillMain.addEventListener("click", (e) => {
+        if (e.target.closest("svg, span")) toggleScreen();
+      });
+      pillExtended.addEventListener("click", (e) => {
+        if (e.target.closest("svg, span")) toggleScreen();
+      });
+      function toggleScreen() {
+        if (showingMain) {
+          stack.style.transform = `translateY(-${vh()}px)`;
+          showingMain = false;
+        } else {
+          mainScreen.style.top = vh() * 2 + "px";
+          stack.style.transform = `translateY(-${2 * vh()}px)`;
+          stack.addEventListener(
+            "transitionend",
+            () => {
+              stack.classList.add("dragging");
+              mainScreen.style.top = "0";
+              stack.style.transform = "translateY(0px)";
+              void stack.offsetHeight;
+              stack.classList.remove("dragging");
+            },
+            { once: true }
+          );
+          showingMain = true;
+        }
+      }
     }
 
     const _dayOpts = {
@@ -3106,6 +3451,20 @@
     attachReorderEntry(document.getElementById("today-list"), "today");
     attachReorderEntry(document.getElementById("inbox-list"), "inbox");
     attachReorderEntry(document.getElementById("templates-list"), "templates");
+
+    attachSheetOverswipeClose(
+      document.getElementById("templates-sheet"),
+      document.getElementById("templates-list"),
+      closeTemplatesPicker,
+      () => isReorderActive("templates")
+    );
+    attachSheetOverswipeClose(
+      document.getElementById("project-picker-sheet"),
+      document.getElementById("project-picker-list"),
+      closeProjectPicker
+    );
+
+    attachScreenTransition();
 
     // Тап по затемнению — единственный выход из режима переноса (кнопки
     // "Готово" больше нет): список рисуется выше .reorder-scrim (см. CSS),
