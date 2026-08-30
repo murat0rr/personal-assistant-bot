@@ -951,19 +951,6 @@
     const REORDER_HOLD_MS = 450;
     const REORDER_MOVE_THRESHOLD = 8;
 
-    // Виброотклик в момент, когда хват подтверждён (долгое нажатие на
-    // ручку доспело) — через нативный Telegram WebApp API, не через
-    // navigator.vibrate(): внутри Mini App это надёжнее и чувствуется
-    // "родным" для клиента, а не просто дрожью браузера.
-    function hapticGrab() {
-      try {
-        tg?.HapticFeedback?.impactOccurred("medium");
-      } catch (err) {
-        // Не критично — на устройствах без вибро/старом клиенте просто
-        // тихо ничего не происходит.
-      }
-    }
-
     function dragSiblings(row, selector) {
       return Array.from(row.parentElement.children).filter((n) => n.matches(selector));
     }
@@ -983,23 +970,22 @@
     // mid-animation").
     const siblingAnimations = new WeakMap();
 
-    // Долгое нажатие именно на ручку (не мгновенный старт) — то же
-    // "стандартное" время REORDER_HOLD_MS, что и у входа в сам режим
-    // переноса. В момент, когда оно доспевает, — виброотклик, и дальше
-    // палец можно уводить куда угодно по экрану, не только строго по
-    // вертикали: слежение идёт через document, а не через границы самой
-    // ручки (см. onDocPointerMove/Up/Cancel ниже). Раньше слушали
-    // pointermove/up прямо на ручке и полагались на setPointerCapture,
-    // чтобы продолжать получать события, даже когда палец уходит за её
-    // пределы — но в Telegram WebView это не всегда надёжно: стоило
-    // пальцу чуть отклониться от вертикали за пределы 22px-иконки, и
-    // событий больше не приходило вовсе, перенос зависал навсегда с
-    // повисшим transform и тенью — отсюда и было то самое "залипание
-    // поверх соседней", которое пережило и фикс плавности, и фикс
-    // разворота направления (оба чинили саму анимацию, а не эту
-    // причину). Слушатели на document такой границы просто не имеют.
+    // Старт переноса — сразу с первого сдвига пальца после нажатия на
+    // ручку, без задержки (удержание+вибро пробовали, но это чисто UX-слой
+    // поверх самого фикса, на надёжность не влияет — убрали по просьбе,
+    // усложняло жест). А вот что остаётся — и что как раз чинит исходный
+    // баг ("работает, пока палец на самой ручке, ломается, стоит чуть
+    // отклониться от вертикали"): pointermove/up/cancel слушаются на
+    // document, а не на самой ручке. Раньше слушали прямо на ручке и
+    // полагались на setPointerCapture, чтобы продолжать получать события,
+    // даже когда палец уходит за её 22px-границы — но в Telegram WebView
+    // это не всегда надёжно: стоило пальцу отклониться от вертикали за
+    // пределы иконки, событий больше не приходило вовсе, перенос зависал
+    // навсегда с повисшим transform и тенью поверх соседней задачи. На
+    // document такой границы просто нет — не важно, где физически
+    // находится палец, X-координата в самой логике переноса вообще не
+    // участвует, только Y.
     function setupDragReorder({ row, trigger, rowSelector, getSortOrder, persist }) {
-      let holdTimer = null;
       let dragging = false;
       let moved = false; // реальный перенос состоялся — подавляет клик по названию
       let pointerId = null;
@@ -1012,13 +998,6 @@
       function applyTransform(dy) {
         lastDy = dy;
         row.style.transform = `translateY(${compensation + dy}px)`;
-      }
-
-      function clearHold() {
-        if (holdTimer) {
-          clearTimeout(holdTimer);
-          holdTimer = null;
-        }
       }
 
       // Соседа, которого строка обгоняет, плавно сдвигаем на освободившееся
@@ -1098,13 +1077,12 @@
           cleanupPointer();
           return;
         }
-        // Точка отсчёта — там, где палец находится ПРЯМО СЕЙЧАС (curY), а
-        // не там, где было изначальное нажатие: за время удержания палец
-        // мог заметно уйти в сторону (это специально разрешено — см.
-        // комментарий выше про document), и без этого пересчёта перенос
-        // стартовал бы со скачком на разницу между стартовой и текущей
-        // точкой.
-        startY = curY;
+        // startY уже выставлен в pointerdown — не трогаем его здесь: это и
+        // есть точка отсчёта для самого первого кадра переноса. (Раньше,
+        // при удержании, тут был пересчёт на текущую позицию — но раз
+        // старт мгновенный, curY на момент этого вызова равен той же
+        // точке, что палец только что достиг, и пересчёт обнулил бы сам
+        // первый скачок движения.)
         dragging = true;
         moved = true;
         // Строку схватили заново раньше, чем доспела доводка предыдущего
@@ -1118,7 +1096,6 @@
         row.classList.add("reorder-dragging");
         compensation = 0;
         applyTransform(0);
-        hapticGrab();
       }
 
       function commitOrder() {
@@ -1135,7 +1112,6 @@
       }
 
       function endDrag(commit) {
-        clearHold();
         if (dragging) {
           // Доводка — translateY плавно едет от текущего положения (то,
           // что прямо сейчас в row.style.transform) к 0 — это ровно её
@@ -1176,7 +1152,12 @@
       function onDocPointerMove(e) {
         if (pointerId === null || e.pointerId !== pointerId) return;
         curY = e.clientY;
-        if (!dragging) return; // ещё удерживаем, но хват не подтверждён — см. beginDrag по таймеру
+        if (!dragging) {
+          // Первый же сдвиг после нажатия на ручку — сразу перенос, без
+          // задержки (beginDrag сам возьмёт curY как точку отсчёта).
+          beginDrag();
+          if (!dragging) return; // строка исчезла — см. beginDrag
+        }
         applyTransform(curY - startY);
         tryReorder();
         e.preventDefault();
@@ -1195,7 +1176,6 @@
       }
 
       function cleanupPointer() {
-        clearHold();
         document.removeEventListener("pointermove", onDocPointerMove);
         document.removeEventListener("pointerup", onDocPointerUp);
         document.removeEventListener("pointercancel", onDocPointerCancel);
@@ -1212,10 +1192,6 @@
         document.addEventListener("pointermove", onDocPointerMove);
         document.addEventListener("pointerup", onDocPointerUp);
         document.addEventListener("pointercancel", onDocPointerCancel);
-        holdTimer = setTimeout(() => {
-          holdTimer = null;
-          beginDrag();
-        }, REORDER_HOLD_MS);
       });
 
       return {
