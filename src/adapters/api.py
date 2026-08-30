@@ -4,7 +4,7 @@ from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select, update
@@ -38,6 +38,25 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Личный ассистент API")
 app.include_router(tasker_webhook_router)
+
+
+@app.middleware("http")
+async def _no_cache_miniapp(request: Request, call_next):
+    """Telegram WebView (особенно мобильные) кэширует статику Mini App
+    заметно агрессивнее обычного браузера — официальная рекомендация
+    (docs.ton.org, tips-and-tricks для TMA) для index.html: полностью
+    отключить кэш этими тремя заголовками, иначе после деплоя пользователь
+    может продолжать видеть старую версию, пока вручную не очистит кэш
+    приложения. StaticFiles по умолчанию шлёт только ETag/Last-Modified
+    (условный GET), но не Cache-Control — WebView вправе не перепроверять
+    вообще. Правило — на весь /miniapp: там ровно один самодостаточный
+    index.html без отдельных версионируемых ассетов, экономить нечего."""
+    response = await call_next(request)
+    if request.url.path.startswith("/miniapp"):
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 
 @app.get("/health")
