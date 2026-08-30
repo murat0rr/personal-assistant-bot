@@ -1,3 +1,4 @@
+import itertools
 from datetime import date, datetime
 
 from src.handlers.miniapp_tasks import build_task_board
@@ -7,20 +8,26 @@ from src.models.task import Task
 _TODAY = date(2026, 8, 29)
 _YESTERDAY = date(2026, 8, 28)
 
+_counter = itertools.count()
+
 
 def _task(
     title: str,
     due_date: date | None,
     priority: str | None = None,
     done: bool = False,
+    sort_order: float | None = None,
 ) -> Task:
     # due_date в модели — timestamp; здесь удобнее задавать в тестах просто
-    # день, а на полночь переводим внутри (см. Task.due_date).
+    # день, а на полночь переводим внутри (см. Task.due_date). sort_order по
+    # умолчанию — по порядку вызова (имитирует "как создавали"), явно
+    # передаём только там, где тест реально проверяет порядок.
     return Task(
         title=title,
         due_date=datetime.combine(due_date, datetime.min.time()) if due_date else None,
         priority=priority,
         done=done,
+        sort_order=sort_order if sort_order is not None else next(_counter),
     )
 
 
@@ -62,16 +69,17 @@ def test_inbox_includes_overdue_undone_and_all_undated():
     assert titles == {"просрочена не сделана", "без даты не сделана", "без даты сделана"}
 
 
-def test_day_sorted_by_priority_only_done_stays_in_place():
+def test_day_ordered_by_sort_order_marking_done_does_not_move_task():
+    # Ручной порядок (Phase 13) — задан явно, не по приоритету. Отметка
+    # "выполнено" не должна ничего переставлять.
     tasks = [
-        _task("низкий", _TODAY, priority="низкий"),
-        _task("высокий выполнена", _TODAY, priority="высокий", done=True),
-        _task("средний", _TODAY, priority="средний"),
+        _task("третья", _TODAY, priority="низкий", sort_order=3000),
+        _task("первая, выполнена", _TODAY, priority="высокий", done=True, sort_order=1000),
+        _task("вторая", _TODAY, priority="средний", sort_order=2000),
     ]
     board = build_task_board(tasks, _TODAY)
     titles = [t["title"] for t in board["days"]["today"]["tasks"]]
-    # Выполненная задача с высоким приоритетом остаётся наверху, не улетает вниз.
-    assert titles == ["высокий выполнена", "средний", "низкий"]
+    assert titles == ["первая, выполнена", "вторая", "третья"]
 
 
 def test_empty_board():
@@ -83,11 +91,20 @@ def test_empty_board():
 
 def test_due_time_shown_only_when_not_midnight():
     with_time = Task(
-        title="встреча", due_date=datetime(2026, 8, 29, 14, 30), priority="event", done=False
+        title="встреча",
+        due_date=datetime(2026, 8, 29, 14, 30),
+        priority="event",
+        done=False,
+        sort_order=1,
     )
     without_time = Task(
-        title="обычная", due_date=datetime(2026, 8, 29, 0, 0), priority="средний", done=False
+        title="обычная",
+        due_date=datetime(2026, 8, 29, 0, 0),
+        priority="средний",
+        done=False,
+        sort_order=2,
     )
+
     board = build_task_board([with_time, without_time], _TODAY)
     by_title = {t["title"]: t for t in board["dated_tasks"]}
     assert by_title["встреча"]["due_time"] == "14:30"

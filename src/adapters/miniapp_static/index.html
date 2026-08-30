@@ -46,6 +46,15 @@
     }
     .row:last-child { border-bottom: none; }
     .row.pending { background: var(--pending-bg); }
+    /* Перетаскивание для ручного порядка (Phase 13) — тень и приподнятый
+       z-index на время жеста, у .swipe-wrap ещё и overflow:visible, иначе
+       тень обрежется его обычным overflow:hidden (см. ниже). */
+    .row.reorder-dragging {
+      position: relative;
+      z-index: 5;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+      background: var(--card-bg);
+    }
     .empty {
       padding: 12px 14px;
       font-size: 14px;
@@ -81,6 +90,19 @@
     .title.done {
       color: var(--text-muted);
     }
+    /* Инлайн-правка текста (Phase 13) — поле ввода занимает ровно то же
+       место, что и заголовок-span, без визуального скачка при переключении. */
+    .title-edit {
+      flex: 1;
+      font-size: 15px;
+      min-width: 0;
+      border: none;
+      background: transparent;
+      color: var(--text);
+      padding: 0;
+      font-family: inherit;
+    }
+    .title-edit:focus { outline: none; }
     .flag-icon {
       color: var(--accent);
       display: flex;
@@ -247,6 +269,14 @@
       border-radius: 2px;
       background: var(--hairline);
       pointer-events: none;
+    }
+    /* См. .row.reorder-dragging выше — здесь дополнительно временно
+       отключаем overflow:hidden строки (иначе тень обрежется краем
+       .swipe-wrap), возвращается обратно при снятии класса. */
+    .swipe-wrap.reorder-dragging {
+      z-index: 5;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+      overflow: visible;
     }
     .event-pin {
       color: var(--accent);
@@ -473,45 +503,19 @@
     function eventPinIcon() {
       return icon('<path d="M12 21c4-4.5 7-8 7-12a7 7 0 10-14 0c0 4 3 7.5 7 12z"/><circle cx="12" cy="9" r="2.3"/>', 15);
     }
-    function editIcon() {
-      return icon('<path d="M16.5 4.5l3 3L7 20l-4 1 1-4z"/>', 18);
-    }
 
     // ---- Состояние. Рендер идёт из него, без похода в сеть на каждое действие
     // (optimistic UI) — сеть только подтверждает то, что уже видно на экране.
     let boardState = { days: {}, dated_tasks: [], inbox: [] };
     const pendingIds = new Set();
 
-    const PRIORITY_ORDER = { высокий: 0, event: 0, средний: 1, низкий: 2 };
-
-    // Порядок внутри списка фиксируется один раз при загрузке доски
-    // (assignTaskOrder, вызывается из loadBoard) и больше не пересчитывается
-    // при отметке/переносе задач — только тогда позиции не "прыгают".
-    // Без этого stable-сортировка всё равно ехала бы: rebucketTask при
-    // любой правке удаляет задачу из массива и добавляет её заново в конец,
-    // и хотя сам sort стабилен, "конец массива" — это уже другое место
-    // относительно остальных задач того же приоритета.
-    let taskOrder = new Map();
-
-    function assignTaskOrder() {
-      taskOrder = new Map();
-      let next = 0;
-      for (const t of [...(boardState.dated_tasks || []), ...(boardState.inbox || [])]) {
-        if (!taskOrder.has(t.id)) taskOrder.set(t.id, next++);
-      }
-    }
-
-    function sortTasks(tasks) {
-      return [...tasks].sort((a, b) => {
-        const byPriority = (PRIORITY_ORDER[a.priority] ?? 3) - (PRIORITY_ORDER[b.priority] ?? 3);
-        if (byPriority !== 0) return byPriority;
-        // Новая (только что созданная) задача ещё не попала в taskOrder —
-        // естественно уходит в конец своей группы приоритета, не встревая
-        // между уже расставленными.
-        const oa = taskOrder.has(a.id) ? taskOrder.get(a.id) : Infinity;
-        const ob = taskOrder.has(b.id) ? taskOrder.get(b.id) : Infinity;
-        return oa - ob;
-      });
+    // Порядок — ручной (Phase 13), хранится в task.sort_order (float),
+    // приходит с бэкенда и обновляется через /reorder при перетаскивании.
+    // Больше значение — ниже в списке. Отметка "выполнено" и любые другие
+    // правки статуса sort_order не трогают — задача остаётся на месте, пока
+    // её не перетащат руками (см. setTaskSortOrder).
+    function sortByOrder(tasks) {
+      return [...tasks].sort((a, b) => a.sort_order - b.sort_order);
     }
 
     function removeTaskEverywhere(id) {
@@ -550,6 +554,11 @@
     function renderTaskRow(task, { showDateButton, showTrashButton, showMoveToToday }) {
       const row = document.createElement("div");
       row.className = "row" + (pendingIds.has(task.id) ? " pending" : "");
+      // Инбокс — один общий бакет (нет деления событие/обычная), но
+      // setupDragReorder всё равно смотрит на data-bucket у всех своих
+      // "соседей", так что выставляем его тут же, для единообразия.
+      row.dataset.bucket = "inbox";
+      row.dataset.sortOrder = String(task.sort_order);
       const isPending = pendingIds.has(task.id);
 
       const checkbox = document.createElement("button");
@@ -611,10 +620,19 @@
         row.append(moveBtn);
       }
 
+      setupDragReorder({
+        row,
+        trigger: row,
+        rowSelector: ".row",
+        isExcluded: (target) => !!target.closest(".checkbox, .small-btn, input"),
+        getSortOrder: (el) => parseFloat(el.dataset.sortOrder),
+        persist: (newOrder) => setTaskSortOrder(task, newOrder),
+      });
+
       return row;
     }
 
-    const SWIPE_MAX_REVEAL = 220; // 5 кнопок по 44px
+    const SWIPE_MAX_REVEAL = 176; // 4 кнопки по 44px
     const SWIPE_OPEN_THRESHOLD = SWIPE_MAX_REVEAL * 0.2; // открыть — лёгкий свайп, то же место (зона)
     const SWIPE_CLOSE_THRESHOLD = 28; // закрыть из зоны — хватит совсем лёгкого движения
 
@@ -803,6 +821,178 @@
       return self;
     }
 
+    // Ручной порядок (Phase 13) — держим ~450мс без сдвига > 8px, дальше
+    // палец двигает саму строку (translateY), а её DOM-соседи в той же
+    // группе (см. data-bucket / siblingsInBucket) уступают место: как
+    // только видимый центр перетаскиваемой строки пересекает середину
+    // соседа, они меняются местами через insertBefore, а накопленная
+    // разница высот компенсируется в translateY — так что палец и строка
+    // остаются под одним и тем же местом на экране всю дорогу, без скачков.
+    // Сам boardState/render() не трогаем, пока палец не отпустили — это
+    // только визуальное превью, реальный порядок пересчитывается и
+    // сохраняется один раз на pointerup (см. persist/commitOrder ниже).
+    const REORDER_HOLD_MS = 450;
+    const REORDER_MOVE_THRESHOLD = 8;
+
+    // Соседи row той же группы (data-bucket), в порядке их текущего
+    // расположения в DOM — то же самое, что "не пересекать разделитель
+    // событие/обычные", просто через фильтр атрибута, без явного знания о
+    // разделителе. Разные страницы (Вчера/Сегодня/конкретный день/Инбокс)
+    // и так в разных контейнерах — общий parentElement уже их разделяет.
+    function siblingsInBucket(row, selector) {
+      const bucket = row.dataset.bucket;
+      return Array.from(row.parentElement.children).filter(
+        (n) => n.matches(selector) && n.dataset.bucket === bucket
+      );
+    }
+
+    function setupDragReorder({ row, trigger, rowSelector, isExcluded, getSortOrder, persist }) {
+      let holdTimer = null;
+      let armed = false; // время удержания истекло, ждём первого сдвига
+      let dragging = false;
+      let moved = false; // реальный перенос состоялся — подавляет клик по названию
+      let pointerId = null;
+      let startX = 0;
+      let startY = 0;
+      let compensation = 0; // накопленная поправка от свапов соседей
+      let lastDy = 0;
+
+      function applyTransform(dy) {
+        lastDy = dy;
+        row.style.transform = `translateY(${compensation + dy}px)`;
+      }
+
+      function clearHold() {
+        if (holdTimer) {
+          clearTimeout(holdTimer);
+          holdTimer = null;
+        }
+      }
+
+      function tryReorder() {
+        const rect = row.getBoundingClientRect();
+        const centerY = rect.top + rect.height / 2;
+        const all = siblingsInBucket(row, rowSelector);
+        const rowIndex = all.indexOf(row);
+        for (let i = 0; i < all.length; i++) {
+          const sib = all[i];
+          if (sib === row) continue;
+          const sRect = sib.getBoundingClientRect();
+          const sCenter = sRect.top + sRect.height / 2;
+          if (i < rowIndex && centerY < sCenter) {
+            row.parentElement.insertBefore(row, sib);
+            compensation += sRect.height;
+            applyTransform(lastDy);
+            return;
+          }
+          if (i > rowIndex && centerY > sCenter) {
+            row.parentElement.insertBefore(row, sib.nextSibling);
+            compensation -= sRect.height;
+            applyTransform(lastDy);
+            return;
+          }
+        }
+      }
+
+      function beginDrag() {
+        closeOpenSwipeRow();
+        if (!row.isConnected) {
+          // Открытая шторка ЭТОЙ ЖЕ строки только что закрылась с
+          // отложенной пересортировкой (needsResortOnClose, см.
+          // renderSwipeableTaskRow) — render() внутри closeOpenSwipeRow уже
+          // пересобрал список и заменил этот DOM-узел новым, продолжать
+          // перенос старым узлом больше некуда, тихо отменяем.
+          pointerId = null;
+          return;
+        }
+        dragging = true;
+        moved = true;
+        row.classList.add("reorder-dragging");
+        compensation = 0;
+        applyTransform(0);
+      }
+
+      function commitOrder() {
+        const all = siblingsInBucket(row, rowSelector);
+        const idx = all.indexOf(row);
+        const prevOrder = idx > 0 ? getSortOrder(all[idx - 1]) : null;
+        const nextOrder = idx < all.length - 1 ? getSortOrder(all[idx + 1]) : null;
+        let newOrder;
+        if (prevOrder != null && nextOrder != null) newOrder = (prevOrder + nextOrder) / 2;
+        else if (prevOrder != null) newOrder = prevOrder + 1000;
+        else if (nextOrder != null) newOrder = nextOrder - 1000;
+        else return; // единственная строка в группе — переставлять некуда
+        persist(newOrder);
+      }
+
+      function endDrag(commit) {
+        clearHold();
+        if (dragging) {
+          row.classList.remove("reorder-dragging");
+          row.style.transform = "";
+          if (commit) commitOrder();
+        }
+        dragging = false;
+        armed = false;
+        pointerId = null;
+      }
+
+      trigger.addEventListener("pointerdown", (e) => {
+        if (isExcluded(e.target)) return;
+        pointerId = e.pointerId;
+        startX = e.clientX;
+        startY = e.clientY;
+        dragging = false;
+        armed = false;
+        moved = false;
+        clearHold();
+        holdTimer = setTimeout(() => {
+          armed = true;
+        }, REORDER_HOLD_MS);
+      });
+
+      trigger.addEventListener("pointermove", (e) => {
+        if (pointerId === null || e.pointerId !== pointerId) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        if (!dragging) {
+          if (!armed) {
+            // Сдвинули палец раньше, чем истекло время удержания — это
+            // обычный тап/скролл/свайп шторки, а не перенос, отпускаем.
+            if (Math.abs(dx) > REORDER_MOVE_THRESHOLD || Math.abs(dy) > REORDER_MOVE_THRESHOLD) {
+              clearHold();
+              pointerId = null;
+            }
+            return;
+          }
+          beginDrag();
+          if (!dragging) return; // строка исчезла — см. beginDrag
+          try {
+            trigger.setPointerCapture(pointerId);
+          } catch (err) {
+            // синтетические события в тестах — не критично
+          }
+        }
+        applyTransform(dy);
+        tryReorder();
+        e.preventDefault();
+      });
+
+      function onUp(e) {
+        if (pointerId === null || e.pointerId !== pointerId) return;
+        endDrag(dragging);
+      }
+      trigger.addEventListener("pointerup", onUp);
+      trigger.addEventListener("pointercancel", () => endDrag(false));
+
+      return {
+        // Клик по названию (инлайн-правка) проверяет это перед тем как
+        // открыть поле ввода — реальный перенос не должен ещё и включить
+        // редактирование текста тем же жестом.
+        wasDragged: () => moved,
+      };
+    }
+
     // Строка задачи со свайп-шторкой — Вчера/Сегодня/календарь. Инбокс
     // держит свой renderTaskRow с всегда видимыми иконками (см. render()) —
     // там свайп ни к чему, действия там нужны мгновенно, без лишнего жеста.
@@ -814,9 +1004,15 @@
       // закрытия, см. syncPriorityUI и переопределение swipeHandle.close
       // ниже.
       let needsResortOnClose = false;
+      let dragCtl = null; // назначим после setupDragReorder ниже
 
       const wrap = document.createElement("div");
       wrap.className = "swipe-wrap" + (isPending ? " pending" : "");
+      // Перетаскивание (Phase 13) ограничено своей группой — события
+      // отдельно от обычных задач, разделитель не пересекается (см.
+      // siblingsInBucket/setupDragReorder).
+      wrap.dataset.bucket = task.priority === "event" ? "event" : "regular";
+      wrap.dataset.sortOrder = String(task.sort_order);
 
       const actions = document.createElement("div");
       actions.className = "swipe-actions";
@@ -873,16 +1069,6 @@
       dateBtn.onclick = () => (dateInput.showPicker ? dateInput.showPicker() : dateInput.click());
       dateBtn.append(dateInput);
 
-      const editBtn = document.createElement("button");
-      editBtn.className = "swipe-btn";
-      editBtn.disabled = isPending;
-      editBtn.setAttribute("aria-label", "Переименовать");
-      editBtn.innerHTML = editIcon();
-      editBtn.onclick = () => {
-        swipeHandle.close();
-        editTaskTitle(task);
-      };
-
       const archiveBtn = document.createElement("button");
       archiveBtn.className = "swipe-btn swipe-btn-archive";
       archiveBtn.disabled = isPending;
@@ -890,7 +1076,7 @@
       archiveBtn.innerHTML = archiveIcon();
       archiveBtn.onclick = () => archiveTask(task);
 
-      actions.append(importantBtn, eventBtn, dateBtn, editBtn, archiveBtn);
+      actions.append(importantBtn, eventBtn, dateBtn, archiveBtn);
 
       const content = document.createElement("div");
       content.className = "swipe-content";
@@ -906,7 +1092,51 @@
       const title = document.createElement("span");
       title.className = "title" + (task.done ? " done" : "");
       title.textContent = task.title;
+      // Тап по тексту — инлайн-правка (Google Keep/Todoist-стиль), вместо
+      // кнопки "переименовать" в шторке. Реальный перенос (drag) гасит этот
+      // клик через dragCtl.wasDragged() — иначе после каждого перетаскивания
+      // ещё и открывалось бы поле ввода.
+      title.onclick = () => {
+        if (isPending || (dragCtl && dragCtl.wasDragged())) return;
+        startInlineEdit();
+      };
       content.append(title);
+
+      function startInlineEdit() {
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "title-edit";
+        input.value = task.title;
+        content.replaceChild(input, title);
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+
+        function finish(commit) {
+          input.removeEventListener("blur", onBlur);
+          input.removeEventListener("keydown", onKeydown);
+          if (commit) {
+            const trimmed = input.value.trim();
+            if (trimmed && trimmed !== task.title) {
+              title.textContent = trimmed;
+              renameTask(task, trimmed);
+            }
+          }
+          content.replaceChild(title, input);
+        }
+        function onBlur() {
+          finish(true);
+        }
+        function onKeydown(e) {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            input.blur();
+          } else if (e.key === "Escape") {
+            finish(false);
+          }
+        }
+        input.addEventListener("blur", onBlur);
+        input.addEventListener("keydown", onKeydown);
+      }
 
       if (task.due_time) {
         const time = document.createElement("span");
@@ -985,6 +1215,18 @@
 
       wrap.append(actions, content);
       swipeHandle = setupSwipeDrag(zone, actions, task.id);
+      // Триггер на .swipe-content целиком, кроме чекбокса и .swipe-zone —
+      // та же зона уже занята горизонтальным свайпом шторки, жесты не
+      // конфликтуют (этот вертикальный, тот горизонтальный, разные участки
+      // строки). Долгое нажатие в самой зоне намеренно не запускает перенос.
+      dragCtl = setupDragReorder({
+        row: wrap,
+        trigger: content,
+        rowSelector: ".swipe-wrap",
+        isExcluded: (target) => !!target.closest(".checkbox, .swipe-zone, input"),
+        getSortOrder: (el) => parseFloat(el.dataset.sortOrder),
+        persist: (newOrder) => setTaskSortOrder(task, newOrder),
+      });
 
       // Если приоритет меняли при открытой шторке, список пересортируем и
       // перегруппируем только сейчас, в момент закрытия — не посреди
@@ -1021,7 +1263,7 @@
         renderGroupedList(container, tasks, opts);
         return;
       }
-      const sorted = sortTasks(tasks);
+      const sorted = sortByOrder(tasks);
       if (sorted.length === 0) {
         renderEmpty(container);
         return;
@@ -1029,14 +1271,13 @@
       sorted.forEach((t) => container.append(renderTaskRow(t, opts)));
     }
 
-    // Вчера/Сегодня/календарь: события со временем — отдельной группой
-    // сверху, отсортированы по времени, дальше тонкая линия и обычные
-    // задачи по приоритету, как в остальных списках.
+    // Вчера/Сегодня/календарь: события — отдельной группой сверху (порядок
+    // внутри неё тоже ручной, Phase 13, время у события теперь только
+    // показывается текстом, не задаёт позицию), дальше тонкая линия и
+    // обычные задачи, тоже в ручном порядке.
     function renderGroupedList(container, tasks, opts) {
-      const events = tasks
-        .filter((t) => t.priority === "event")
-        .sort((a, b) => (a.due_time || "").localeCompare(b.due_time || ""));
-      const regular = sortTasks(tasks.filter((t) => t.priority !== "event"));
+      const events = sortByOrder(tasks.filter((t) => t.priority === "event"));
+      const regular = sortByOrder(tasks.filter((t) => t.priority !== "event"));
 
       if (events.length === 0 && regular.length === 0) {
         renderEmpty(container);
@@ -1194,7 +1435,6 @@
     async function loadBoard() {
       try {
         boardState = await api("/miniapp/api/tasks");
-        assignTaskOrder();
         const firstLoad = weekStart === null;
         if (firstLoad) {
           const tomorrowIso = addDaysIso(boardState.days.today.date, 1);
@@ -1244,8 +1484,14 @@
       const id = task.id;
       const prevDate = task.due_date;
       const prevTime = task.due_time;
+      const prevSortOrder = task.sort_order;
       task.due_date = value.slice(0, 10);
       task.due_time = value.length > 10 ? value.slice(11, 16) : null;
+      // Как и на бэкенде (см. api.py set_task_due_date) — перенос на другой
+      // день уносит задачу в конец списка того дня, а не оставляет её на
+      // случайной позиции среди задач, с которыми она физически больше не
+      // соседствует.
+      task.sort_order = Date.now();
       pendingIds.add(id);
       rebucketTask(task);
       render();
@@ -1257,6 +1503,7 @@
       } catch (e) {
         task.due_date = prevDate;
         task.due_time = prevTime;
+        task.sort_order = prevSortOrder;
         rebucketTask(task);
         alert("Не удалось поставить дату.");
       } finally {
@@ -1273,7 +1520,12 @@
       const update = onUpdate || render;
       const id = task.id;
       const prevPriority = task.priority;
+      const prevSortOrder = task.sort_order;
       task.priority = newPriority;
+      // Как и на бэкенде (см. api.py set_task_priority) — смена приоритета
+      // может переместить задачу между группой событий и обычных, поэтому
+      // она уходит в конец новой группы, тем же правилом "новая — в конец".
+      task.sort_order = Date.now();
       pendingIds.add(id);
       update();
       try {
@@ -1283,11 +1535,37 @@
         });
       } catch (e) {
         task.priority = prevPriority;
+        task.sort_order = prevSortOrder;
         update();
         alert("Не удалось изменить приоритет.");
       } finally {
         pendingIds.delete(id);
         update();
+      }
+    }
+
+    // Перетаскивание (Phase 13) — newOrder уже посчитан вызывающей стороной
+    // (setupDragReorder/commitOrder) как midpoint между финальными DOM-
+    // соседями. Тот же optimistic-паттерн, что и у остальных правок задачи.
+    async function setTaskSortOrder(task, newOrder) {
+      const id = task.id;
+      const prevOrder = task.sort_order;
+      task.sort_order = newOrder;
+      pendingIds.add(id);
+      rebucketTask(task);
+      render();
+      try {
+        await api(`/miniapp/api/tasks/${encodeURIComponent(id)}/reorder`, {
+          method: "POST",
+          body: JSON.stringify({ sort_order: newOrder }),
+        });
+      } catch (e) {
+        task.sort_order = prevOrder;
+        rebucketTask(task);
+        alert("Не удалось изменить порядок.");
+      } finally {
+        pendingIds.delete(id);
+        render();
       }
     }
 
@@ -1312,12 +1590,6 @@
         pendingIds.delete(id);
         render();
       }
-    }
-
-    function editTaskTitle(task) {
-      const next = prompt("Новое название", task.title);
-      if (next === null) return; // отменили
-      renameTask(task, next);
     }
 
     async function archiveTask(task) {
@@ -1347,6 +1619,11 @@
         due_time: null,
         priority: "средний",
         done: false,
+        // Заведомо больше всех существующих sort_order — "в конец" ровно
+        // так же, как задаёт колонка по умолчанию на бэкенде (см.
+        // models/task.py, default=time.time), пока сервер не подтвердит
+        // настоящее значение.
+        sort_order: Date.now(),
       };
       pendingIds.add(tempId);
       rebucketTask(tempTask);

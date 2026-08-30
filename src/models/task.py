@@ -1,6 +1,7 @@
+import time
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String
+from sqlalchemy import Boolean, DateTime, Float, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -27,6 +28,12 @@ class Task(Base):
     priority: Mapped[str | None] = mapped_column(String, nullable=True)
     done: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Ручной порядок (Phase 13) — дробная индексация: новая задача получает
+    # time.time() (заведомо больше всех существующих — "в конец"), а
+    # перетаскивание между двумя соседями просто берёт среднее их
+    # sort_order, не трогая никого третьего. default=time.time — сама
+    # функция, не вызов: SQLAlchemy зовёт её при каждой вставке новой строки.
+    sort_order: Mapped[float] = mapped_column(Float, default=time.time, server_default="0")
     source: Mapped[str | None] = mapped_column(String, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

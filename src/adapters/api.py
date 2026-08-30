@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -73,6 +74,10 @@ class SetTitleRequest(BaseModel):
     title: str
 
 
+class SetSortOrderRequest(BaseModel):
+    sort_order: float
+
+
 @app.get("/miniapp/api/tasks")
 async def list_tasks(_: dict = Depends(get_authorized_user)) -> dict:
     # Postgres — единственный источник правды для задач (Phase 10), поэтому
@@ -133,6 +138,11 @@ async def set_task_due_date(
             raise HTTPException(status_code=404, detail="not found")
 
         task.due_date = _parse_due_date(payload.due_date)
+        # Перенос на другой день — та же группа "новая/перенесённая — в
+        # конец", что и при создании (Phase 13): задача уезжает в конец
+        # списка того дня, куда попала, а не остаётся на случайной
+        # позиции среди задач, с которыми теперь физически не соседствует.
+        task.sort_order = time.time()
         await session.commit()
 
     return {"status": "ok"}
@@ -148,6 +158,24 @@ async def set_task_priority(
             raise HTTPException(status_code=404, detail="not found")
 
         task.priority = payload.priority
+        # Смена приоритета может переместить задачу между группой событий
+        # и обычных — тоже в конец новой группы, тем же правилом.
+        task.sort_order = time.time()
+        await session.commit()
+
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/tasks/{task_id}/reorder")
+async def reorder_task(
+    task_id: int, payload: SetSortOrderRequest, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="not found")
+
+        task.sort_order = payload.sort_order
         await session.commit()
 
     return {"status": "ok"}
