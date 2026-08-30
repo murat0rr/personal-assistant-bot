@@ -23,6 +23,7 @@ from src.handlers.f9_finance import router as finance_router
 from src.handlers.f_auth import AuthStates
 from src.handlers.f_auth import router as auth_router
 from src.handlers.f_goals import router as goals_router
+from src.handlers.f_morning_advice import router as morning_advice_router
 from src.handlers.f_reminders import router as reminders_router
 from src.handlers.mode_buttons import MAIN_KEYBOARD
 from src.handlers.mode_buttons import router as mode_buttons_router
@@ -42,6 +43,7 @@ dp.message.outer_middleware(track_incoming)
 dp.include_router(auth_router)
 dp.include_router(diary_router)
 dp.include_router(goals_router)
+dp.include_router(morning_advice_router)
 dp.include_router(mode_buttons_router)
 dp.include_router(reminders_router)
 dp.include_router(finance_router)

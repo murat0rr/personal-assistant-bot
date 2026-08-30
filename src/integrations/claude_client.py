@@ -562,3 +562,79 @@ async def tidy_task_titles(titles: list[str]) -> list[TidiedTask]:
     if tool_use is None:
         return []
     return TidiedTasks.model_validate(tool_use.input).items
+
+
+_SUGGEST_TODAY_TOOL = {
+    "name": "suggest_today",
+    "description": (
+        "Выбрать, какие задачи из инбокса желательно сделать сегодня, "
+        "с учётом уже имеющейся нагрузки на день."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "task_ids": {
+                "type": "array",
+                "items": {"type": "integer"},
+                "description": (
+                    "id задач из присланного списка инбокса, которые желательно "
+                    "сделать сегодня. Пустой список, если день и так плотный, "
+                    "или в инбоксе нет ничего срочного/важного — не "
+                    "перегружай день ради галочки."
+                ),
+            },
+        },
+        "required": ["task_ids"],
+    },
+}
+
+
+class TodaySuggestion(BaseModel):
+    task_ids: list[int]
+
+
+async def suggest_tasks_for_today(
+    overdue_titles: list[str], today_titles: list[str], inbox_items: list[dict]
+) -> list[int]:
+    """Утренний совет (см. scheduler/jobs.py::_morning_digest) — смотрит,
+    что не сделано со вчера, что уже стоит на сегодня, и что лежит в
+    инбоксе, и с учётом графика 5/2 по 8 часов (в будни мало свободного
+    времени, в выходные больше) предлагает, что из инбокса имеет смысл
+    подтянуть на сегодня. Список пустой, если день и так плотный."""
+    if not inbox_items:
+        return []
+    inbox_text = "\n".join(f"{item['id']}: {item['title']}" for item in inbox_items)
+    weekday_ru = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+    today = date.today()
+    response = await client.messages.create(
+        model=settings.claude_model_sonnet,
+        max_tokens=500,
+        system=(
+            f"Сегодня {weekday_ru[today.weekday()]}. Пользователь работает по "
+            "графику 5/2 (Пн-Пт, полный день) — в будни свободного времени "
+            "на личные задачи немного, в выходные заметно больше. Вот что "
+            "не сделано со вчера, что уже стоит на сегодня, и что лежит в "
+            "инбоксе (без даты). Оцени текущую нагрузку на сегодня и "
+            "предложи, какие задачи из инбокса реально стоит добавить на "
+            "сегодня — не перегружая день. Если день и так плотный или в "
+            "инбоксе нет ничего срочного/важного — пустой список, это "
+            "нормальный исход."
+        ),
+        tools=[_SUGGEST_TODAY_TOOL],
+        tool_choice={"type": "tool", "name": "suggest_today"},
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    f"Не сделано со вчера:\n{chr(10).join(overdue_titles) or '(нет)'}\n\n"
+                    f"Уже стоит на сегодня:\n{chr(10).join(today_titles) or '(нет)'}\n\n"
+                    f"Инбокс:\n{inbox_text}"
+                ),
+            }
+        ],
+    )
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+    if tool_use is None:
+        return []
+    valid_ids = {item["id"] for item in inbox_items}
+    return [i for i in TodaySuggestion.model_validate(tool_use.input).task_ids if i in valid_ids]

@@ -20,6 +20,7 @@ from src.handlers.f9_finance import FINANCE_GUIDE
 from src.handlers.f11_weekly_review import build_weekly_review
 from src.handlers.f12_briefing import build_morning_briefing
 from src.handlers.f_goals import start_goal_flow
+from src.handlers.f_morning_advice import send_morning_advice
 from src.handlers.f_reminders import check_reminders
 from src.handlers.miniapp_tasks import build_task_board
 from src.integrations.claude_client import suggest_new_templates, tidy_task_titles
@@ -43,10 +44,17 @@ async def _materialize_recurring_tasks_job(bot: Bot) -> None:
         logger.info("Создано повторяющихся задач: %s", len(created))
 
 
-async def _morning_digest(bot: Bot) -> None:
+async def _morning_digest(bot: Bot, storage: BaseStorage) -> None:
     logger.info("Формирую утреннюю сводку")
     text = await build_morning_briefing()
     await bot.send_message(chat_id=settings.telegram_user_id, text=text)
+    # Совет по задачам на сегодня (Phase 23) — отдельным сообщением
+    # следом, не смешивая с самой сводкой (у него своя интерактивная
+    # клавиатура "Добавить"/"Не сегодня").
+    try:
+        await send_morning_advice(bot, storage)
+    except Exception:
+        logger.exception("Не удалось отправить совет по задачам на сегодня")
 
 
 async def _reminders_job(bot: Bot) -> None:
@@ -261,7 +269,7 @@ async def _suggest_templates_job(bot: Bot) -> None:
 
 def setup_scheduler(bot: Bot, storage: BaseStorage) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
-    scheduler.add_job(_morning_digest, CronTrigger(hour=8, minute=0), args=[bot])
+    scheduler.add_job(_morning_digest, CronTrigger(hour=8, minute=0), args=[bot, storage])
     scheduler.add_job(_reminders_job, CronTrigger(hour=8, minute=0), args=[bot])
     scheduler.add_job(_screen_time_digest, CronTrigger(hour=8, minute=0), args=[bot])
     scheduler.add_job(_finance_reminder_job, CronTrigger(day=1, hour=8, minute=0), args=[bot])
