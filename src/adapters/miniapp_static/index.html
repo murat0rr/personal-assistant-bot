@@ -132,29 +132,25 @@
       -webkit-touch-callout: default;
     }
     .title-edit:focus { outline: none; }
-    .add-row {
-      display: flex;
-      gap: 8px;
-      margin-top: 8px;
-    }
-    .add-row input {
+    /* Добавление задачи — теперь последняя строка самого списка, а не
+       отдельное поле под ним (см. renderAddTaskRow) — тем самым она
+       автоматически остаётся "на переднем плане" вместе со списком,
+       когда он поднят над затемнением режима переноса. .row уже даёт
+       нужные отступы/разделители, здесь только стилизуем сам инпут под
+       прозрачный (фон списка, не отдельная плашка). */
+    .row.add-task-row input[type="text"] {
       flex: 1;
       border: none;
-      border-radius: 10px;
-      padding: 10px 12px;
-      background: var(--card-bg);
+      background: transparent;
       color: var(--text);
       font-size: 15px;
+      padding: 0;
       min-width: 0;
       -webkit-tap-highlight-color: transparent;
     }
-    .add-row input::placeholder { color: var(--text-muted); }
-    .add-row input:focus {
-      outline: none;
-      /* Просто светлее фон вместо системной жёлтой подсветки при тапе —
-         brightness одинаково хорошо работает и в светлой, и в тёмной теме. */
-      filter: brightness(1.15);
-    }
+    .row.add-task-row input[type="text"]::placeholder { color: var(--text-muted); }
+    .row.add-task-row input[type="text"]:focus { outline: none; }
+    .add-task-submit { width: 32px; height: 32px; border-radius: 8px; }
     /* Инбокс: необязательная дата прямо в строке ввода — значок календаря
        внутри поля справа, не отдельная кнопка снаружи. Задача с датой в
        инбокс не попадёт (см. build_task_board), это ожидаемо. */
@@ -457,17 +453,9 @@
     <div class="day-carousel" id="day-carousel">
       <div class="day-page" data-day="yesterday">
         <div class="list" id="yesterday-list"></div>
-        <div class="add-row">
-          <input type="text" class="day-task-input" placeholder="Новая задача" />
-          <button class="icon-btn day-task-add" aria-label="Добавить задачу"></button>
-        </div>
       </div>
       <div class="day-page" data-day="today">
         <div class="list" id="today-list"></div>
-        <div class="add-row">
-          <input type="text" class="day-task-input" placeholder="Новая задача" />
-          <button class="icon-btn day-task-add" aria-label="Добавить задачу"></button>
-        </div>
       </div>
       <div class="day-page" data-day="calendar">
         <div class="week-carousel" id="week-carousel">
@@ -494,13 +482,6 @@
     </p>
     <div id="inbox-body" style="display: none;">
       <div id="inbox-list" class="list"></div>
-    </div>
-    <div class="add-row">
-      <div class="input-with-icon">
-        <input id="new-inbox-input" type="text" placeholder="Новая задача" />
-        <button id="inbox-date-btn" class="small-btn" aria-label="Задать дату (необязательно)"></button>
-      </div>
-      <button id="add-inbox-btn" class="icon-btn" aria-label="Добавить задачу"></button>
     </div>
   </div>
 
@@ -1482,6 +1463,83 @@
       return row;
     }
 
+    // Черновики строки добавления — переживают пересборку списка. render()
+    // перестраивает ВСЕ списки на любое действие в приложении (даже в
+    // другом месте), а не только тот, где что-то реально изменилось —
+    // без этого набранный текст стирался бы на середине печати от
+    // совершенно не связанного действия (например, досрочно пришёл ответ
+    // сети на отметку "готово" где-то в другом списке).
+    const addTaskDrafts = {};
+
+    // Строка добавления — теперь последняя строка самого списка (не
+    // отдельное поле под ним), без кружка статуса/ручки/шторки — только
+    // поле ввода (для Инбокса — ещё и необязательная дата) и кнопка
+    // подтверждения. Всегда остаётся последней и не участвует в
+    // перетаскивании (см. dragSiblings/tryReorder — ищут только
+    // .reorder-row, этот класс сюда не попадает).
+    function renderAddTaskRow(ctx) {
+      const draft = addTaskDrafts[ctx.listKey] || (addTaskDrafts[ctx.listKey] = { text: "", date: null });
+
+      const row = document.createElement("div");
+      row.className = "row add-task-row";
+
+      let input;
+      if (ctx.withDatePicker) {
+        const wrap = document.createElement("div");
+        wrap.className = "input-with-icon";
+        input = document.createElement("input");
+        input.type = "text";
+        input.placeholder = "Новая задача";
+        input.value = draft.text;
+        wrap.append(input);
+
+        const dateBtn = document.createElement("button");
+        dateBtn.className = "small-btn" + (draft.date ? " date-set" : "");
+        dateBtn.setAttribute("aria-label", "Задать дату (необязательно)");
+        dateBtn.innerHTML = calendarIcon();
+        const dateInput = document.createElement("input");
+        dateInput.type = "date";
+        dateInput.value = draft.date || "";
+        dateInput.onchange = () => {
+          draft.date = dateInput.value || null;
+          dateBtn.classList.toggle("date-set", !!draft.date);
+        };
+        dateBtn.onclick = () => (dateInput.showPicker ? dateInput.showPicker() : dateInput.click());
+        dateBtn.append(dateInput);
+        wrap.append(dateBtn);
+        row.append(wrap);
+      } else {
+        input = document.createElement("input");
+        input.type = "text";
+        input.placeholder = "Новая задача";
+        input.value = draft.text;
+        row.append(input);
+      }
+
+      input.addEventListener("input", () => {
+        draft.text = input.value;
+      });
+
+      const submitBtn = document.createElement("button");
+      submitBtn.className = "icon-btn add-task-submit";
+      submitBtn.setAttribute("aria-label", "Добавить задачу");
+      submitBtn.innerHTML = plusIcon();
+      const submit = () => {
+        const value = input.value.trim();
+        if (!value) return;
+        const dueDate = ctx.withDatePicker ? draft.date : ctx.dateFor();
+        addTaskDrafts[ctx.listKey] = { text: "", date: null };
+        createTaskFor(dueDate, value);
+      };
+      submitBtn.onclick = submit;
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") submit();
+      });
+      row.append(submitBtn);
+
+      return row;
+    }
+
     function renderList(container, tasks, ctx) {
       const reorderMode = isReorderActive(ctx.listKey);
       // Список в режиме переноса рисуется выше затемняющего фона (см.
@@ -1492,17 +1550,18 @@
       const sorted = sortByOrder(tasks);
       if (sorted.length === 0) {
         renderEmpty(container);
-        return;
+      } else {
+        sorted.forEach((t) => {
+          if (reorderMode) {
+            container.append(renderReorderRow(t, ctx));
+          } else if (ctx.style === "swipe") {
+            container.append(renderSwipeableTaskRow(t, ctx));
+          } else {
+            container.append(renderTaskRow(t, ctx));
+          }
+        });
       }
-      sorted.forEach((t) => {
-        if (reorderMode) {
-          container.append(renderReorderRow(t, ctx));
-        } else if (ctx.style === "swipe") {
-          container.append(renderSwipeableTaskRow(t, ctx));
-        } else {
-          container.append(renderTaskRow(t, ctx));
-        }
-      });
+      container.append(renderAddTaskRow(ctx));
     }
 
     // Долгое нажатие где угодно в поле списка (500мс без сдвига > 8px)
@@ -1521,7 +1580,7 @@
       }
       container.addEventListener("pointerdown", (e) => {
         if (isReorderActive(listKey)) return;
-        if (e.target.closest(".checkbox, .small-btn, .swipe-zone, .swipe-actions, input")) return;
+        if (e.target.closest(".checkbox, .small-btn, .icon-btn, .swipe-zone, .swipe-actions, input")) return;
         startX = e.clientX;
         startY = e.clientY;
         clear();
@@ -1538,8 +1597,18 @@
     }
 
     const _dayOpts = {
-      yesterday: { listKey: "yesterday", style: "swipe", showMoveToToday: true },
-      today: { listKey: "today", style: "swipe", showMoveToToday: false },
+      yesterday: {
+        listKey: "yesterday",
+        style: "swipe",
+        showMoveToToday: true,
+        dateFor: () => boardState.days.yesterday?.date,
+      },
+      today: {
+        listKey: "today",
+        style: "swipe",
+        showMoveToToday: false,
+        dateFor: () => boardState.days.today?.date,
+      },
     };
 
     const WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -1628,29 +1697,9 @@
         listKey,
         style: "swipe",
         showMoveToToday: false,
+        dateFor: () => selectedWeekDate,
       });
       el.append(listEl);
-
-      const addRow = document.createElement("div");
-      addRow.className = "add-row";
-      const input = document.createElement("input");
-      input.type = "text";
-      input.placeholder = "Новая задача";
-      const btn = document.createElement("button");
-      btn.className = "icon-btn";
-      btn.setAttribute("aria-label", "Добавить задачу");
-      btn.innerHTML = plusIcon();
-      btn.onclick = () => {
-        const value = input.value.trim();
-        if (!value) return;
-        input.value = "";
-        createTaskFor(selectedWeekDate, value);
-      };
-      input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") btn.click();
-      });
-      addRow.append(input, btn);
-      el.append(addRow);
     }
 
     function renderInboxHeader() {
@@ -1668,6 +1717,7 @@
         style: "plain",
         showDateButton: true,
         showTrashButton: true,
+        withDatePicker: true,
       });
       renderInboxHeader();
       renderWeekCarousel();
@@ -1892,60 +1942,6 @@
         render();
       }
     }
-
-    document.querySelectorAll(".day-page[data-day]").forEach((page) => {
-      const day = page.dataset.day;
-      const input = page.querySelector(".day-task-input");
-      const btn = page.querySelector(".day-task-add");
-      if (!input || !btn) return; // у страницы календаря своё динамическое поле ввода
-      btn.innerHTML = plusIcon();
-      btn.onclick = () => {
-        const value = input.value.trim();
-        if (!value) return;
-        input.value = "";
-        createTaskFor(boardState.days[day]?.date, value);
-      };
-      input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") btn.click();
-      });
-    });
-
-    // Необязательная дата прямо в строке создания — значок календаря внутри
-    // поля. Если дату выбрали, задача создаётся сразу с ней и в инбокс,
-    // естественно, не попадёт (build_task_board берёт туда только задачи
-    // без даты или просроченные).
-    let inboxPendingDate = null;
-    const inboxDateBtn = document.getElementById("inbox-date-btn");
-    const inboxDateInput = document.createElement("input");
-    inboxDateBtn.innerHTML = calendarIcon();
-    inboxDateInput.type = "date";
-    inboxDateInput.onchange = () => {
-      inboxPendingDate = inboxDateInput.value || null;
-      inboxDateBtn.classList.toggle("date-set", !!inboxPendingDate);
-    };
-    inboxDateBtn.onclick = () =>
-      inboxDateInput.showPicker ? inboxDateInput.showPicker() : inboxDateInput.click();
-    inboxDateBtn.append(inboxDateInput);
-
-    function resetInboxDateIcon() {
-      inboxPendingDate = null;
-      inboxDateInput.value = "";
-      inboxDateBtn.classList.remove("date-set");
-    }
-
-    document.getElementById("add-inbox-btn").innerHTML = plusIcon();
-    document.getElementById("add-inbox-btn").onclick = () => {
-      const input = document.getElementById("new-inbox-input");
-      const value = input.value.trim();
-      if (!value) return;
-      input.value = "";
-      const dueDate = inboxPendingDate;
-      resetInboxDateIcon();
-      createTaskFor(dueDate, value);
-    };
-    document.getElementById("new-inbox-input").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") document.getElementById("add-inbox-btn").click();
-    });
 
     // Инбокс свёрнут по умолчанию — только заголовок со счётчиком, тап
     // разворачивает список и поле добавления.
