@@ -4,19 +4,23 @@ Telegram-first персональный ассистент: голос/текс�
 дневник) + набор автоматизаций жизни (подписки, привычки, финансы, экранное
 время). Один пользователь (я), деплой на своём VPS.
 
-**Полная спецификация и roadmap: `docs/PLAN.md`.** Прочитай его перед началом
-любой фазы, которая ещё не отмечена как сделанная. Работаем строго по фазам,
-одна фаза = один цикл plan → implement → review → commit.
+**Полная спецификация: `SPEC.md`** (функциональные/нефункциональные
+требования, архитектура как есть) **и `PLAN.md`** (roadmap, история решений
+по фазам). Прочитай оба перед началом любой фазы, которая ещё не отмечена
+как сделанная — `SPEC.md` за текущим состоянием, `PLAN.md` за тем, почему
+оно такое. Работаем строго по фазам, одна фаза = один цикл
+plan → implement → review → commit.
 
 ## Стек
 
 - Python 3.12, полностью async
 - aiogram 3 + aiogram-dialog — Telegram-бот и многошаговые диалоги
-- FastAPI — Notion webhooks, Tasker webhook, backend для Mini App
+- FastAPI — Tasker webhook, backend + статика для Mini App
 - APScheduler — утренние/вечерние/еженедельные триггеры
 - Postgres (SQLAlchemy 2.0 async, Alembic) — источник правды для задач и
   привычек (Phase 10), плюс остальное состояние приложения
-- Redis + arq — состояние диалогов, очередь фоновых задач
+- Redis — состояние диалогов (aiogram FSM storage), переживает рестарт
+  контейнера
 - Claude API: Haiku 4.5 — роутинг и простые сценарии, Sonnet 5 — сложные
 - Groq API — Whisper STT (free tier), за адаптером/интерфейсом
 - Notion API — только заметки и дневник (задачи и привычки — в Postgres,
@@ -27,13 +31,14 @@ Telegram-first персональный ассистент: голос/текс�
 
 ```
 src/
-  adapters/       # telegram_bot, tasker_webhook, miniapp_api
+  adapters/       # telegram_bot, tasker_webhook, api (Mini App + Tasker)
   core/           # orchestrator, llm_router, config
-  handlers/       # один модуль на сценарий (F1..F12 из PLAN.md)
+  handlers/       # один модуль на сценарий (F1..F14 из PLAN.md)
   integrations/   # notion.py, stt.py, claude_client.py, web_search.py
   scheduler/      # cron-джобы
   models/         # SQLAlchemy модели
-docs/PLAN.md
+SPEC.md
+PLAN.md
 docker-compose.yml
 .env.example
 ```
@@ -42,7 +47,7 @@ docker-compose.yml
 
 - Всё async, никаких блокирующих вызовов в event loop
 - Полные type hints, pydantic для моделей данных и конфига
-- Один хендлер = один сценарий (F1..F12), не смешивать логику разных
+- Один хендлер = один сценарий (F1..F14), не смешивать логику разных
   сценариев в одном модуле
 - STT и LLM-клиент — всегда за интерфейсом, чтобы провайдера можно было
   сменить одной строкой конфига
