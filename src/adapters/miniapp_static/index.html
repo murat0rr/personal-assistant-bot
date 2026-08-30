@@ -1118,6 +1118,21 @@
       transition: background-color 0.15s ease, opacity 0.15s ease;
     }
     .bottom-sheet-handle.armed { background: var(--accent); opacity: 1; }
+    /* БАГ (Phase 36): значок шаблонов доступен прямо из строки добавления
+       задачи (renderAddTaskRow), а та рисуется в renderList БЕЗУСЛОВНО —
+       даже когда список уже в режиме переноса (см. renderList: "container
+       .append(renderAddTaskRow(ctx))" вне if/else по reorderMode). Тап по
+       значку внутри активного режима переноса открывает #templates-sheet
+       поверх уже приподнятого (z-index 26, см. .reorder-active-list)
+       списка — та же величина z-index решается по порядку в DOM, а
+       applyReorderElevation переносит приподнятый список В КОНЕЦ <body>
+       (после templates-sheet, который как раз объявлен в разметке раньше)
+       — значит при равенстве z-index список внешне побеждает,
+       #templates-sheet прячется у него под низом. z-index 27 — тот же
+       приём, что уже применён к #date-picker-sheet чуть ниже (тоже нужно
+       гарантированно всплыть выше соседнего элемента с z-index 26,
+       независимо от порядка в DOM). */
+    #templates-sheet { z-index: 27; }
     /* Окно создания/правки проекта/цели (Phase 33) — плавающая карточка
        по центру экрана вместо шторки, выезжающей снизу: концепцию
        обсуждали и утвердили отдельно через интерактивный прототип
