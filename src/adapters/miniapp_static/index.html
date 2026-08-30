@@ -568,16 +568,7 @@
       border-radius: 50%;
       flex-shrink: 0;
     }
-    .entity-create-row { display: flex; gap: 10px; align-items: center; }
-    .entity-create-btn {
-      flex: 1;
-      border: none;
-      border-radius: 10px;
-      background: var(--card-bg);
-      color: var(--text);
-      font-size: 14px;
-      padding: 11px 0;
-    }
+    .entity-create-row { display: flex; gap: 10px; align-items: center; justify-content: flex-end; }
 
     /* Месячный календарь (Phase 26/27) — свайп зона (nav + сетка,
        .month-cal-swipe-zone) переключает месяцы (см. attachMonthSwipe в
@@ -671,8 +662,35 @@
       font-size: 14px;
       margin-bottom: 10px;
     }
-    .entity-form-dates { display: flex; gap: 8px; }
-    .entity-form-dates input { flex: 1; min-width: 0; }
+    .entity-form-dates { display: flex; gap: 8px; margin-bottom: 10px; }
+    /* Кнопки дат в форме создания/правки (Phase 28) — открывают
+       всплывающий календарь (#date-picker-sheet) вместо нативного
+       input[type=date], чтобы выглядело в стиле приложения. */
+    .entity-date-btn {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 13px;
+      padding: 9px 11px;
+      text-align: left;
+    }
+    .entity-date-btn svg { flex-shrink: 0; }
+    .entity-date-btn.date-set { color: var(--text); }
+    /* Плитка со статусом "не заполнено" (Phase 28) — создаём/сохраняем
+       сразу, даже с пустыми необязательными полями, но подсвечиваем это
+       тонкой красной чертой снизу, чтобы было видно, что стоит
+       дозаполнить. inset box-shadow, не border — не меняет высоту
+       строки. Цвет — исключение, туда не заглядываем: при отсутствии
+       выбора он назначается случайно при создании, никогда не "пустой". */
+    .swipe-wrap.entity-incomplete .swipe-content {
+      box-shadow: inset 0 -2px 0 var(--neutral-red);
+    }
     .entity-form-toggle-row {
       display: flex;
       align-items: center;
@@ -914,6 +932,34 @@
       transition: background-color 0.15s ease, opacity 0.15s ease;
     }
     .bottom-sheet-handle.armed { background: var(--accent); opacity: 1; }
+    /* Всплывающий календарь (Phase 28) — компактная карточка по центру
+       экрана поверх формы создания/правки (не ещё один .bottom-sheet той
+       же высоты — они бы перекрывали друг друга один в один). Тот же
+       .reorder-scrim снизу — тап мимо карточки закрывает именно
+       календарь, форма под ним остаётся открытой. */
+    #date-picker-sheet {
+      display: none;
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 27;
+      width: min(320px, 88vw);
+      background: var(--card-bg);
+      border-radius: 16px;
+      padding: 14px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+    }
+    #date-picker-sheet.visible { display: block; }
+    #date-picker-clear {
+      width: 100%;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 13px;
+      padding: 9px 0 2px;
+    }
     .bottom-sheet > .section-label { flex-shrink: 0; padding: 0 16px 8px; margin: 0; }
     /* Список — единственное, что реально скроллится; ручка и заголовок
        остаются на месте, чтобы жест "докрутил до края — потянул дальше"
@@ -1111,8 +1157,6 @@
 
   <div class="section">
     <div class="entity-create-row">
-      <button class="entity-create-btn" id="btn-create-project">+ Проект</button>
-      <button class="entity-create-btn" id="btn-create-goal">+ Цель</button>
       <button class="small-btn" id="btn-open-settings" aria-label="Настройки">⚙</button>
     </div>
   </div>
@@ -1165,6 +1209,16 @@
     <div class="bottom-sheet-handle"></div>
     <p class="section-label" id="create-entity-title">Новый проект</p>
     <div id="create-entity-form" class="list"></div>
+  </div>
+
+  <div id="date-picker-sheet">
+    <div class="month-cal-nav">
+      <button class="small-btn" id="date-picker-prev" aria-label="Предыдущий месяц">‹</button>
+      <span id="date-picker-title"></span>
+      <button class="small-btn" id="date-picker-next" aria-label="Следующий месяц">›</button>
+    </div>
+    <div class="month-cal-grid" id="date-picker-grid"></div>
+    <button type="button" id="date-picker-clear">Не указывать</button>
   </div>
 
   <div id="settings-sheet" class="bottom-sheet">
@@ -1314,10 +1368,26 @@
     // фронтенде (см. GOAL_TIERS/renderGoalsPages).
     let goalsData = [];
 
-    // Форма создания проекта/цели — один sheet, содержимое зависит от
-    // createEntityKind ("project" | "goal" | null).
+    // Форма создания/правки проекта/цели (Phase 28) — один sheet и на
+    // создание, и на правку. createEntityKind ("project" | "goal" | null)
+    // — что редактируем; createEntityEditingId — null при создании новой
+    // сущности, иначе id той, что правим (тап по "+" — id всегда null).
     let createEntityKind = null;
     let createEntityDraft = {};
+    let createEntityEditingId = null;
+
+    // Черновики строки добавления в списках проектов/целей (Phase 28) —
+    // тот же паттерн, что addTaskDrafts у задач: переживают перерисовку
+    // списка, ключ — "project" или "goal-<tier>".
+    let addEntityDrafts = {};
+
+    // Всплывающий календарь (Phase 28) — общий для дат проекта и опорной
+    // даты периода цели, один sheet, вызывающая форма передаёт колбэк.
+    let datePickerOpen = false;
+    let datePickerYear = 0;
+    let datePickerMonth = 0;
+    let datePickerSelectedIso = null;
+    let datePickerOnPick = null;
 
     let settingsSheetOpen = false;
 
@@ -2427,6 +2497,62 @@
       return `${p.done_count}/${p.task_count}`;
     }
 
+    // "Не дозаполнено" (Phase 28) — только у проектов: у них реально
+    // много необязательных полей (описание/сфера/даты). У целей сфера
+    // обязательна уже на создании (см. commitEntityForm), остальное либо
+    // не редактируется отдельно, либо всегда имеет разумное значение по
+    // умолчанию — подсвечивать там нечего. Цвет проекта — сознательно не
+    // в списке: при отсутствии выбора он назначается случайно, не
+    // остаётся "пустым" полем.
+    function isEntityIncomplete(entity, kind) {
+      if (kind !== "project") return false;
+      return !entity.description || !entity.sphere || !entity.start_date || !entity.end_date;
+    }
+
+    // Долгое нажатие по строке проекта/цели — открывает форму правки,
+    // предзаполненную текущими значениями (Phase 28). Тот же паттерн
+    // "таймер + отмена по сдвигу/отпусканию", что и у остальных
+    // long-press жестов приложения (см. attachReorderEntry) — слушатели
+    // движения/отпускания на document, не на самом элементе.
+    function attachEntityLongPress(el, entity, kind) {
+      const HOLD_MS = 450;
+      const MOVE_THRESHOLD = 8;
+      let timer = null;
+      let startX = 0;
+      let startY = 0;
+      let pointerId = null;
+
+      function clear() {
+        clearTimeout(timer);
+        timer = null;
+      }
+
+      el.addEventListener("pointerdown", (e) => {
+        if (e.target.closest(".checkbox, .swipe-zone, .swipe-handle")) return;
+        startX = e.clientX;
+        startY = e.clientY;
+        pointerId = e.pointerId;
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          timer = null;
+          tg?.HapticFeedback?.impactOccurred("medium");
+          openEditEntitySheet(entity, kind);
+        }, HOLD_MS);
+      });
+      document.addEventListener("pointermove", (e) => {
+        if (!timer || e.pointerId !== pointerId) return;
+        if (Math.abs(e.clientX - startX) > MOVE_THRESHOLD || Math.abs(e.clientY - startY) > MOVE_THRESHOLD) {
+          clear();
+        }
+      });
+      document.addEventListener("pointerup", (e) => {
+        if (e.pointerId === pointerId) clear();
+      });
+      document.addEventListener("pointercancel", (e) => {
+        if (e.pointerId === pointerId) clear();
+      });
+    }
+
     // Общая строка проекта/цели в стиле задачи: кружок статуса слева,
     // заголовок, краткие данные справа, свайп открывает 1-2 действия
     // (архивировать, для проекта ещё и цвет). taskId в setupSwipeDrag
@@ -2434,7 +2560,7 @@
     // путаться в общем openSwipeTaskId (см. комментарий у переменной).
     function renderEntityRow(entity, kind) {
       const wrap = document.createElement("div");
-      wrap.className = "swipe-wrap";
+      wrap.className = "swipe-wrap" + (isEntityIncomplete(entity, kind) ? " entity-incomplete" : "");
 
       const actions = document.createElement("div");
       actions.className = "swipe-actions";
@@ -2495,29 +2621,74 @@
 
       wrap.append(actions, content);
       const swipeHandle = setupSwipeDrag(zone, actions, (kind === "project" ? "project-" : "goal-") + entity.id);
+      attachEntityLongPress(content, entity, kind);
       return wrap;
     }
 
-    function renderEntityList(containerId, items, kind) {
+    // Строка добавления внизу списка проектов/целей (Phase 28) — тот же
+    // визуальный паттерн, что renderAddTaskRow у задач: поле + "+".
+    // В отличие от задач, тап по "+" не создаёт сущность мгновенно —
+    // открывает форму (openCreateEntitySheet), предзаполненную введённым
+    // текстом, чтобы можно было сразу дозаполнить остальные поля.
+    // draftKey — "project" или "goal-<tier>" (у каждого тира свой
+    // черновик, как у addTaskDrafts). tierForGoal — какой тир
+    // предвыбрать в форме, если добавляем цель со страницы конкретного
+    // тира.
+    function renderAddEntityRow(kind, draftKey, tierForGoal) {
+      const draft = addEntityDrafts[draftKey] || (addEntityDrafts[draftKey] = { title: "" });
+
+      const row = document.createElement("div");
+      row.className = "row add-task-row";
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = kind === "project" ? "Новый проект" : "Новая цель";
+      input.value = draft.title;
+      input.addEventListener("input", () => (draft.title = input.value));
+      row.append(input);
+
+      const submitBtn = document.createElement("button");
+      submitBtn.className = "icon-btn add-task-submit";
+      submitBtn.setAttribute("aria-label", kind === "project" ? "Создать проект" : "Создать цель");
+      submitBtn.innerHTML = plusIcon();
+
+      const submit = () => {
+        const value = input.value.trim();
+        addEntityDrafts[draftKey] = { title: "" };
+        openCreateEntitySheet(kind, value);
+        if (kind === "goal" && tierForGoal) createEntityDraft.tier = tierForGoal;
+        render();
+      };
+      submitBtn.onclick = submit;
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") submit();
+      });
+      row.append(submitBtn);
+
+      return row;
+    }
+
+    function renderEntityList(containerId, items, kind, draftKey, tierForGoal) {
       const container = document.getElementById(containerId);
       container.innerHTML = "";
       if (items.length === 0) {
         renderEmpty(container);
-        return;
+      } else {
+        for (const item of items) container.append(renderEntityRow(item, kind));
       }
-      for (const item of items) container.append(renderEntityRow(item, kind));
+      container.append(renderAddEntityRow(kind, draftKey, tierForGoal));
     }
 
     const GOAL_TIERS = ["weekly", "monthly", "yearly"];
 
     function renderProjectsPage() {
-      renderEntityList("pg-projects", projectsData, "project");
+      renderEntityList("pg-projects", projectsData, "project", "project");
     }
 
     function renderGoalsPages() {
       for (const tier of GOAL_TIERS) {
         const items = goalsData.filter((g) => g.tier === tier);
-        renderEntityList("pg-goals-" + tier, items, "goal");
+        renderEntityList("pg-goals-" + tier, items, "goal", "goal-" + tier, tier);
       }
     }
 
@@ -3190,11 +3361,13 @@
       renderProjectPickerList();
       renderColorPickerList();
       renderCreateEntityForm();
+      renderDatePickerGrid();
       const anySheetOpen =
         templatesPickerOpen ||
         projectPickerOpen ||
         colorPickerProject !== null ||
         createEntityKind !== null ||
+        datePickerOpen ||
         settingsSheetOpen;
       document
         .getElementById("reorder-scrim")
@@ -3209,6 +3382,7 @@
       document
         .getElementById("create-entity-sheet")
         .classList.toggle("visible", createEntityKind !== null);
+      document.getElementById("date-picker-sheet").classList.toggle("visible", datePickerOpen);
       document.getElementById("settings-sheet").classList.toggle("visible", settingsSheetOpen);
     }
 
@@ -3593,6 +3767,31 @@
       }
     }
 
+    // Правка (Phase 28) — в отличие от createProject, не дописывает
+    // локальный кэш вручную, а перечитывает список целиком: у edit-
+    // эндпоинта поле со значением null означает "не трогать", а не
+    // "очистить" (см. core/projects.py::update_project) — ручное
+    // слияние на фронтенде рисковало разойтись с тем, что реально
+    // сохранилось в БД. Ничего из уже привязанных задач эта операция не
+    // трогает — эндпоинт правит только сам проект.
+    async function editProject(id, draft) {
+      try {
+        await api(`/miniapp/api/projects/${id}/edit`, {
+          method: "POST",
+          body: JSON.stringify({
+            title: draft.title.trim(),
+            description: draft.description ? draft.description.trim() : null,
+            sphere: draft.sphere || null,
+            start_date: draft.start || null,
+            end_date: draft.end || null,
+          }),
+        });
+        await loadProjects();
+      } catch (e) {
+        alert("Не удалось сохранить проект.");
+      }
+    }
+
     async function createGoal(draft) {
       try {
         const result = await api("/miniapp/api/goals", {
@@ -3602,6 +3801,7 @@
             tier: draft.tier,
             text: draft.title.trim(),
             analyze: !!draft.analyze,
+            reference_date: draft.referenceDate || null,
           }),
         });
         goalsData.push(result);
@@ -3612,8 +3812,30 @@
       }
     }
 
-    // ---- Форма создания проекта/цели (Phase 26) — один sheet на обе
-    // сущности, содержимое зависит от createEntityKind.
+    // Правка цели (Phase 28) — та же логика, что editProject: период
+    // пересчитывается сервером из тира+опорной даты, локально не трогаем
+    // ничего вручную, просто перечитываем список. Задачи, уже привязанные
+    // по sphere, эта операция не трогает.
+    async function editGoal(id, draft) {
+      try {
+        await api(`/miniapp/api/goals/${id}/edit`, {
+          method: "POST",
+          body: JSON.stringify({
+            text: draft.title.trim(),
+            sphere: draft.sphere || null,
+            tier: draft.tier,
+            reference_date: draft.referenceDate || null,
+          }),
+        });
+        await loadGoals();
+      } catch (e) {
+        alert("Не удалось сохранить цель.");
+      }
+    }
+
+    // ---- Форма создания/правки проекта/цели (Phase 26/28) — один sheet
+    // на обе сущности и на оба режима, содержимое зависит от
+    // createEntityKind/createEntityEditingId.
 
     const GOAL_TIER_LABELS = {
       weekly: "неделя",
@@ -3621,18 +3843,85 @@
       yearly: "год",
     };
 
-    function openCreateEntitySheet(kind) {
+    function emptyEntityDraft(kind, prefillTitle) {
+      return kind === "project"
+        ? { title: prefillTitle || "", description: "", sphere: "", start: "", end: "", color: "", analyze: false }
+        : { title: prefillTitle || "", sphere: "", tier: "weekly", analyze: false, referenceDate: "" };
+    }
+
+    function openCreateEntitySheet(kind, prefillTitle) {
       createEntityKind = kind;
-      createEntityDraft =
-        kind === "project"
-          ? { title: "", description: "", sphere: "", start: "", end: "", color: "", analyze: false }
-          : { title: "", sphere: "", tier: "weekly", analyze: false };
+      createEntityEditingId = null;
+      createEntityDraft = emptyEntityDraft(kind, prefillTitle);
       render();
     }
 
-    function closeCreateEntitySheet() {
-      createEntityKind = null;
+    // Долгое нажатие по строке (см. attachEntityLongPress) — та же форма,
+    // предзаполненная текущими значениями сущности.
+    function openEditEntitySheet(entity, kind) {
+      createEntityKind = kind;
+      createEntityEditingId = entity.id;
+      createEntityDraft =
+        kind === "project"
+          ? {
+              title: entity.title || "",
+              description: entity.description || "",
+              sphere: entity.sphere || "",
+              start: entity.start_date || "",
+              end: entity.end_date || "",
+              color: entity.color || "",
+              analyze: false,
+            }
+          : {
+              title: entity.text || "",
+              sphere: entity.sphere || "",
+              tier: entity.tier || "weekly",
+              analyze: false,
+              referenceDate: entity.period_start || "",
+            };
       render();
+    }
+
+    // Единая точка сохранения (Phase 28) — вызывается и явной кнопкой
+    // "Готово", и закрытием шторки свайпом/тапом по фону (см.
+    // closeCreateEntitySheet): что бы ни закрыло форму, попытка
+    // сохранить одна и та же. Без названия/формулировки, либо без сферы
+    // у цели (единственное по-настоящему обязательное после названия) —
+    // просто ничего не создаём/не сохраняем, без алертов, форма и так
+    // уже закрывается. Цвет проекта — единственное исключение из
+    // "недозаполнено": при отсутствии выбора назначается случайно, а не
+    // подсвечивается плиткой (см. isEntityIncomplete).
+    function commitEntityForm() {
+      const kind = createEntityKind;
+      if (!kind) return;
+      const draft = createEntityDraft;
+      const isProject = kind === "project";
+      const titleText = (draft.title || "").trim();
+      if (!titleText) return;
+      if (!isProject && !draft.sphere) return;
+
+      if (isProject) {
+        if (!draft.color) {
+          draft.color = PROJECT_COLORS[Math.floor(Math.random() * PROJECT_COLORS.length)];
+        }
+        if (createEntityEditingId != null) editProject(createEntityEditingId, draft);
+        else createProject(draft);
+      } else if (createEntityEditingId != null) {
+        editGoal(createEntityEditingId, draft);
+      } else {
+        createGoal(draft);
+      }
+    }
+
+    function closeCreateEntitySheet() {
+      commitEntityForm();
+      createEntityKind = null;
+      createEntityEditingId = null;
+      render();
+    }
+
+    function formatDateBtnLabel(iso, placeholder) {
+      return iso ? formatShortDate(iso) : placeholder;
     }
 
     function renderCreateEntityForm() {
@@ -3642,7 +3931,14 @@
       if (!createEntityKind) return;
 
       const isProject = createEntityKind === "project";
-      titleEl.textContent = isProject ? "Новый проект" : "Новая цель";
+      const isEditing = createEntityEditingId != null;
+      titleEl.textContent = isProject
+        ? isEditing
+          ? "Изменить проект"
+          : "Новый проект"
+        : isEditing
+          ? "Изменить цель"
+          : "Новая цель";
 
       const titleInput = document.createElement("input");
       titleInput.className = "entity-form-field";
@@ -3689,16 +3985,25 @@
       if (isProject) {
         const datesWrap = document.createElement("div");
         datesWrap.className = "entity-form-dates";
-        datesWrap.style.margin = "10px 0";
-        const startInput = document.createElement("input");
-        startInput.type = "date";
-        startInput.value = createEntityDraft.start;
-        startInput.addEventListener("change", () => (createEntityDraft.start = startInput.value));
-        const endInput = document.createElement("input");
-        endInput.type = "date";
-        endInput.value = createEntityDraft.end;
-        endInput.addEventListener("change", () => (createEntityDraft.end = endInput.value));
-        datesWrap.append(startInput, endInput);
+        const startBtn = document.createElement("button");
+        startBtn.type = "button";
+        startBtn.className = "entity-date-btn" + (createEntityDraft.start ? " date-set" : "");
+        startBtn.innerHTML = calendarIcon() + `<span>${formatDateBtnLabel(createEntityDraft.start, "Начало")}</span>`;
+        startBtn.onclick = () =>
+          openDatePicker(createEntityDraft.start, (iso) => {
+            createEntityDraft.start = iso || "";
+            render();
+          });
+        const endBtn = document.createElement("button");
+        endBtn.type = "button";
+        endBtn.className = "entity-date-btn" + (createEntityDraft.end ? " date-set" : "");
+        endBtn.innerHTML = calendarIcon() + `<span>${formatDateBtnLabel(createEntityDraft.end, "Конец")}</span>`;
+        endBtn.onclick = () =>
+          openDatePicker(createEntityDraft.end, (iso) => {
+            createEntityDraft.end = iso || "";
+            render();
+          });
+        datesWrap.append(startBtn, endBtn);
         container.append(datesWrap);
 
         const colorGrid = document.createElement("div");
@@ -3715,6 +4020,25 @@
           colorGrid.append(sw);
         }
         container.append(colorGrid);
+      } else {
+        // Опорная дата периода (Phase 28) — по ней сервер считает
+        // week_bounds/month_bounds/year_bounds; не выбрана — период
+        // считается от сегодня, как раньше (см. core/goals.py::
+        // create_goal_now/update_goal).
+        const dateRow = document.createElement("div");
+        dateRow.className = "entity-form-dates";
+        const refBtn = document.createElement("button");
+        refBtn.type = "button";
+        refBtn.className = "entity-date-btn" + (createEntityDraft.referenceDate ? " date-set" : "");
+        refBtn.innerHTML =
+          calendarIcon() + `<span>${formatDateBtnLabel(createEntityDraft.referenceDate, "Период: сегодня")}</span>`;
+        refBtn.onclick = () =>
+          openDatePicker(createEntityDraft.referenceDate, (iso) => {
+            createEntityDraft.referenceDate = iso || "";
+            render();
+          });
+        dateRow.append(refBtn);
+        container.append(dateRow);
       }
 
       const toggleRow = document.createElement("div");
@@ -3735,19 +4059,85 @@
       const submitBtn = document.createElement("button");
       submitBtn.type = "button";
       submitBtn.className = "entity-form-submit";
-      submitBtn.textContent = "Создать";
-      submitBtn.onclick = () => {
-        const draft = createEntityDraft;
-        if (!draft.title.trim()) return;
-        if (!isProject && !draft.sphere) {
-          alert("У цели обязательно должна быть сфера.");
-          return;
-        }
-        closeCreateEntitySheet();
-        if (isProject) createProject(draft);
-        else createGoal(draft);
-      };
+      submitBtn.textContent = "Готово";
+      // closeCreateEntitySheet сама сохраняет (см. commitEntityForm) —
+      // кнопка ничем не отличается от свайпа/тапа по фону, просто ещё
+      // один явный способ закрыть.
+      submitBtn.onclick = () => closeCreateEntitySheet();
       container.append(submitBtn);
+    }
+
+    // ---- Всплывающий календарь (Phase 28) — общий для дат проекта и
+    // опорной даты периода цели. Небольшая карточка поверх формы (см.
+    // CSS #date-picker-sheet), не ещё один bottom-sheet той же высоты.
+    function openDatePicker(initialIso, onPick) {
+      const base = initialIso ? new Date(initialIso + "T00:00:00") : new Date();
+      datePickerYear = base.getFullYear();
+      datePickerMonth = base.getMonth() + 1;
+      datePickerSelectedIso = initialIso || null;
+      datePickerOnPick = onPick;
+      datePickerOpen = true;
+      render();
+    }
+
+    function closeDatePickerSheet() {
+      datePickerOpen = false;
+      datePickerOnPick = null;
+      render();
+    }
+
+    function renderDatePickerGrid() {
+      const grid = document.getElementById("date-picker-grid");
+      const titleEl = document.getElementById("date-picker-title");
+      if (!datePickerOpen) {
+        grid.innerHTML = "";
+        return;
+      }
+      titleEl.textContent = `${MONTH_NAMES_FULL[datePickerMonth - 1]} ${datePickerYear}`;
+      grid.innerHTML = "";
+
+      const firstOfMonth = new Date(Date.UTC(datePickerYear, datePickerMonth - 1, 1));
+      const firstWeekday = (firstOfMonth.getUTCDay() + 6) % 7;
+      const thisMonthDays = daysInMonth(datePickerYear, datePickerMonth);
+      const todayIso = boardState.days.today ? boardState.days.today.date : null;
+
+      const prevMonth = datePickerMonth === 1 ? 12 : datePickerMonth - 1;
+      const prevYear = datePickerMonth === 1 ? datePickerYear - 1 : datePickerYear;
+      const prevMonthDays = daysInMonth(prevYear, prevMonth);
+      const nextMonth = datePickerMonth === 12 ? 1 : datePickerMonth + 1;
+      const nextYear = datePickerMonth === 12 ? datePickerYear + 1 : datePickerYear;
+      const totalCells = Math.ceil((firstWeekday + thisMonthDays) / 7) * 7;
+      const trailingCount = totalCells - firstWeekday - thisMonthDays;
+
+      const cells = [];
+      for (let i = 0; i < firstWeekday; i++) {
+        cells.push({ d: prevMonthDays - firstWeekday + 1 + i, year: prevYear, month: prevMonth, other: true });
+      }
+      for (let d = 1; d <= thisMonthDays; d++) {
+        cells.push({ d, year: datePickerYear, month: datePickerMonth, other: false });
+      }
+      for (let i = 0; i < trailingCount; i++) {
+        cells.push({ d: i + 1, year: nextYear, month: nextMonth, other: true });
+      }
+
+      cells.forEach((cell) => {
+        const btn = document.createElement("button");
+        btn.className = "month-cal-day";
+        if (cell.other) btn.classList.add("other-month");
+        const iso = `${cell.year}-${pad2(cell.month)}-${pad2(cell.d)}`;
+        if (iso === todayIso) btn.classList.add("today");
+        if (iso === datePickerSelectedIso) btn.classList.add("selected");
+        const num = document.createElement("span");
+        num.className = "month-cal-num";
+        num.textContent = String(cell.d);
+        btn.append(num);
+        btn.onclick = () => {
+          const cb = datePickerOnPick;
+          closeDatePickerSheet();
+          if (cb) cb(iso);
+        };
+        grid.append(btn);
+      });
     }
 
     // Привязка задачи к проекту — из picker'а (5-я кнопка свайп-шторки).
@@ -4018,8 +4408,6 @@
     syncSettingsThemeButtons();
 
     document.getElementById("btn-open-settings").onclick = () => openSettingsSheet();
-    document.getElementById("btn-create-project").onclick = () => openCreateEntitySheet("project");
-    document.getElementById("btn-create-goal").onclick = () => openCreateEntitySheet("goal");
 
     // ---- Месячный календарь (Phase 26) — только текущий месяц, только
     // события (не вся загрузка дня — для этого есть график в аналитике).
@@ -4231,6 +4619,28 @@
     }
     attachMonthSwipe();
 
+    document.getElementById("date-picker-prev").onclick = () => {
+      datePickerMonth -= 1;
+      if (datePickerMonth < 1) {
+        datePickerMonth = 12;
+        datePickerYear -= 1;
+      }
+      renderDatePickerGrid();
+    };
+    document.getElementById("date-picker-next").onclick = () => {
+      datePickerMonth += 1;
+      if (datePickerMonth > 12) {
+        datePickerMonth = 1;
+        datePickerYear += 1;
+      }
+      renderDatePickerGrid();
+    };
+    document.getElementById("date-picker-clear").onclick = () => {
+      const cb = datePickerOnPick;
+      closeDatePickerSheet();
+      if (cb) cb(null);
+    };
+
     async function showDayInfo(iso) {
       const el = document.getElementById("month-cal-day-info");
       if (!iso) {
@@ -4341,6 +4751,11 @@
         closeProjectPicker();
       } else if (colorPickerProject !== null) {
         closeColorPicker();
+      } else if (datePickerOpen) {
+        // Проверяем раньше createEntityKind — календарь открыт поверх
+        // формы (см. z-index #date-picker-sheet), тап мимо карточки
+        // должен закрыть именно его, форма под ним остаётся открытой.
+        closeDatePickerSheet();
       } else if (createEntityKind !== null) {
         closeCreateEntitySheet();
       } else if (settingsSheetOpen) {

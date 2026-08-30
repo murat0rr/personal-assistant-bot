@@ -294,8 +294,8 @@ window.fetch = async (path, options = {}) => {
     };
     _goals.push(g);
     result = _serializeGoal(g);
-  } else if (path.match(/\\/goals\\/(\\d+)\\/(done|archive|text|analyze)/)) {
-    const m = path.match(/\\/goals\\/(\\d+)\\/(done|archive|text|analyze)/);
+  } else if (path.match(/\\/goals\\/(\\d+)\\/(done|archive|text|edit|analyze)/)) {
+    const m = path.match(/\\/goals\\/(\\d+)\\/(done|archive|text|edit|analyze)/);
     const id = Number(m[1]);
     const action = m[2];
     const g = _goals.find((x) => x.id === id);
@@ -303,7 +303,11 @@ window.fetch = async (path, options = {}) => {
     if (action === "done") g.done = body.done;
     else if (action === "archive") g.archived = true;
     else if (action === "text") g.text = body.text;
-    else if (action === "analyze") result = { linked: 0 };
+    else if (action === "edit") {
+      if (body.text != null) g.text = body.text;
+      if (body.sphere != null) g.sphere = body.sphere;
+      if (body.tier != null) g.tier = body.tier;
+    } else if (action === "analyze") result = { linked: 0 };
   } else if (path.match(/\\/calendar\\/month\\?month=(\\d{4})-(\\d{2})/)) {
     const m = path.match(/\\/calendar\\/month\\?month=(\\d{4})-(\\d{2})/);
     const year = Number(m[1]);

@@ -62,12 +62,49 @@ async def create_goal(
     return _serialize(goal)
 
 
-async def create_goal_now(sphere: str, tier: str, text: str, today: date) -> dict:
-    """Ручное создание цели из Mini App (Phase 26) — период считается тут
-    же, по сегодняшней дате и тиру."""
+async def create_goal_now(
+    sphere: str, tier: str, text: str, today: date, reference_date: date | None = None
+) -> dict:
+    """Ручное создание цели из Mini App (Phase 26) — период считается по
+    тиру и опорной дате. `reference_date` (Phase 28) — выбрана
+    пользователем во всплывающем календаре ("цель на неделю через
+    неделю", "любой месяц"); по умолчанию (не выбрана) — сегодняшняя
+    дата, прежнее поведение."""
     bounds = GOAL_TIER_BOUNDS.get(tier)
-    period_start, period_end = bounds(today) if bounds else (None, None)
+    period_start, period_end = bounds(reference_date or today) if bounds else (None, None)
     return await create_goal(sphere, tier, period_start, period_end, text)
+
+
+async def update_goal(
+    goal_id: int,
+    today: date,
+    text: str | None = None,
+    sphere: str | None = None,
+    tier: str | None = None,
+    reference_date: date | None = None,
+) -> None:
+    """Правка полей цели из карточки Mini App (Phase 28) — как
+    update_project, все аргументы опциональны, передаётся только то, что
+    реально поменялось. Период — производная величина (тир + опорная
+    дата), не редактируется напрямую: пересчитывается заново, если
+    поменялся тир и/или опорная дата (иначе остаётся как был)."""
+    async with async_session() as session:
+        goal = await session.get(Goal, goal_id)
+        if goal is None:
+            raise ValueError("goal not found")
+        if text is not None:
+            goal.text = text
+        if sphere is not None:
+            goal.sphere = sphere
+        new_tier = tier or goal.tier
+        if tier is not None or reference_date is not None:
+            bounds = GOAL_TIER_BOUNDS.get(new_tier)
+            ref = reference_date or goal.period_start or today
+            period_start, period_end = bounds(ref) if bounds else (None, None)
+            goal.tier = new_tier
+            goal.period_start = period_start
+            goal.period_end = period_end
+        await session.commit()
 
 
 async def list_goals_for_period(

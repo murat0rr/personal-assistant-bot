@@ -147,10 +147,18 @@ class CreateGoalRequest(BaseModel):
     tier: str
     text: str
     analyze: bool = False
+    reference_date: str | None = None
 
 
 class SetGoalTextRequest(BaseModel):
     text: str
+
+
+class EditGoalRequest(BaseModel):
+    text: str | None = None
+    sphere: str | None = None
+    tier: str | None = None
+    reference_date: str | None = None
 
 
 @app.get("/miniapp/api/tasks")
@@ -558,7 +566,10 @@ async def create_goal_endpoint(
     payload: CreateGoalRequest, _: dict = Depends(get_authorized_user)
 ) -> dict:
     today = datetime.now(ZoneInfo(settings.timezone)).date()
-    goal = await goals_repo.create_goal_now(payload.sphere, payload.tier, payload.text, today)
+    reference_date = date.fromisoformat(payload.reference_date) if payload.reference_date else None
+    goal = await goals_repo.create_goal_now(
+        payload.sphere, payload.tier, payload.text, today, reference_date
+    )
     if payload.analyze:
         candidates = await _unlinked_candidate_tasks("sphere")
         matched_ids = await find_tasks_for_entity(goal["text"], None, candidates)
@@ -599,6 +610,26 @@ async def set_goal_text_endpoint(
 ) -> dict[str, str]:
     try:
         await goals_repo.set_goal_text(goal_id, payload.text)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="goal not found") from exc
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/goals/{goal_id}/edit")
+async def edit_goal_endpoint(
+    goal_id: int, payload: EditGoalRequest, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    reference_date = date.fromisoformat(payload.reference_date) if payload.reference_date else None
+    try:
+        await goals_repo.update_goal(
+            goal_id,
+            today,
+            text=payload.text,
+            sphere=payload.sphere,
+            tier=payload.tier,
+            reference_date=reference_date,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="goal not found") from exc
     return {"status": "ok"}
