@@ -16,6 +16,7 @@
       --accent-text: var(--tg-theme-button-text-color, #ffffff);
       --pending-bg: rgba(36, 129, 204, 0.1);
       --neutral-red: #c15c52;
+      --neutral-blue: #6b8fb5;
       --mood-good: #6fae6a;
       --mood-mid: #c9a24a;
       --mood-low: #c15c52;
@@ -35,6 +36,7 @@
       --accent-text: #0b1620;
       --pending-bg: rgba(94, 171, 245, 0.14);
       --neutral-red: #d97a70;
+      --neutral-blue: #86a9cc;
       --mood-good: #7dc47a;
       --mood-mid: #d9b463;
       --mood-low: #d97a70;
@@ -49,6 +51,7 @@
       --accent-text: #ffffff;
       --pending-bg: rgba(36, 129, 204, 0.1);
       --neutral-red: #c15c52;
+      --neutral-blue: #6b8fb5;
       --mood-good: #6fae6a;
       --mood-mid: #c9a24a;
       --mood-low: #c15c52;
@@ -483,6 +486,7 @@
       border-radius: 12px;
       padding: 14px;
       min-height: 220px;
+      overflow: hidden;
     }
     .chart-title {
       font-size: 13px;
@@ -546,6 +550,31 @@
       border-radius: 4px;
       background: color-mix(in srgb, var(--accent) 55%, white 45%);
     }
+    /* Шкала месяцев + линия "сегодня" (item 10, Phase 29) — иначе
+       непонятно, на какой календарный период приходятся полоски. */
+    .gantt-axis {
+      position: relative;
+      height: 14px;
+      margin-bottom: 6px;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+    .gantt-axis-tick {
+      position: absolute;
+      top: 0;
+      transform: translateX(-2px);
+      border-left: 1px solid var(--hairline);
+      padding-left: 3px;
+      white-space: nowrap;
+    }
+    .gantt-body { position: relative; }
+    .gantt-today-line {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 1.5px;
+      background: var(--neutral-blue);
+    }
     .ai-summary-text {
       font-size: 14px;
       line-height: 1.5;
@@ -570,12 +599,15 @@
     }
     .entity-create-row { display: flex; gap: 10px; align-items: center; justify-content: flex-end; }
 
-    /* Месячный календарь (Phase 26/27) — свайп зона (nav + сетка,
-       .month-cal-swipe-zone) переключает месяцы (см. attachMonthSwipe в
-       JS), touch-action: pan-y — не мешаем вертикальному скроллу экрана
-       на явно вертикальных жестах, свайп по месяцам сам решает по оси
-       движения, не по touch-action. */
-    .month-cal-swipe-zone { touch-action: pan-y; }
+    /* Месячный календарь (Phase 26/27/29) — три панели (пред./тек./
+       след. месяц) в .month-cal-track, палец двигает track напрямую
+       через transform (1:1, без damping — в отличие от перехода
+       экранов), после отпускания доезжает одним CSS-transition до
+       целевого месяца, потом мгновенно (без transition) возвращается в
+       центр с обновлёнными данными — тот же приём "бесшовной
+       бесконечной прокрутки", что у недельной карусели
+       (recenterWeekCarousel), просто без "peek" по краям (полная
+       ширина панели, не 88%). */
     .month-cal-nav {
       display: flex;
       align-items: center;
@@ -585,6 +617,9 @@
       font-size: 14px;
       color: var(--text);
     }
+    .month-cal-carousel { overflow: hidden; }
+    .month-cal-track { display: flex; touch-action: pan-y; }
+    .month-cal-panel { flex: 0 0 100%; min-width: 0; }
     .month-cal-grid {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
@@ -603,7 +638,8 @@
       justify-content: center;
       gap: 1px;
       position: relative;
-      padding: 0;
+      padding: 2px 1px;
+      overflow: hidden;
     }
     /* Первая строка чуть выше остальных — вмещает подпись дня недели
        сверху (как .wc-label у недельного календаря), отдельной строки-
@@ -617,16 +653,21 @@
     .month-cal-day.today { background: color-mix(in srgb, var(--accent) 18%, var(--card-bg)); }
     .month-cal-day.selected { border-color: var(--accent); }
     .month-cal-day.other-month { opacity: 0.35; }
-    /* Первое число месяца — нейтрально-красная обводка, чтобы отличать
-       границу месяца среди "чужих" дней вокруг (см. .other-month) —
-       обводка, не заливка, чтобы не читаться как предупреждение. */
-    .month-cal-day.first-of-month { border-color: var(--neutral-red); }
-    .month-cal-day.selected.first-of-month { border-color: var(--accent); }
-    .month-cal-day.weekend .month-cal-num { color: var(--neutral-red); }
+    .month-cal-day.weekend .month-cal-num { color: var(--neutral-blue); }
     .month-cal-day.selected .month-cal-num { color: inherit; }
-    .month-cal-num { font-size: 12px; }
-    .month-cal-event-dot { color: var(--accent); display: flex; }
-    .month-cal-event-dot svg { width: 10px; height: 10px; }
+    .month-cal-num { font-size: 12px; line-height: 1; }
+    /* Текст события прямо в плитке (item 3, Phase 29) — вместо просто
+       иконки: title задачи-события, обрезанный в одну строку. */
+    .month-cal-event-text {
+      font-size: 7px;
+      line-height: 1.15;
+      color: var(--accent);
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding: 0 1px;
+    }
     .month-cal-mood-dot {
       width: 5px;
       height: 5px;
@@ -896,6 +937,62 @@
       box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
     }
 
+    /* Глобальное меню (Phase 30) — гамбургер справа сверху, вне
+       #screen-stack (та же логика, что и у .reorder-scrim/.bottom-sheet —
+       position:fixed СНАРУЖИ #screen-stack не попадает в его stacking
+       context, см. applyReorderElevation), виден одинаково на обоих
+       экранах. */
+    #hamburger-btn {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 29;
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 10px;
+      background: var(--card-bg);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+    }
+    /* Раскрывашка — не на всю высоту экрана: ширина ~2/3, высота по
+       содержимому (заканчивается сразу после последней кнопки внутри),
+       но не меньше 1/4 высоты экрана — с одним пунктом (тема) это и
+       будет её видимая высота, остальное место займут будущие пункты. */
+    #side-drawer {
+      display: none;
+      position: fixed;
+      top: 56px;
+      right: 12px;
+      width: 66vw;
+      min-height: 25vh;
+      max-height: calc(100vh - 68px);
+      z-index: 28;
+      background: var(--card-bg);
+      border-radius: 16px;
+      padding: 14px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+      overflow-y: auto;
+    }
+    #side-drawer.visible { display: block; }
+    /* Уже, чем шторка настроек (66vw против полной ширины) — строке с
+       переключателем темы тесно в один ряд (подпись + 3 кнопки),
+       складываем в две строки. Фон переключателя тоже инвертирован
+       относительно шторки настроек: там сама шторка на --bg, кнопки на
+       --card-bg; здесь раскрывашка на --card-bg, поэтому кнопки на
+       --bg — иначе слились бы с фоном раскрывашки. */
+    #side-drawer .settings-row { flex-direction: column; align-items: flex-start; gap: 8px; }
+    #side-drawer .settings-theme-toggle {
+      width: 100%;
+      justify-content: space-between;
+      background: var(--bg);
+      gap: 2px;
+    }
+    #side-drawer .settings-theme-toggle button { padding: 6px 7px; font-size: 12px; }
+
     /* Постоянный bottom sheet (Phase 18) — общий каркас для любого
        "выбери из списка" сценария (шаблоны, выбор проекта у задачи и
        т.д.), живёт всё время (как .reorder-scrim), видимость только
@@ -971,10 +1068,8 @@
       overscroll-behavior: contain;
       padding: 0 16px calc(16px + env(safe-area-inset-bottom, 0px));
     }
-    /* Подсветка "давно не пользовался" (>= stale_after_days, см.
-       core/task_templates.py::_is_stale) — тёплый едва заметный тинт, не
-       агрессивная плашка/бейдж, как и было заявлено в требованиях. */
-    .template-row.stale,
+    /* Подсветка выбранного проекта в пикере (у шаблонных задач такую же
+       подсветку "давно не пользовался" убрали в Phase 29). */
     .template-row.picker-selected {
       background: color-mix(in srgb, var(--accent) 6%, transparent);
     }
@@ -1130,12 +1225,14 @@
   <div class="section">
     <p class="section-label" id="analytics-label">Аналитика</p>
     <div class="analytics-carousel" id="analytics-carousel">
+      <div class="analytics-page"><div id="analytics-ai-lead" class="chart-card" aria-hidden="true"></div></div>
       <div class="analytics-page"><div id="analytics-spheres" class="chart-card"></div></div>
       <div class="analytics-page"><div id="analytics-month" class="chart-card"></div></div>
       <div class="analytics-page"><div id="analytics-gantt" class="chart-card"></div></div>
       <div class="analytics-page"><div id="analytics-ai" class="chart-card"></div></div>
+      <div class="analytics-page"><div id="analytics-spheres-trail" class="chart-card" aria-hidden="true"></div></div>
     </div>
-    <div class="analytics-dots">
+    <div class="analytics-dots" id="analytics-dots">
       <span class="analytics-dot active" data-index="0"></span>
       <span class="analytics-dot" data-index="1"></span>
       <span class="analytics-dot" data-index="2"></span>
@@ -1144,13 +1241,17 @@
   </div>
 
   <div class="section" id="month-cal-section">
-    <div class="month-cal-swipe-zone" id="month-cal-swipe-zone">
-      <div class="month-cal-nav">
-        <button class="small-btn" id="month-cal-prev" aria-label="Предыдущий месяц">‹</button>
-        <span id="month-cal-title"></span>
-        <button class="small-btn" id="month-cal-next" aria-label="Следующий месяц">›</button>
+    <div class="month-cal-nav">
+      <button class="small-btn" id="month-cal-prev" aria-label="Предыдущий месяц">‹</button>
+      <span id="month-cal-title"></span>
+      <button class="small-btn" id="month-cal-next" aria-label="Следующий месяц">›</button>
+    </div>
+    <div class="month-cal-carousel" id="month-cal-carousel">
+      <div class="month-cal-track" id="month-cal-track">
+        <div class="month-cal-panel"><div class="month-cal-grid" data-slot="prev"></div></div>
+        <div class="month-cal-panel"><div class="month-cal-grid" data-slot="current"></div></div>
+        <div class="month-cal-panel"><div class="month-cal-grid" data-slot="next"></div></div>
       </div>
-      <div class="month-cal-grid" id="month-cal-grid"></div>
     </div>
     <div id="month-cal-day-info"></div>
   </div>
@@ -1186,6 +1287,22 @@
 </div>
 
   <div id="reorder-scrim" class="reorder-scrim"></div>
+
+  <!-- Глобальное меню (Phase 30) — гамбургер справа сверху, вне
+       #screen-stack, виден на обоих экранах одинаково. -->
+  <button type="button" id="hamburger-btn" aria-label="Меню">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
+  <div id="side-drawer">
+    <div class="settings-row">
+      <span>Тема</span>
+      <div class="settings-theme-toggle theme-toggle-group" id="drawer-theme-toggle">
+        <button data-theme="">Системная</button>
+        <button data-theme="light">Светлая</button>
+        <button data-theme="dark">Тёмная</button>
+      </div>
+    </div>
+  </div>
 
   <div id="templates-sheet" class="bottom-sheet">
     <div class="bottom-sheet-handle"></div>
@@ -1227,7 +1344,7 @@
     <div class="list">
       <div class="settings-row">
         <span>Тема</span>
-        <div class="settings-theme-toggle" id="settings-theme-toggle">
+        <div class="settings-theme-toggle theme-toggle-group" id="settings-theme-toggle">
           <button data-theme="">Системная</button>
           <button data-theme="light">Светлая</button>
           <button data-theme="dark">Тёмная</button>
@@ -1390,6 +1507,7 @@
     let datePickerOnPick = null;
 
     let settingsSheetOpen = false;
+    let sideDrawerOpen = false;
 
     // Та же палитра, что уже показывали на макете-прототипе — 20 цветов,
     // без внешних библиотек.
@@ -2380,8 +2498,7 @@
     function renderTemplateRow(template) {
       const isPending = pendingTemplateIds.has(template.id);
       const row = document.createElement("div");
-      row.className =
-        "row template-row" + (template.is_stale ? " stale" : "") + (isPending ? " pending" : "");
+      row.className = "row template-row" + (isPending ? " pending" : "");
 
       const title = document.createElement("span");
       title.className = "title title-full";
@@ -2926,12 +3043,50 @@
       return row;
     }
 
+    // Список в режиме переноса должен рисоваться выше затемняющего фона
+    // .reorder-scrim (см. .reorder-active-list в CSS) — но yesterday-list/
+    // today-list/inbox-list живут внутри #screen-stack, а он
+    // position:fixed, что per спецификации CSS безусловно создаёт
+    // собственный stacking context (независимо от z-index/transform) —
+    // никакой z-index внутри #screen-stack не способен подняться выше
+    // .reorder-scrim, который сам position:fixed и находится СНАРУЖИ
+    // #screen-stack: список навсегда заперт в контексте предка (БАГ,
+    // тихо сломался с появлением #screen-stack в Phase 25, всплыл только
+    // сейчас). Единственный настоящий выход — физически вынести DOM-узел
+    // списка за пределы #screen-stack на время режима переноса,
+    // оставив вместо него comment-маркер, чтобы вернуть на место при
+    // выходе. templates-list эта проблема не касается — он живёт в
+    // #templates-sheet, который сам уже верхнеуровневый position:fixed
+    // сосед .reorder-scrim, а не потомок #screen-stack.
+    function applyReorderElevation(container, active) {
+      if (active && !container._reorderPlaceholder) {
+        const rect = container.getBoundingClientRect();
+        const placeholder = document.createComment("reorder-anchor");
+        container.parentNode.insertBefore(placeholder, container);
+        container._reorderPlaceholder = placeholder;
+        document.body.appendChild(container);
+        container.style.position = "fixed";
+        container.style.left = rect.left + "px";
+        container.style.top = rect.top + "px";
+        container.style.width = rect.width + "px";
+      } else if (!active && container._reorderPlaceholder) {
+        container._reorderPlaceholder.parentNode.insertBefore(container, container._reorderPlaceholder);
+        container._reorderPlaceholder.remove();
+        container._reorderPlaceholder = null;
+        container.style.position = "";
+        container.style.left = "";
+        container.style.top = "";
+        container.style.width = "";
+      }
+    }
+
     function renderList(container, tasks, ctx) {
       const reorderMode = isReorderActive(ctx.listKey);
       // Список в режиме переноса рисуется выше затемняющего фона (см.
       // .reorder-active-list в CSS) — тем самым и выглядит "на переднем
       // плане", а всё остальное на странице просто перекрыто .reorder-scrim.
       container.classList.toggle("reorder-active-list", reorderMode);
+      applyReorderElevation(container, reorderMode);
       container.innerHTML = "";
       const sorted = sortByOrder(tasks);
       if (sorted.length === 0) {
@@ -3097,6 +3252,17 @@
         return window.innerHeight;
       }
 
+      // Экран, на который переключаемся, должен открываться сверху, а не
+      // с той прокруткой, что осталась с прошлого раза (иначе после
+      // скролла вниз на расширенном экране и возврата свайпом видно
+      // низ, а не верх — БАГ). .screen-content у каждого экрана
+      // скроллится независимо, сбрасываем перед показом.
+      function resetTargetScroll(willShowMain) {
+        const target = willShowMain ? mainScreen : document.getElementById("extended-screen");
+        const content = target.querySelector(".screen-content");
+        if (content) content.scrollTop = 0;
+      }
+
       function setupPill(pillEl) {
         let dragging = false;
         let startY = 0;
@@ -3155,6 +3321,7 @@
 
           if (raw > OPEN_THRESHOLD_PX) {
             const willShowMain = !showingMain;
+            resetTargetScroll(willShowMain);
             stack.style.transform = `translateY(${willShowMain ? -2 * vh() : -vh()}px)`;
             if (willShowMain) {
               // Доехали до временного третьего слота — мгновенно, без
@@ -3205,9 +3372,11 @@
       });
       function toggleScreen() {
         if (showingMain) {
+          resetTargetScroll(false);
           stack.style.transform = `translateY(-${vh()}px)`;
           showingMain = false;
         } else {
+          resetTargetScroll(true);
           mainScreen.style.top = vh() * 2 + "px";
           stack.style.transform = `translateY(-${2 * vh()}px)`;
           stack.addEventListener(
@@ -3368,7 +3537,8 @@
         colorPickerProject !== null ||
         createEntityKind !== null ||
         datePickerOpen ||
-        settingsSheetOpen;
+        settingsSheetOpen ||
+        sideDrawerOpen;
       document
         .getElementById("reorder-scrim")
         .classList.toggle("visible", reorderActiveKey !== null || anySheetOpen);
@@ -3384,6 +3554,7 @@
         .classList.toggle("visible", createEntityKind !== null);
       document.getElementById("date-picker-sheet").classList.toggle("visible", datePickerOpen);
       document.getElementById("settings-sheet").classList.toggle("visible", settingsSheetOpen);
+      document.getElementById("side-drawer").classList.toggle("visible", sideDrawerOpen);
     }
 
     function addDaysIso(iso, days) {
@@ -3666,7 +3837,7 @@
 
     async function createTemplate(title) {
       const tempId = "pending-" + Date.now();
-      const tempTemplate = { id: tempId, title, sort_order: Date.now(), is_stale: false };
+      const tempTemplate = { id: tempId, title, sort_order: Date.now() };
       pendingTemplateIds.add(tempId);
       templatesData.push(tempTemplate);
       render();
@@ -3677,7 +3848,6 @@
         });
         tempTemplate.id = result.id;
         tempTemplate.sort_order = result.sort_order;
-        tempTemplate.is_stale = result.is_stale;
       } catch (e) {
         templatesData = templatesData.filter((t) => t.id !== tempId);
         alert("Не удалось создать шаблон.");
@@ -3690,9 +3860,6 @@
     // Тап по шаблону в обычном режиме — мгновенно создаёт задачу с тем же
     // due_date, что и обычная строка добавления в списке, из которого
     // открыли sheet (см. openTemplatesPicker/templatesPickerDateFor).
-    // last_used_date на бэкенде обновляется на дату НОВОЙ задачи, не на
-    // сегодня — здесь просто гасим is_stale оптимистично, реальную дату
-    // подтянет следующая полная загрузка.
     async function useTemplate(template) {
       const dueDate = templatesPickerDateFor ? templatesPickerDateFor() : undefined;
       if (dueDate === undefined) return;
@@ -3710,8 +3877,6 @@
       };
       pendingIds.add(tempId);
       rebucketTask(tempTask);
-      const prevStale = template.is_stale;
-      template.is_stale = false;
       render();
       try {
         const result = await api(`/miniapp/api/templates/${encodeURIComponent(template.id)}/use`, {
@@ -3721,7 +3886,6 @@
         tempTask.id = result.id;
       } catch (e) {
         removeTaskEverywhere(tempId);
-        template.is_stale = prevStale;
         alert("Не удалось создать задачу из шаблона.");
       } finally {
         pendingIds.delete(tempId);
@@ -4196,16 +4360,31 @@
       const cy = size / 2;
       const circumference = 2 * Math.PI * r;
       let offset = 0;
+      // Внутри сегмента каждой сферы — выполненное сплошным цветом,
+      // невыполненное тем же цветом, но приглушённым stroke-opacity
+      // (item 8, Phase 29): видно с одного взгляда не только пропорцию
+      // сфер, но и сколько в каждой реально сделано.
       const arcs = data
         .map((s) => {
-          const frac = s.count / total;
-          const dash = frac * circumference;
-          const circle =
-            `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${sphereColor(s.sphere)}" ` +
-            `stroke-width="22" stroke-dasharray="${dash} ${circumference - dash}" ` +
-            `stroke-dashoffset="${-offset}" transform="rotate(-90 ${cx} ${cy})"/>`;
-          offset += dash;
-          return circle;
+          const color = sphereColor(s.sphere);
+          const totalDash = (s.count / total) * circumference;
+          const doneDash = s.count ? totalDash * (s.done / s.count) : 0;
+          const notDoneDash = totalDash - doneDash;
+          let segment = "";
+          if (doneDash > 0) {
+            segment +=
+              `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" ` +
+              `stroke-width="22" stroke-dasharray="${doneDash} ${circumference - doneDash}" ` +
+              `stroke-dashoffset="${-offset}" transform="rotate(-90 ${cx} ${cy})"/>`;
+          }
+          if (notDoneDash > 0) {
+            segment +=
+              `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-opacity="0.3" ` +
+              `stroke-width="22" stroke-dasharray="${notDoneDash} ${circumference - notDoneDash}" ` +
+              `stroke-dashoffset="${-(offset + doneDash)}" transform="rotate(-90 ${cx} ${cy})"/>`;
+          }
+          offset += totalDash;
+          return segment;
         })
         .join("");
 
@@ -4215,7 +4394,7 @@
           (s) =>
             `<div class="sphere-legend-row"><span class="sphere-swatch" style="background:${sphereColor(s.sphere)}"></span>` +
             `<span class="sphere-legend-label">${s.sphere}</span>` +
-            `<span class="sphere-legend-value">${Math.round((s.count / total) * 100)}% (${s.count})</span></div>`
+            `<span class="sphere-legend-value">${s.done}/${s.count} · ${Math.round((s.count / total) * 100)}%</span></div>`
         )
         .join("");
       el.innerHTML += svg + `<div class="sphere-legend">${legend}</div>`;
@@ -4231,18 +4410,58 @@
         return;
       }
 
+      // Оси (item 9, Phase 29) — раньше был голый график без единиц: не
+      // видно ни какое число дня под какой полоской, ни какой счёт
+      // соответствует высоте. Слева — счёт (0/середина/максимум),
+      // снизу — числа месяца через 5 (плюс 1-е и последнее), пунктиром —
+      // текущий день, если он в этом месяце.
       const w = 300;
-      const h = 100;
-      const barW = w / counts.length;
-      const bars = counts
-        .map((c, i) => {
-          const barH = (c / max) * (h - 4);
-          const x = i * barW;
-          const y = h - barH;
-          return `<rect x="${x + 0.5}" y="${y}" width="${Math.max(barW - 1, 1)}" height="${barH}" fill="var(--accent)" rx="1"/>`;
+      const h = 110;
+      const padLeft = 18;
+      const padBottom = 12;
+      const padTop = 4;
+      const plotW = w - padLeft - 2;
+      const plotH = h - padTop - padBottom;
+      const barW = plotW / counts.length;
+
+      const yTicks = Array.from(new Set([0, Math.round(max / 2), max]));
+      const yToPx = (v) => padTop + plotH - (v / max) * plotH;
+      const gridLines = yTicks
+        .map((v) => {
+          const y = yToPx(v);
+          return (
+            `<line x1="${padLeft}" y1="${y}" x2="${w - 2}" y2="${y}" stroke="var(--hairline)" stroke-width="1"/>` +
+            `<text x="${padLeft - 4}" y="${y + 3}" font-size="8" fill="var(--text-muted)" text-anchor="end">${v}</text>`
+          );
         })
         .join("");
-      const svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">${bars}</svg>`;
+
+      const bars = counts
+        .map((c, i) => {
+          const barH = (c / max) * plotH;
+          const x = padLeft + i * barW;
+          const y = padTop + plotH - barH;
+          return `<rect x="${x + 0.5}" y="${y}" width="${Math.max(barW - 1, 1)}" height="${Math.max(barH, c > 0 ? 1 : 0)}" fill="var(--accent)" rx="1"/>`;
+        })
+        .join("");
+
+      const todayIso = boardState.days.today ? boardState.days.today.date : null;
+      const todayDay = todayIso ? Number(todayIso.slice(8, 10)) : null;
+      const todayLine =
+        todayDay && todayDay <= counts.length
+          ? `<line x1="${padLeft + (todayDay - 0.5) * barW}" y1="${padTop}" x2="${padLeft + (todayDay - 0.5) * barW}" y2="${padTop + plotH}" stroke="var(--neutral-blue)" stroke-width="1.5" stroke-dasharray="2 2"/>`
+          : "";
+
+      const xLabels = counts
+        .map((c, i) => {
+          const dayNum = i + 1;
+          if (dayNum !== 1 && dayNum !== counts.length && dayNum % 5 !== 0) return "";
+          const x = padLeft + i * barW + barW / 2;
+          return `<text x="${x}" y="${h - 1}" font-size="8" fill="var(--text-muted)" text-anchor="middle">${dayNum}</text>`;
+        })
+        .join("");
+
+      const svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">${gridLines}${bars}${todayLine}${xLabels}</svg>`;
       el.innerHTML += svg;
 
       const projects = data.projects || [];
@@ -4274,6 +4493,31 @@
       const max = Math.max(...ends);
       const span = Math.max(max - min, 86400000);
 
+      // Шкала месяцев + линия "сегодня" (item 10, Phase 29) — без этого
+      // непонятно, на какой календарный период приходятся полоски: две
+      // одинаковые на вид полоски могли означать и "весь январь", и "весь
+      // год" — теперь видно явно.
+      const monthTicks = [];
+      const cursor = new Date(min);
+      cursor.setDate(1);
+      while (cursor.getTime() <= max) {
+        // Первый месяц может начинаться раньше самой ранней даты проекта
+        // (min попал на середину месяца) — не даём подписи уехать за
+        // пределы шкалы, иначе она визуально "утекает" на соседнюю
+        // страницу карусели (см. .gantt-axis-tick — position:absolute).
+        const pct = Math.max(0, Math.min(100, ((cursor.getTime() - min) / span) * 100));
+        monthTicks.push({ pct, label: MONTH_NAMES_FULL[cursor.getMonth()].slice(0, 3) });
+        cursor.setMonth(cursor.getMonth() + 1);
+      }
+      const axisHtml = monthTicks
+        .map((t) => `<span class="gantt-axis-tick" style="left:${t.pct}%">${t.label}</span>`)
+        .join("");
+
+      const now = Date.now();
+      const todayPct = ((now - min) / span) * 100;
+      const todayLineHtml =
+        todayPct >= 0 && todayPct <= 100 ? `<div class="gantt-today-line" style="left:${todayPct}%"></div>` : "";
+
       const rows = withDates
         .map((p) => {
           const left = ((new Date(p.start_date).getTime() - min) / span) * 100;
@@ -4286,7 +4530,7 @@
           return (
             '<div class="gantt-row">' +
             `<div class="gantt-row-label"><span class="gantt-row-title">${p.title}</span>` +
-            `<span class="gantt-row-meta">${p.done_count}/${p.task_count} · ${pct}%</span></div>` +
+            `<span class="gantt-row-meta">${formatShortDate(p.start_date)}–${formatShortDate(p.end_date)} · ${p.done_count}/${p.task_count} · ${pct}%</span></div>` +
             '<div class="gantt-track">' +
             `<div class="gantt-bar" style="left:${left}%;width:${width}%;"></div>` +
             `<div class="gantt-bar-progress" style="left:${left}%;width:${progressWidth}%;"></div>` +
@@ -4294,7 +4538,7 @@
           );
         })
         .join("");
-      el.innerHTML += rows;
+      el.innerHTML += `<div class="gantt-axis">${axisHtml}</div><div class="gantt-body">${todayLineHtml}${rows}</div>`;
     }
 
     function renderAiSummary(text) {
@@ -4333,26 +4577,57 @@
       } catch (e) {
         aiEl.innerHTML = '<div class="chart-empty">Не удалось загрузить.</div>';
       }
+
+      syncAnalyticsEdges();
     }
 
     // Карусель аналитики — тот же native scroll-snap + точки, что у
-    // .day-carousel (см. комментарий у .analytics-carousel в CSS).
+    // .day-carousel (см. комментарий у .analytics-carousel в CSS), но по
+    // кругу (item 12, Phase 29): с самой правой страницы свайп вправо
+    // переносит на самую левую и наоборот. Native scroll-snap сам по себе
+    // границы не заворачивает, поэтому по краям — по одной "теневой"
+    // странице-дублю (analytics-ai-lead/analytics-spheres-trail, HTML), в
+    // которые перед каждой полной перерисовкой аналитики копируется
+    // содержимое настоящих крайних страниц (см. syncAnalyticsEdges).
+    // Долистал(-ась) до дубля — мгновенно (без анимации) телепортируем
+    // scrollLeft на настоящую страницу с тем же содержимым: с той же
+    // "невидимый возврат в центр" философией, что у недельной/месячной
+    // карусели, только через scrollLeft, а не transform.
     const analyticsCarousel = document.getElementById("analytics-carousel");
-    const analyticsDots = Array.from(document.querySelectorAll(".analytics-dot"));
+    const analyticsDots = Array.from(document.querySelectorAll("#analytics-dots .analytics-dot"));
+    const ANALYTICS_REAL_COUNT = analyticsDots.length; // 4
     let _analyticsTracking = false;
+
+    function syncAnalyticsEdges() {
+      document.getElementById("analytics-ai-lead").innerHTML = document.getElementById("analytics-ai").innerHTML;
+      document.getElementById("analytics-spheres-trail").innerHTML =
+        document.getElementById("analytics-spheres").innerHTML;
+    }
+
+    analyticsCarousel.scrollLeft = analyticsCarousel.clientWidth * 1; // страница 1 = настоящая первая (spheres)
+
     analyticsCarousel.addEventListener("scroll", () => {
       if (_analyticsTracking) return;
       _analyticsTracking = true;
       requestAnimationFrame(() => {
-        const index = Math.round(analyticsCarousel.scrollLeft / analyticsCarousel.clientWidth);
-        analyticsDots.forEach((dot, i) => dot.classList.toggle("active", i === index));
         _analyticsTracking = false;
+        const w = analyticsCarousel.clientWidth;
+        const rawIndex = Math.round(analyticsCarousel.scrollLeft / w);
+        let dotIndex = rawIndex - 1;
+        if (rawIndex === 0) {
+          dotIndex = ANALYTICS_REAL_COUNT - 1;
+          analyticsCarousel.scrollLeft = w * ANALYTICS_REAL_COUNT;
+        } else if (rawIndex === ANALYTICS_REAL_COUNT + 1) {
+          dotIndex = 0;
+          analyticsCarousel.scrollLeft = w * 1;
+        }
+        analyticsDots.forEach((dot, i) => dot.classList.toggle("active", i === dotIndex));
       });
     });
     analyticsDots.forEach((dot) => {
       dot.addEventListener("click", () => {
         analyticsCarousel.scrollTo({
-          left: analyticsCarousel.clientWidth * Number(dot.dataset.index),
+          left: analyticsCarousel.clientWidth * (Number(dot.dataset.index) + 1),
           behavior: "smooth",
         });
       });
@@ -4393,19 +4668,40 @@
       settingsSheetOpen = false;
       render();
     }
+    // Переключатель темы теперь в двух местах — старой шторке настроек
+    // (#settings-sheet, гамбургер вместо неё пока не заменяет) и новом
+    // глобальном меню (#side-drawer, Phase 30) — общий класс
+    // .theme-toggle-group на обеих группах кнопок, синхронизируются
+    // вместе одной функцией, а не дублированием кода.
     function syncSettingsThemeButtons() {
       const current = getStoredTheme() || "";
-      document.querySelectorAll("#settings-theme-toggle button").forEach((btn) => {
+      document.querySelectorAll(".theme-toggle-group button").forEach((btn) => {
         btn.classList.toggle("active", btn.dataset.theme === current);
       });
     }
-    document.querySelectorAll("#settings-theme-toggle button").forEach((btn) => {
+    document.querySelectorAll(".theme-toggle-group button").forEach((btn) => {
       btn.addEventListener("click", () => {
         setTheme(btn.dataset.theme || null);
         syncSettingsThemeButtons();
       });
     });
     syncSettingsThemeButtons();
+
+    // ---- Глобальное меню (Phase 30) — гамбургер справа сверху, пока
+    // только переключатель темы внутри, остальные пункты — следующим
+    // инкрементом.
+    function openSideDrawer() {
+      sideDrawerOpen = true;
+      render();
+    }
+    function closeSideDrawer() {
+      sideDrawerOpen = false;
+      render();
+    }
+    document.getElementById("hamburger-btn").onclick = () => {
+      if (sideDrawerOpen) closeSideDrawer();
+      else openSideDrawer();
+    };
 
     document.getElementById("btn-open-settings").onclick = () => openSettingsSheet();
 
@@ -4419,10 +4715,13 @@
     const today0 = new Date();
     let calYear = today0.getFullYear();
     let calMonth = today0.getMonth() + 1; // 1-12
-    let calEvents = {};
-    let calMoods = {};
     let calSelectedDay = null;
-    let calSuppressClick = false; // свайп только что переключил месяц — гасим следующий click по плитке
+    // Кэш по месяцам ("YYYY-MM" -> events/moods) — карусель держит
+    // пред./тек./след. месяц отрендеренными одновременно (см. ниже), так
+    // что данные нужны на все три сразу; кэш экономит повторный сетевой
+    // запрос при свайпе туда-обратно по уже посещённым месяцам.
+    let calEventsByMonth = {};
+    let calMoodsByMonth = {};
 
     function pad2(n) {
       return String(n).padStart(2, "0");
@@ -4432,14 +4731,46 @@
       return new Date(Date.UTC(year, month, 0)).getUTCDate();
     }
 
-    async function loadMonthEvents() {
-      const monthKey = `${calYear}-${pad2(calMonth)}`;
+    function monthKey(year, month) {
+      return `${year}-${pad2(month)}`;
+    }
+
+    function adjMonth(year, month, delta) {
+      let m = month + delta;
+      let y = year;
+      if (m < 1) {
+        m = 12;
+        y -= 1;
+      } else if (m > 12) {
+        m = 1;
+        y += 1;
+      }
+      return { year: y, month: m };
+    }
+
+    async function ensureMonthData(year, month) {
+      const key = monthKey(year, month);
+      if (calEventsByMonth[key] && calMoodsByMonth[key]) return;
       const [events, moods] = await Promise.all([
-        api(`/miniapp/api/calendar/month?month=${monthKey}`).catch(() => ({})),
-        api(`/miniapp/api/calendar/month-moods?month=${monthKey}`).catch(() => ({})),
+        api(`/miniapp/api/calendar/month?month=${key}`).catch(() => ({})),
+        api(`/miniapp/api/calendar/month-moods?month=${key}`).catch(() => ({})),
       ]);
-      calEvents = events;
-      calMoods = moods;
+      calEventsByMonth[key] = events;
+      calMoodsByMonth[key] = moods;
+    }
+
+    // Подгружает текущий + соседние месяцы разом — карусель (см. ниже)
+    // держит все три панели отрендеренными постоянно, не только в
+    // момент активного свайпа, иначе при перетаскивании было бы видно
+    // пустые соседние панели вместо реального контента.
+    async function loadMonthEvents() {
+      const prev = adjMonth(calYear, calMonth, -1);
+      const next = adjMonth(calYear, calMonth, 1);
+      await Promise.all([
+        ensureMonthData(calYear, calMonth),
+        ensureMonthData(prev.year, prev.month),
+        ensureMonthData(next.year, next.month),
+      ]);
       renderMonthCalendar();
     }
 
@@ -4449,24 +4780,27 @@
       return "mood-low";
     }
 
-    function renderMonthCalendar() {
-      document.getElementById("month-cal-title").textContent = `${MONTH_NAMES_FULL[calMonth - 1]} ${calYear}`;
-      const grid = document.getElementById("month-cal-grid");
+    // Рисует сетку одного месяца в конкретный контейнер — вызывается три
+    // раза на каждый renderMonthCalendar() (пред./тек./след. панель
+    // карусели), поэтому ничего не берёт из глобального calYear/calMonth
+    // напрямую, только из переданных year/month.
+    function renderMonthGridInto(grid, year, month) {
       grid.innerHTML = "";
+      const key = monthKey(year, month);
+      const events = calEventsByMonth[key] || {};
+      const moods = calMoodsByMonth[key] || {};
 
-      const firstOfMonth = new Date(Date.UTC(calYear, calMonth - 1, 1));
+      const firstOfMonth = new Date(Date.UTC(year, month - 1, 1));
       const firstWeekday = (firstOfMonth.getUTCDay() + 6) % 7; // Пн=0
-      const thisMonthDays = daysInMonth(calYear, calMonth);
+      const thisMonthDays = daysInMonth(year, month);
       const todayIso = boardState.days.today ? boardState.days.today.date : null;
 
       // Соседние месяцы — чтобы заполнить ведущие/хвостовые плитки
-      // реальными числами вместо пустых (item 3), с корректным переходом
-      // года на границе декабрь/январь.
-      const prevMonth = calMonth === 1 ? 12 : calMonth - 1;
-      const prevYear = calMonth === 1 ? calYear - 1 : calYear;
-      const prevMonthDays = daysInMonth(prevYear, prevMonth);
-      const nextMonth = calMonth === 12 ? 1 : calMonth + 1;
-      const nextYear = calMonth === 12 ? calYear + 1 : calYear;
+      // реальными числами вместо пустых (item 3, Phase 27), с корректным
+      // переходом года на границе декабрь/январь.
+      const prev = adjMonth(year, month, -1);
+      const prevMonthDays = daysInMonth(prev.year, prev.month);
+      const next = adjMonth(year, month, 1);
 
       // Ровно до конца последней недели месяца — без лишней 6-й строки,
       // когда месяц укладывается в 5 недель.
@@ -4475,13 +4809,13 @@
 
       const cells = [];
       for (let i = 0; i < firstWeekday; i++) {
-        cells.push({ d: prevMonthDays - firstWeekday + 1 + i, year: prevYear, month: prevMonth, other: true });
+        cells.push({ d: prevMonthDays - firstWeekday + 1 + i, year: prev.year, month: prev.month, other: true });
       }
       for (let d = 1; d <= thisMonthDays; d++) {
-        cells.push({ d, year: calYear, month: calMonth, other: false });
+        cells.push({ d, year, month, other: false });
       }
       for (let i = 0; i < trailingCount; i++) {
-        cells.push({ d: i + 1, year: nextYear, month: nextMonth, other: true });
+        cells.push({ d: i + 1, year: next.year, month: next.month, other: true });
       }
 
       cells.forEach((cell, index) => {
@@ -4493,7 +4827,6 @@
         if (cell.other) btn.classList.add("other-month");
 
         const iso = `${cell.year}-${pad2(cell.month)}-${pad2(cell.d)}`;
-        if (!cell.other && cell.d === 1) btn.classList.add("first-of-month");
         if (iso === todayIso) btn.classList.add("today");
         if (iso === calSelectedDay) btn.classList.add("selected");
 
@@ -4510,36 +4843,36 @@
         btn.append(num);
 
         // Плитка показывает максимум один индикатор: для сегодня/будущего
-        // с событием — иконка геометки; для прошлого с заполненной
-        // вечерней рефлексией — цветной кружок "как прошёл день"
-        // (по среднему баллу physical/social/productivity/happiness,
-        // вдохновлено привычным паттерном mood-календарей вроде Daylio —
-        // один цвет на плитку, без текста, читается с одного взгляда).
+        // с событием — сам текст события (item 3, Phase 29); для
+        // прошлого с заполненной вечерней рефлексией — цветной кружок
+        // "как прошёл день" (по среднему баллу physical/social/
+        // productivity/happiness, вдохновлено привычным паттерном mood-
+        // календарей вроде Daylio — один цвет на плитку, читается с
+        // одного взгляда).
         if (!cell.other) {
           const isPastDay = todayIso !== null && iso < todayIso;
-          if (!isPastDay && calEvents[iso]) {
-            const pin = document.createElement("span");
-            pin.className = "month-cal-event-dot";
-            pin.innerHTML = eventPinIcon();
-            btn.append(pin);
-          } else if (isPastDay && calMoods[iso] != null) {
+          const dayEvents = events[iso];
+          if (!isPastDay && dayEvents && dayEvents.length) {
+            const label = document.createElement("span");
+            label.className = "month-cal-event-text";
+            label.textContent =
+              dayEvents.length > 1 ? `${dayEvents[0]} +${dayEvents.length - 1}` : dayEvents[0];
+            btn.append(label);
+          } else if (isPastDay && moods[iso] != null) {
             const dot = document.createElement("span");
-            dot.className = "month-cal-mood-dot " + moodClass(calMoods[iso]);
+            dot.className = "month-cal-mood-dot " + moodClass(moods[iso]);
             btn.append(dot);
           }
         }
 
         btn.onclick = () => {
-          if (calSuppressClick) return;
-          if (cell.other) {
-            calYear = cell.year;
-            calMonth = cell.month;
-            calSelectedDay = iso;
-            loadMonthEvents();
-          } else {
-            calSelectedDay = calSelectedDay === iso ? null : iso;
-            renderMonthCalendar();
-          }
+          // item 5 (Phase 29) — тап по плитке только выбирает день и
+          // показывает информацию о нём, каким бы месяцем эта плитка ни
+          // была (в т.ч. "чужой" месяц с края сетки) — сам показанный
+          // месяц календаря тапом никогда не меняется, только свайпом/
+          // кнопками ‹ ›.
+          calSelectedDay = calSelectedDay === iso ? null : iso;
+          renderMonthCalendar();
           showDayInfo(calSelectedDay);
           if (calSelectedDay) {
             // item 1 — экран адаптируется так, чтобы надпись месяца была
@@ -4552,72 +4885,130 @@
       });
     }
 
-    function goToMonth(delta) {
-      calMonth += delta;
-      if (calMonth < 1) {
-        calMonth = 12;
-        calYear -= 1;
-      } else if (calMonth > 12) {
-        calMonth = 1;
-        calYear += 1;
-      }
+    function renderMonthCalendar() {
+      document.getElementById("month-cal-title").textContent = `${MONTH_NAMES_FULL[calMonth - 1]} ${calYear}`;
+      const prev = adjMonth(calYear, calMonth, -1);
+      const next = adjMonth(calYear, calMonth, 1);
+      renderMonthGridInto(monthPanelGrids[0], prev.year, prev.month);
+      renderMonthGridInto(monthPanelGrids[1], calYear, calMonth);
+      renderMonthGridInto(monthPanelGrids[2], next.year, next.month);
+    }
+
+    async function goToMonth(delta) {
+      const target = adjMonth(calYear, calMonth, delta);
+      calYear = target.year;
+      calMonth = target.month;
       calSelectedDay = null;
-      loadMonthEvents();
       document.getElementById("month-cal-day-info").classList.remove("visible");
+      await loadMonthEvents();
     }
 
     document.getElementById("month-cal-prev").onclick = () => goToMonth(-1);
     document.getElementById("month-cal-next").onclick = () => goToMonth(1);
 
-    // Свайп по месяцам (item 0) — активная зона: вся сетка + надпись
-    // месяца (#month-cal-swipe-zone оборачивает nav+grid). Порог — тот же
-    // "стандартный свайп" 40px, что и остальные пороговые жесты в
-    // приложении. Направление (гор./верт.) определяем по первому заметному
-    // сдвигу и не мешаем обычному вертикальному скроллу экрана.
-    function attachMonthSwipe() {
-      const zone = document.getElementById("month-cal-swipe-zone");
-      const THRESHOLD = 40;
-      let dragging = false;
-      let pointerId = null;
-      let startX = 0;
-      let startY = 0;
-      let horizontal = null;
+    // Карусель месяцев (item 4, Phase 29) — тот же приём "палец двигает
+    // трек 1:1, после отпускания один CSS-transition до целевой панели,
+    // потом мгновенный незаметный возврат в центр с обновлёнными
+    // данными", что уже отработан у недельной карусели
+    // (recenterWeekCarousel) — просто без "peek" по краям (панель на всю
+    // ширину, не 88%). Слушатели на document — та же дисциплина, что и у
+    // остальных жестов приложения (Telegram WebView не всегда продолжает
+    // доставлять pointermove именно в исходный target).
+    const monthCarousel = document.getElementById("month-cal-carousel");
+    const monthTrack = document.getElementById("month-cal-track");
+    const monthPanelGrids = Array.from(document.querySelectorAll("#month-cal-track .month-cal-grid"));
 
-      zone.addEventListener("pointerdown", (e) => {
-        dragging = true;
-        pointerId = e.pointerId;
-        startX = e.clientX;
-        startY = e.clientY;
-        horizontal = null;
-      });
-      document.addEventListener("pointermove", (e) => {
-        if (!dragging || e.pointerId !== pointerId) return;
-        if (horizontal === null) {
-          const dx = e.clientX - startX;
-          const dy = e.clientY - startY;
-          if (Math.abs(dx) > 6 || Math.abs(dy) > 6) horizontal = Math.abs(dx) > Math.abs(dy);
-        }
-      });
-      document.addEventListener("pointerup", (e) => {
-        if (!dragging || e.pointerId !== pointerId) return;
-        dragging = false;
-        if (horizontal) {
-          const dx = e.clientX - startX;
-          if (dx > THRESHOLD) {
-            calSuppressClick = true;
-            goToMonth(-1);
-          } else if (dx < -THRESHOLD) {
-            calSuppressClick = true;
-            goToMonth(1);
-          }
-          setTimeout(() => (calSuppressClick = false), 250);
-        }
-      });
-      document.addEventListener("pointercancel", (e) => {
-        if (e.pointerId === pointerId) dragging = false;
-      });
+    const MONTH_DRAG_THRESHOLD = 0.22;
+    const MONTH_FLING_VELOCITY = 0.5; // px/мс
+
+    function monthPanelWidth() {
+      return monthCarousel.clientWidth;
     }
-    attachMonthSwipe();
+    function monthRestX(index) {
+      return -index * monthPanelWidth();
+    }
+    function setMonthTrackTransform(x, withTransition) {
+      monthTrack.style.transition = withTransition ? "transform 240ms cubic-bezier(0.22, 1, 0.36, 1)" : "none";
+      monthTrack.style.transform = `translateX(${x}px)`;
+    }
+    function recenterMonthCarousel() {
+      setMonthTrackTransform(monthRestX(1), false);
+    }
+    recenterMonthCarousel();
+
+    let monthDrag = null;
+    let monthSettling = false;
+
+    monthTrack.addEventListener("pointerdown", (e) => {
+      if (monthSettling) return;
+      monthDrag = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        baseX: monthRestX(1),
+        horizontal: null,
+        lastX: e.clientX,
+        lastTime: e.timeStamp,
+        velocity: 0,
+      };
+    });
+    document.addEventListener("pointermove", (e) => {
+      if (!monthDrag || e.pointerId !== monthDrag.pointerId) return;
+      const dx = e.clientX - monthDrag.startX;
+      const dy = e.clientY - monthDrag.startY;
+      if (monthDrag.horizontal === null) {
+        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+        monthDrag.horizontal = Math.abs(dx) > Math.abs(dy);
+        if (!monthDrag.horizontal) {
+          monthDrag = null; // вертикальный жест — не мешаем обычному скроллу экрана
+          return;
+        }
+      }
+      const dt = e.timeStamp - monthDrag.lastTime;
+      if (dt > 0) monthDrag.velocity = (e.clientX - monthDrag.lastX) / dt;
+      monthDrag.lastX = e.clientX;
+      monthDrag.lastTime = e.timeStamp;
+      setMonthTrackTransform(monthDrag.baseX + dx, false);
+    });
+    function endMonthDrag(e) {
+      if (!monthDrag || e.pointerId !== monthDrag.pointerId) return;
+      const drag = monthDrag;
+      monthDrag = null;
+      if (drag.horizontal !== true) return; // тап или вертикальный жест — трек не двигали
+      const dx = e.clientX - drag.startX;
+      const pw = monthPanelWidth();
+      let targetIndex = 1;
+      if (Math.abs(drag.velocity) > MONTH_FLING_VELOCITY) {
+        targetIndex = drag.velocity < 0 ? 2 : 0;
+      } else if (Math.abs(dx) > pw * MONTH_DRAG_THRESHOLD) {
+        targetIndex = dx < 0 ? 2 : 0;
+      }
+      settleMonthCarousel(targetIndex);
+    }
+    document.addEventListener("pointerup", endMonthDrag);
+    document.addEventListener("pointercancel", endMonthDrag);
+
+    function settleMonthCarousel(targetIndex) {
+      monthSettling = true;
+      setMonthTrackTransform(monthRestX(targetIndex), true);
+      monthTrack.addEventListener(
+        "transitionend",
+        async () => {
+          if (targetIndex !== 1) {
+            const delta = targetIndex === 2 ? 1 : -1;
+            const target = adjMonth(calYear, calMonth, delta);
+            calYear = target.year;
+            calMonth = target.month;
+            calSelectedDay = null;
+            document.getElementById("month-cal-day-info").classList.remove("visible");
+            await loadMonthEvents();
+          }
+          recenterMonthCarousel();
+          monthSettling = false;
+        },
+        { once: true }
+      );
+    }
 
     document.getElementById("date-picker-prev").onclick = () => {
       datePickerMonth -= 1;
@@ -4760,6 +5151,8 @@
         closeCreateEntitySheet();
       } else if (settingsSheetOpen) {
         closeSettingsSheet();
+      } else if (sideDrawerOpen) {
+        closeSideDrawer();
       }
     });
 

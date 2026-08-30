@@ -657,7 +657,7 @@ async def analyze_goal_endpoint(goal_id: int, _: dict = Depends(get_authorized_u
 @app.get("/miniapp/api/calendar/month")
 async def calendar_month_endpoint(
     month: str, _: dict = Depends(get_authorized_user)
-) -> dict[str, bool]:
+) -> dict[str, list[str]]:
     year_str, month_str = month.split("-")
     return await calendar_view.month_events(int(year_str), int(month_str))
 

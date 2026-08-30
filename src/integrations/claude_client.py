@@ -635,13 +635,78 @@ async def suggest_tasks_for_today(
     return [i for i in TodaySuggestion.model_validate(tool_use.input).task_ids if i in valid_ids]
 
 
+_ANALYZE_PRODUCTIVITY_TOOL = {
+    "name": "summarize_productivity",
+    "description": (
+        "Дать лаконичную сводку по сферам жизни (один статус-слово на "
+        "сферу) и не больше одного предложения совета."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "enough_data": {
+                "type": "boolean",
+                "description": (
+                    "Достаточно ли данных для содержательной оценки хотя бы "
+                    "части сфер (например, в начале месяца задач ещё почти "
+                    "нет — тогда false)."
+                ),
+            },
+            "spheres": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "sphere": {"type": "string"},
+                        "status": {
+                            "type": "string",
+                            "enum": ["отлично", "хорошо", "слабо", "нет данных"],
+                        },
+                    },
+                    "required": ["sphere", "status"],
+                },
+                "description": (
+                    "По одному статусу на каждую сферу из списка ниже, в том же порядке."
+                ),
+            },
+            "advice": {
+                "type": ["string", "null"],
+                "description": (
+                    "Одно предложение: над чем стоит поработать, максимально "
+                    "конкретно, если есть за что зацепиться в данных (застрявший "
+                    "проект, давно забытая сфера и т.п.). null, если советовать "
+                    "нечего — всё ровно или данных не хватает."
+                ),
+            },
+        },
+        "required": ["enough_data", "spheres", "advice"],
+    },
+}
+
+
+class SphereStatus(BaseModel):
+    sphere: str
+    status: str
+
+
+class ProductivitySummary(BaseModel):
+    enough_data: bool
+    spheres: list[SphereStatus]
+    advice: str | None = None
+
+
 async def analyze_productivity(spheres: list[dict], month: dict, projects: list[dict]) -> str:
-    """Аналитика (Phase 24) — текстовые наблюдения по сферам/месяцу/
-    проектам: что хорошо, что плохо. Обычный текстовый ответ, без
-    forced tool-use — тут не нужна структура, только читаемый текст."""
+    """Аналитика (Phase 24, формат ужат в Phase 29) — лаконичная сводка:
+    одно статус-слово на сферу + максимум одно предложение совета,
+    вместо связного абзаца. Forced tool-use — нужен предсказуемый формат
+    вывода, не просто читаемый текст."""
     spheres_text = (
-        "\n".join(f"{s['sphere']}: {s['count']}" for s in spheres) or "(сферы не проставлены)"
+        "\n".join(
+            f"{s['sphere']}: {s['count']} задач, из них {s['done']} выполнено" for s in spheres
+        )
+        or "(сферы не проставлены)"
     )
+    sphere_names = [s["sphere"] for s in spheres]
     projects_text = (
         "\n".join(f"- {p['title']}: {p['done_count']}/{p['task_count']}" for p in projects)
         or "(активных проектов нет)"
@@ -649,27 +714,44 @@ async def analyze_productivity(spheres: list[dict], month: dict, projects: list[
     total_this_month = sum(month.get("all_counts", []))
     response = await client.messages.create(
         model=settings.claude_model_sonnet,
-        max_tokens=600,
+        max_tokens=400,
         system=(
-            "Проанализируй, как у пользователя распределены задачи по сферам "
-            "жизни, сколько сделано за месяц, и как продвигаются проекты. "
-            "Отметь 2-3 наблюдения: что идёт хорошо, что настораживает "
-            "(перекос в одну сферу, забытая сфера, застрявший проект и "
-            "т.п.). Коротко (4-6 предложений), по-русски, без воды и без "
-            "заголовков-списков — обычный связный текст."
+            "Оцени, как у пользователя обстоят дела по каждой сфере жизни "
+            "(отлично/хорошо/слабо/нет данных — по объёму и доле "
+            "выполненных задач), и застрявшим ли проектам. Если задач по "
+            "сфере почти или совсем нет — статус 'нет данных', это не "
+            "провал. Если данных мало по всем сферам сразу (например, "
+            "начало месяца) — enough_data=false, статусы всё равно верни, "
+            "но советовать в этом случае нечего (advice=null)."
         ),
+        tools=[_ANALYZE_PRODUCTIVITY_TOOL],
+        tool_choice={"type": "tool", "name": "summarize_productivity"},
         messages=[
             {
                 "role": "user",
                 "content": (
-                    f"Задачи по сферам:\n{spheres_text}\n\n"
+                    f"Сферы (порядок сохранить в ответе: {', '.join(sphere_names)}):\n"
+                    f"{spheres_text}\n\n"
                     f"Выполнено задач в этом месяце: {total_this_month}\n\n"
                     f"Проекты (выполнено/всего задач):\n{projects_text}"
                 ),
             }
         ],
     )
-    return "".join(block.text for block in response.content if block.type == "text")
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+    if tool_use is None:
+        return "Не удалось построить сводку."
+    summary = ProductivitySummary.model_validate(tool_use.input)
+
+    if not summary.enough_data and not summary.spheres:
+        return "Пока недостаточно данных для анализа."
+
+    lines = " ".join(f"{s.sphere.capitalize()} — {s.status}." for s in summary.spheres)
+    if not summary.enough_data:
+        return lines or "Пока недостаточно данных для анализа."
+    if summary.advice:
+        return f"{lines} {summary.advice}"
+    return lines
 
 
 _LINK_TASKS_TOOL = {

@@ -12,17 +12,25 @@ async def sphere_breakdown() -> list[dict]:
     """Процентное соотношение задач по сферам (Phase 24) — все
     неархивированные задачи со сферой, вне зависимости от статуса
     "готово": это снимок того, как распределены намерения по сферам
-    жизни прямо сейчас, а не только выполненное."""
+    жизни прямо сейчас, а не только выполненное. Плюс разбивка
+    выполнено/не выполнено внутри каждой сферы (Phase 29, item 8) — для
+    "расщеплённого" сегмента в тортике на фронтенде."""
     async with async_session() as session:
         result = await session.execute(
-            select(Task.sphere).where(Task.archived.is_(False), Task.sphere.is_not(None))
+            select(Task.sphere, Task.done).where(Task.archived.is_(False), Task.sphere.is_not(None))
         )
-        spheres = [row[0] for row in result.all()]
+        rows = result.all()
 
     counts: dict[str, int] = {}
-    for sphere in spheres:
+    done_counts: dict[str, int] = {}
+    for sphere, done in rows:
         counts[sphere] = counts.get(sphere, 0) + 1
-    return [{"sphere": sphere, "count": count} for sphere, count in sorted(counts.items())]
+        if done:
+            done_counts[sphere] = done_counts.get(sphere, 0) + 1
+    return [
+        {"sphere": sphere, "count": count, "done": done_counts.get(sphere, 0)}
+        for sphere, count in sorted(counts.items())
+    ]
 
 
 async def month_breakdown(today: date) -> dict:

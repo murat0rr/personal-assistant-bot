@@ -10,28 +10,24 @@ from src.models.task_template import TaskTemplate
 _DEFAULT_PRIORITY = "средний"
 
 
-def _is_stale(last_used: date | None, stale_after_days: int, today: date) -> bool:
-    """Шаблоном, которым ни разу не пользовались (last_used=None) — самый
-    явный случай "давно не делал", подсвечиваем сразу, не ждём порога."""
-    if last_used is None:
-        return True
-    return (today - last_used).days >= stale_after_days
-
-
-def _serialize(template: TaskTemplate, today: date) -> dict:
+def _serialize(template: TaskTemplate) -> dict:
     return {
         "id": template.id,
         "title": template.title,
         "sort_order": template.sort_order,
-        "is_stale": _is_stale(template.last_used_date, template.stale_after_days, today),
     }
 
 
 async def list_templates(today: date) -> list[dict]:
+    # today параметр оставлен для обратной совместимости сигнатуры (см.
+    # вызов в scheduler/jobs.py) — раньше использовался для is_stale
+    # (Phase 29: подсветку "давно не пользовался" убрали, сама пометка
+    # last_used_date у шаблона остаётся, просто больше не красит строку).
+    del today
     async with async_session() as session:
         result = await session.execute(select(TaskTemplate).where(TaskTemplate.archived.is_(False)))
         templates = result.scalars().all()
-    return sorted((_serialize(t, today) for t in templates), key=lambda t: t["sort_order"])
+    return sorted((_serialize(t) for t in templates), key=lambda t: t["sort_order"])
 
 
 async def create_template(title: str, source: str = "manual") -> dict:
@@ -40,7 +36,7 @@ async def create_template(title: str, source: str = "manual") -> dict:
         session.add(template)
         await session.commit()
         await session.refresh(template)
-    return _serialize(template, date.today())
+    return _serialize(template)
 
 
 async def create_ai_template(title: str) -> dict:

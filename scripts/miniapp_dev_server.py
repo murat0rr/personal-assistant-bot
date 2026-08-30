@@ -103,18 +103,11 @@ function _serializeGoal(g) {
   };
 }
 
-function _isStale(lastUsed, staleAfter, todayIso) {
-  if (!lastUsed) return true;
-  const days = (new Date(todayIso) - new Date(lastUsed)) / 86400000;
-  return days >= staleAfter;
-}
-
 function _serializeTemplate(t) {
   return {
     id: t.id,
     title: t.title,
     sort_order: t.sort_order,
-    is_stale: _isStale(t.last_used, t.stale_after, __TODAY_JSON__),
   };
 }
 
@@ -316,7 +309,9 @@ window.fetch = async (path, options = {}) => {
     for (const t of _tasks) {
       if (t.archived || t.priority !== "event" || !t.due) continue;
       const [ty, tm] = t.due.split("-").map(Number);
-      if (ty === year && tm === month) result[t.due] = true;
+      if (ty === year && tm === month) {
+        (result[t.due] = result[t.due] || []).push(t.title);
+      }
     }
   } else if (path.match(/\\/calendar\\/month-moods\\?month=(\\d{4})-(\\d{2})/)) {
     // Тот же паттерн "заполнено каждый третий день", что у /diary/{date}
@@ -347,12 +342,16 @@ window.fetch = async (path, options = {}) => {
         : null;
   } else if (path === "/miniapp/api/analytics/spheres") {
     const counts = {};
+    const doneCounts = {};
     for (const t of _tasks) {
-      if (!t.archived && t.sphere) counts[t.sphere] = (counts[t.sphere] || 0) + 1;
+      if (!t.archived && t.sphere) {
+        counts[t.sphere] = (counts[t.sphere] || 0) + 1;
+        if (t.done) doneCounts[t.sphere] = (doneCounts[t.sphere] || 0) + 1;
+      }
     }
     result = Object.keys(counts)
       .sort()
-      .map((sphere) => ({ sphere, count: counts[sphere] }));
+      .map((sphere) => ({ sphere, count: counts[sphere], done: doneCounts[sphere] || 0 }));
   } else if (path === "/miniapp/api/analytics/month") {
     const days = Array.from({ length: 30 }, (_, i) => String(i + 1).padStart(2, "0"));
     const all_counts = days.map((_, i) => (i % 4 === 0 ? 2 : i % 3 === 0 ? 1 : 0));
@@ -484,9 +483,9 @@ def _default_tasks(count: int) -> list[dict]:
 
 
 def _default_templates() -> list[dict]:
-    # Три показательных случая подсветки "давно не делал" (Phase 18,
-    # _is_stale): недавно использованный, явно устаревший, ни разу не
-    # использованный (last_used=None — тоже сразу stale).
+    # last_used/stale_after — не используются рендером (подсветку "давно
+    # не делал" убрали в Phase 29), оставлены как есть в мок-данных, не
+    # мешают.
     today = date.today()
     return [
         {
