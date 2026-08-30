@@ -352,15 +352,33 @@ window.fetch = async (path, options = {}) => {
     result = Object.keys(counts)
       .sort()
       .map((sphere) => ({ sphere, count: counts[sphere], done: doneCounts[sphere] || 0 }));
-  } else if (path === "/miniapp/api/analytics/month") {
-    const days = Array.from({ length: 30 }, (_, i) => String(i + 1).padStart(2, "0"));
+  } else if (path.match(/\\/analytics\\/month(\\?month=(\\d{4})-(\\d{2}))?/)) {
+    // Листаемый график (Phase 41) — без ?month= отдаёт "текущий месяц"
+    // (реального today), с ?month= — тот месяц, который спросили;
+    // реальных данных по прошлым/будущим месяцам в моке нет, отдаём тот
+    // же синтетический паттерн независимо от месяца — этого достаточно,
+    // чтобы проверить сам факт переключения (заголовок/дни меняются).
+    const m = path.match(/\\/analytics\\/month\\?month=(\\d{4})-(\\d{2})/);
+    const now = new Date();
+    const year = m ? Number(m[1]) : now.getFullYear();
+    const month = m ? Number(m[2]) : now.getMonth() + 1;
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const days = Array.from({ length: daysInMonth }, (_, i) => String(i + 1).padStart(2, "0"));
     const all_counts = days.map((_, i) => (i % 4 === 0 ? 2 : i % 3 === 0 ? 1 : 0));
+    const activeProjects = _projects.filter((p) => !p.archived);
     result = {
+      year,
+      month,
       days,
       all_counts,
-      projects: _projects
-        .filter((p) => !p.archived)
-        .map((p) => ({ title: p.title, total: 3, counts: all_counts })),
+      projects: [
+        ...activeProjects.map((p, i) => ({
+          title: p.title,
+          total: i === 0 ? 3 : 0,
+          counts: i === 0 ? all_counts : days.map(() => 0),
+        })),
+        { title: "Без проекта", total: 1, counts: days.map((_, i) => (i === 2 ? 1 : 0)) },
+      ],
     };
   } else if (path === "/miniapp/api/analytics/summary") {
     result = {
@@ -534,6 +552,40 @@ def _default_projects() -> list[dict]:
             "sphere": None,
             "start_date": None,
             "end_date": None,
+            "archived": False,
+        },
+        # Три ниже — специально для проверки упаковки строк ганта (item 2,
+        # Phase 41): "Курсовая" той же сферы, что "Подготовка к сессии",
+        # но НЕ пересекается по датам с ней — должна встать в ОДНУ строку
+        # с ней. "Практика" той же сферы, но ПЕРЕСЕКАЕТСЯ по датам с
+        # "Подготовка к сессии" — должна получить отдельную строку,
+        # несмотря на совпадение сферы. "Тренировки" — другая сфера,
+        # своя строка независимо от пересечения дат с кем угодно.
+        {
+            "id": 3,
+            "title": "Курсовая работа",
+            "description": None,
+            "sphere": "учёба",
+            "start_date": (today + timedelta(days=35)).isoformat(),
+            "end_date": (today + timedelta(days=55)).isoformat(),
+            "archived": False,
+        },
+        {
+            "id": 4,
+            "title": "Практика",
+            "description": None,
+            "sphere": "учёба",
+            "start_date": (today + timedelta(days=5)).isoformat(),
+            "end_date": (today + timedelta(days=20)).isoformat(),
+            "archived": False,
+        },
+        {
+            "id": 5,
+            "title": "Тренировки к марафону",
+            "description": None,
+            "sphere": "спорт",
+            "start_date": today.isoformat(),
+            "end_date": (today + timedelta(days=40)).isoformat(),
             "archived": False,
         },
     ]

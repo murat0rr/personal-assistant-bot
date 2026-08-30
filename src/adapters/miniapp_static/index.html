@@ -192,31 +192,22 @@
     .ext-tab-btn.active { color: var(--accent); }
     .ext-tab-icon { width: 20px; height: 20px; }
     /* "Основной экран" — тот же #pill-extended, что и раньше (см.
-       setupPill), просто крупнее и по центру панели кнопок, вместо
-       отдельной плашки внизу экрана (item, Phase 35). */
+       setupPill), просто в общей панели кнопок вместо отдельной плашки
+       внизу экрана (Phase 35). Тот же размер, что у остальных трёх
+       кнопок (item 2, Phase 41 — раньше была крупнее, специально
+       выделялась акцентным кружком, попросили сделать вровень). */
     .ext-tab-main {
-      flex: 1.3;
+      flex: 1;
       display: flex;
       flex-direction: column;
       align-items: center;
       gap: 3px;
-      padding: 0 2px 6px;
+      padding: 6px 2px;
       touch-action: none;
       cursor: ns-resize;
     }
-    .ext-tab-main-circle {
-      width: 46px;
-      height: 46px;
-      border-radius: 50%;
-      background: var(--accent);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-top: -18px;
-      box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 45%, transparent);
-    }
-    .ext-tab-main .screen-chevron { width: 20px; height: 8px; color: var(--accent-text); opacity: 1; }
-    .ext-tab-main .pill-label { font-size: 10.5px; margin-top: 2px; font-weight: 600; }
+    .ext-tab-main .screen-chevron { width: 20px; height: 20px; color: var(--text-muted); opacity: 1; }
+    .ext-tab-main .pill-label { font-size: 10.5px; margin-top: 0; color: var(--text-muted); font-weight: 400; }
 
     .section { margin-bottom: 24px; }
     .section-label {
@@ -568,21 +559,38 @@
       color: var(--text);
     }
     .month-project-count { color: var(--text-muted); font-variant-numeric: tabular-nums; }
-    .gantt-row { margin-bottom: 14px; }
-    .gantt-row-label {
-      display: flex;
-      justify-content: space-between;
-      font-size: 13px;
-      margin-bottom: 4px;
+    /* Гант — панорамируемый по горизонтали свайпом (item 2, Phase 41) —
+       раньше весь диапазон дат сжимался в проценты от ширины экрана,
+       теперь у каждого дня фиксированная ширина в пикселях
+       (GANTT_PX_PER_DAY, см. JS), а .gantt-scroll просто нативно
+       скроллится — палец двигает график 1:1, с нормальной инерцией,
+       без единой строчки собственной физики жеста. */
+    .gantt-scroll {
+      overflow-x: auto;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
     }
-    .gantt-row-title { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .gantt-row-meta { color: var(--text-muted); flex-shrink: 0; padding-left: 8px; }
+    .gantt-scroll::-webkit-scrollbar { display: none; }
+    .gantt-row { margin-bottom: 14px; position: relative; }
+    /* Непересекающиеся проекты одной сферы делят одну строку (item 2,
+       Phase 41, см. packGanttRows) — единого заголовка строки больше
+       нет (в строке может быть не один проект), подпись — своя у
+       каждого сегмента, прямо над его баром. */
+    .gantt-row-labels { position: relative; height: 14px; margin-bottom: 4px; }
+    .gantt-item-label {
+      position: absolute;
+      top: 0;
+      font-size: 11px;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
     .gantt-track {
       height: 8px;
       border-radius: 4px;
       background: color-mix(in srgb, var(--text-muted) 15%, transparent);
       position: relative;
-      overflow: hidden;
     }
     .gantt-bar {
       position: absolute;
@@ -665,6 +673,18 @@
       gap: 14px;
       margin-bottom: 8px;
       font-size: 14px;
+      color: var(--text);
+    }
+    /* Тот же вид, что у .month-cal-nav — навигация графика "Выполнено
+       задач" по месяцам (item 3, Phase 41), отдельный виджет со своим
+       состоянием (analyticsMonthYear/Month). */
+    .month-chart-nav {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      margin-bottom: 6px;
+      font-size: 13px;
       color: var(--text);
     }
     .month-cal-carousel { overflow: hidden; }
@@ -3710,8 +3730,26 @@
       pillMain.addEventListener("click", (e) => {
         if (e.target.closest("svg, span")) toggleScreen();
       });
+      // "Основной экран" в панели вкладок (item 2, Phase 41) — тап
+      // переключает МГНОВЕННО, без анимации выезда (свайп пальцем
+      // по-прежнему плавный, см. setupPill выше — это разные пути,
+      // жест не трогали). Тот же приём "мгновенного прыжка", что уже
+      // используют settle-шаги ниже: на кадр отключаем transition
+      // классом .dragging, применяем целевой transform, форсируем
+      // reflow, возвращаем transition — глаз не успевает увидеть анимацию.
+      function jumpToMainInstant() {
+        if (showingMain) return;
+        resetTargetScroll(true);
+        stack.classList.add("dragging");
+        mainScreen.style.top = "0";
+        stack.style.transform = "translateY(0px)";
+        void stack.offsetHeight;
+        stack.classList.remove("dragging");
+        showingMain = true;
+        updateHamburgerVisibility();
+      }
       pillExtended.addEventListener("click", (e) => {
-        if (e.target.closest("svg, span")) toggleScreen();
+        if (e.target.closest("svg, span")) jumpToMainInstant();
       });
       function toggleScreen() {
         if (showingMain) {
@@ -4808,13 +4846,42 @@
       el.innerHTML += `<div class="sphere-chart-row">${svg}<div class="sphere-legend">${legend}</div></div>`;
     }
 
+    // Листаемый график месяца (item 3, Phase 41) — тот же принцип, что у
+    // месячного календаря (calYear/calMonth), но отдельное состояние: это
+    // разные виджеты, пролистывать их синхронно никто не просил. null —
+    // ещё не инициализировано (ставим на "сейчас" при первом
+    // loadMonthChart, см. loadAnalytics).
+    let analyticsMonthYear = null;
+    let analyticsMonthMonth = null;
+
     function renderMonthChart(data) {
+      // Важно: собираем всю разметку в переменные и присваиваем
+      // el.innerHTML РОВНО ОДИН РАЗ в конце (см. attachMonthNav ниже).
+      // `el.innerHTML += ...` заново парсит весь поддерево при каждом
+      // вызове — это пересоздаёт DOM-узлы кнопок навигации, которым
+      // .onclick уже назначен, и обработчик тихо теряется: кнопка
+      // рисуется, но перестаёт на что-либо реагировать (баг, пойманный
+      // при живой проверке Phase 41 — прямой вызов goToAnalyticsMonth()
+      // из консоли работал, а реальный тап по кнопке — нет).
       const el = document.getElementById("analytics-month");
-      el.innerHTML = '<p class="chart-title">Выполнено задач в этом месяце</p>';
+      const nav =
+        '<div class="month-chart-nav">' +
+        '<button type="button" class="small-btn" id="analytics-month-prev" aria-label="Предыдущий месяц">‹</button>' +
+        `<span>${MONTH_NAMES_FULL[data.month - 1]} ${data.year}</span>` +
+        '<button type="button" class="small-btn" id="analytics-month-next" aria-label="Следующий месяц">›</button>' +
+        "</div>";
+      const header = `<p class="chart-title">Выполнено задач</p>${nav}`;
+
+      function attachMonthNav() {
+        document.getElementById("analytics-month-prev").onclick = () => goToAnalyticsMonth(-1);
+        document.getElementById("analytics-month-next").onclick = () => goToAnalyticsMonth(1);
+        attachMonthChartSwipe(el);
+      }
+
       const counts = data.all_counts || [];
-      const max = Math.max(1, ...counts);
       if (counts.every((c) => c === 0)) {
-        el.innerHTML += '<div class="chart-empty">В этом месяце пока ничего не отмечено</div>';
+        el.innerHTML = `${header}<div class="chart-empty">В этом месяце пока ничего не отмечено</div>`;
+        attachMonthNav();
         return;
       }
 
@@ -4822,7 +4889,9 @@
       // видно ни какое число дня под какой полоской, ни какой счёт
       // соответствует высоте. Слева — счёт (0/середина/максимум),
       // снизу — числа месяца через 5 (плюс 1-е и последнее), пунктиром —
-      // текущий день, если он в этом месяце.
+      // текущий день, если он в этом месяце. Выходные — светлее (item 1,
+      // Phase 41): визуально сразу видно ритм недели, не только даты.
+      const max = Math.max(1, ...counts);
       const w = 300;
       const h = 110;
       const padLeft = 18;
@@ -4831,6 +4900,11 @@
       const plotW = w - padLeft - 2;
       const plotH = h - padTop - padBottom;
       const barW = plotW / counts.length;
+
+      const isWeekend = (dayNum) => {
+        const wd = new Date(Date.UTC(data.year, data.month - 1, dayNum)).getUTCDay();
+        return wd === 0 || wd === 6; // вс=0, сб=6
+      };
 
       const yTicks = Array.from(new Set([0, Math.round(max / 2), max]));
       const yToPx = (v) => padTop + plotH - (v / max) * plotH;
@@ -4849,12 +4923,15 @@
           const barH = (c / max) * plotH;
           const x = padLeft + i * barW;
           const y = padTop + plotH - barH;
-          return `<rect x="${x + 0.5}" y="${y}" width="${Math.max(barW - 1, 1)}" height="${Math.max(barH, c > 0 ? 1 : 0)}" fill="var(--accent)" rx="1"/>`;
+          const opacity = isWeekend(i + 1) ? 0.5 : 1;
+          return `<rect x="${x + 0.5}" y="${y}" width="${Math.max(barW - 1, 1)}" height="${Math.max(barH, c > 0 ? 1 : 0)}" fill="var(--accent)" opacity="${opacity}" rx="1"/>`;
         })
         .join("");
 
       const todayIso = boardState.days.today ? boardState.days.today.date : null;
-      const todayDay = todayIso ? Number(todayIso.slice(8, 10)) : null;
+      const isCurrentMonth =
+        todayIso && todayIso.slice(0, 4) == data.year && Number(todayIso.slice(5, 7)) === data.month;
+      const todayDay = isCurrentMonth ? Number(todayIso.slice(8, 10)) : null;
       const todayLine =
         todayDay && todayDay <= counts.length
           ? `<line x1="${padLeft + (todayDay - 0.5) * barW}" y1="${padTop}" x2="${padLeft + (todayDay - 0.5) * barW}" y2="${padTop + plotH}" stroke="var(--neutral-blue)" stroke-width="1.5" stroke-dasharray="2 2"/>`
@@ -4870,20 +4947,120 @@
         .join("");
 
       const svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">${gridLines}${bars}${todayLine}${xLabels}</svg>`;
-      el.innerHTML += svg;
 
+      // Все проекты + "Без проекта" (item 1, Phase 41) — раньше топ-6 по
+      // выполненному, теперь целиком: проект без прогресса в этом месяце
+      // тоже должен быть виден (нулевая строка), не пропадать молча.
       const projects = data.projects || [];
+      let projectsHtml = "";
       if (projects.length) {
         const rows = projects
-          .slice(0, 6)
           .map(
             (p) =>
               `<div class="month-project-row"><span class="month-project-title">${escapeHtml(p.title)}</span>` +
               `<span class="month-project-count">${p.total}</span></div>`
           )
           .join("");
-        el.innerHTML += `<p class="chart-title" style="margin-top:14px;">По проектам</p>${rows}`;
+        projectsHtml = `<p class="chart-title" style="margin-top:14px;">По проектам</p>${rows}`;
       }
+
+      el.innerHTML = `${header}${svg}${projectsHtml}`;
+      attachMonthNav();
+    }
+
+    async function loadMonthChart() {
+      const monthEl = document.getElementById("analytics-month");
+      monthEl.innerHTML = '<div class="chart-empty">Загрузка…</div>';
+      try {
+        const key = `${analyticsMonthYear}-${pad2(analyticsMonthMonth)}`;
+        const month = await api(`/miniapp/api/analytics/month?month=${key}`);
+        renderMonthChart(month);
+      } catch (e) {
+        monthEl.innerHTML = '<div class="chart-empty">Не удалось загрузить.</div>';
+      }
+    }
+
+    async function goToAnalyticsMonth(delta) {
+      const target = adjMonth(analyticsMonthYear, analyticsMonthMonth, delta);
+      analyticsMonthYear = target.year;
+      analyticsMonthMonth = target.month;
+      await loadMonthChart();
+    }
+
+    // Свайп по самому графику — пролистывает месяц (item 3, Phase 41).
+    // Простое обнаружение жеста (старт/конец по X), не полноценная
+    // 3-панельная карусель с переносом пальца — тут только один виджет
+    // внутри и так скроллящегося экрана, тянуть сюда механику
+    // month-cal-track ценой сложности не стоит; кнопки ‹ › (см.
+    // renderMonthChart) — то же самое понадёжнее для тех, кто свайп не
+    // найдёт.
+    function attachMonthChartSwipe(el) {
+      // Вызывается из renderMonthChart при КАЖДОМ рендере (включая каждое
+      // листание месяца) — но сам el (#analytics-month) никогда не
+      // пересоздаётся, только его innerHTML. Без этой защиты слушатели
+      // копились бы с каждым свайпом, и один жест через несколько
+      // навигаций уже переключал бы на несколько месяцев разом.
+      if (el.dataset.swipeAttached) return;
+      el.dataset.swipeAttached = "1";
+      let startX = null;
+      let startY = null;
+      let pointerId = null;
+      el.addEventListener("pointerdown", (e) => {
+        if (e.target.closest("button")) return;
+        startX = e.clientX;
+        startY = e.clientY;
+        pointerId = e.pointerId;
+      });
+      el.addEventListener("pointerup", (e) => {
+        if (startX === null || e.pointerId !== pointerId) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        startX = null;
+        if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+          goToAnalyticsMonth(dx < 0 ? 1 : -1);
+        }
+      });
+    }
+
+    // Пиксель на день шкалы ганта (item 2, Phase 41) — фиксированный, не
+    // проценты от ширины экрана: только так появляется что скроллить.
+    const GANTT_PX_PER_DAY = 10;
+
+    // Непересекающиеся по времени проекты одной сферы — в одну строку
+    // (item 2, Phase 41). Стандартный жадный алгоритм упаковки интервалов
+    // ("минимум переговорных комнат под непересекающиеся встречи"):
+    // группируем по сфере (её отсутствие — тоже группа, наравне с
+    // остальными — два проекта без сферы точно так же могут делить
+    // строку), внутри группы сортируем по началу и кладём каждый
+    // проект в первую строку, чей последний элемент уже закончился к
+    // его началу; не нашлось такой — заводим новую строку.
+    function packGanttRows(projects) {
+      const groups = new Map();
+      for (const p of projects) {
+        const key = p.sphere || "";
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(p);
+      }
+      const rows = [];
+      for (const group of groups.values()) {
+        const sorted = [...group].sort(
+          (a, b) => new Date(a.start_date) - new Date(b.start_date)
+        );
+        const rowsInGroup = []; // { items: [...], lastEnd: <ms> }
+        for (const p of sorted) {
+          const start = new Date(p.start_date).getTime();
+          const end = new Date(p.end_date).getTime();
+          const row = rowsInGroup.find((r) => start >= r.lastEnd);
+          if (row) {
+            row.items.push(p);
+            row.lastEnd = end;
+          } else {
+            rowsInGroup.push({ items: [p], lastEnd: end });
+          }
+        }
+        rows.push(...rowsInGroup.map((r) => r.items));
+      }
+      return rows;
     }
 
     function renderGanttChart() {
@@ -4899,54 +5076,86 @@
       const ends = withDates.map((p) => new Date(p.end_date).getTime());
       const min = Math.min(...starts);
       const max = Math.max(...ends);
-      const span = Math.max(max - min, 86400000);
+      const totalDays = Math.max(Math.ceil((max - min) / 86400000), 1);
+      const canvasW = totalDays * GANTT_PX_PER_DAY;
+      const dayToPx = (ms) => ((ms - min) / 86400000) * GANTT_PX_PER_DAY;
 
       // Шкала месяцев + линия "сегодня" (item 10, Phase 29) — без этого
-      // непонятно, на какой календарный период приходятся полоски: две
-      // одинаковые на вид полоски могли означать и "весь январь", и "весь
-      // год" — теперь видно явно.
+      // непонятно, на какой календарный период приходятся полоски.
       const monthTicks = [];
       const cursor = new Date(min);
       cursor.setDate(1);
       while (cursor.getTime() <= max) {
-        // Первый месяц может начинаться раньше самой ранней даты проекта
-        // (min попал на середину месяца) — не даём подписи уехать за
-        // пределы шкалы, иначе она визуально "утекает" на соседнюю
-        // страницу карусели (см. .gantt-axis-tick — position:absolute).
-        const pct = Math.max(0, Math.min(100, ((cursor.getTime() - min) / span) * 100));
-        monthTicks.push({ pct, label: MONTH_NAMES_FULL[cursor.getMonth()].slice(0, 3) });
+        const x = Math.max(0, dayToPx(cursor.getTime()));
+        // Если самый ранний проект начинается в последний день месяца
+        // (напр. 31 августа), 1-е число ЭТОГО месяца уходит в отрицательный
+        // x и прижимается к 0 (см. Math.max выше), а 1-е число СЛЕДУЮЩЕГО
+        // месяца оказывается буквально в одном дне правее — подписи двух
+        // соседних месяцев рисуются друг на друге. Пропускаем метку, если
+        // она не отстоит от предыдущей хотя бы на ширину подписи (найдено
+        // живой проверкой Phase 41 — не гипотетический случай).
+        const prev = monthTicks[monthTicks.length - 1];
+        if (!prev || x - prev.x >= 40) {
+          monthTicks.push({
+            x,
+            label: `${MONTH_NAMES_FULL[cursor.getMonth()].slice(0, 3)} ${cursor.getFullYear()}`,
+          });
+        }
         cursor.setMonth(cursor.getMonth() + 1);
       }
       const axisHtml = monthTicks
-        .map((t) => `<span class="gantt-axis-tick" style="left:${t.pct}%">${t.label}</span>`)
+        .map((t) => `<span class="gantt-axis-tick" style="left:${t.x}px">${t.label}</span>`)
         .join("");
 
       const now = Date.now();
-      const todayPct = ((now - min) / span) * 100;
+      const todayX = dayToPx(now);
       const todayLineHtml =
-        todayPct >= 0 && todayPct <= 100 ? `<div class="gantt-today-line" style="left:${todayPct}%"></div>` : "";
+        todayX >= 0 && todayX <= canvasW ? `<div class="gantt-today-line" style="left:${todayX}px"></div>` : "";
 
-      const rows = withDates
-        .map((p) => {
-          const left = ((new Date(p.start_date).getTime() - min) / span) * 100;
-          const width = Math.max(
-            ((new Date(p.end_date).getTime() - new Date(p.start_date).getTime()) / span) * 100,
-            2
-          );
-          const pct = p.task_count ? Math.round((p.done_count / p.task_count) * 100) : 0;
-          const progressWidth = width * (pct / 100);
+      const packedRows = packGanttRows(withDates);
+      const rowsHtml = packedRows
+        .map((items) => {
+          const labels = items
+            .map((p) => {
+              const left = dayToPx(new Date(p.start_date).getTime());
+              const width = Math.max(dayToPx(new Date(p.end_date).getTime()) - left, 4);
+              const title = escapeHtml(p.title);
+              return `<span class="gantt-item-label" style="left:${left}px;max-width:${width}px" title="${title}">${title}</span>`;
+            })
+            .join("");
+          const bars = items
+            .map((p) => {
+              const left = dayToPx(new Date(p.start_date).getTime());
+              const width = Math.max(dayToPx(new Date(p.end_date).getTime()) - left, 4);
+              const pct = p.task_count ? Math.round((p.done_count / p.task_count) * 100) : 0;
+              const progressWidth = width * (pct / 100);
+              return (
+                `<div class="gantt-bar" style="left:${left}px;width:${width}px;"></div>` +
+                `<div class="gantt-bar-progress" style="left:${left}px;width:${progressWidth}px;"></div>`
+              );
+            })
+            .join("");
           return (
             '<div class="gantt-row">' +
-            `<div class="gantt-row-label"><span class="gantt-row-title">${escapeHtml(p.title)}</span>` +
-            `<span class="gantt-row-meta">${formatShortDate(p.start_date)}–${formatShortDate(p.end_date)} · ${p.done_count}/${p.task_count} · ${pct}%</span></div>` +
-            '<div class="gantt-track">' +
-            `<div class="gantt-bar" style="left:${left}%;width:${width}%;"></div>` +
-            `<div class="gantt-bar-progress" style="left:${left}%;width:${progressWidth}%;"></div>` +
-            "</div></div>"
+            `<div class="gantt-row-labels">${labels}</div>` +
+            `<div class="gantt-track">${bars}</div>` +
+            "</div>"
           );
         })
         .join("");
-      el.innerHTML += `<div class="gantt-axis">${axisHtml}</div><div class="gantt-body">${todayLineHtml}${rows}</div>`;
+
+      el.innerHTML +=
+        '<div class="gantt-scroll" id="gantt-scroll">' +
+        `<div style="width:${canvasW}px">` +
+        `<div class="gantt-axis">${axisHtml}</div>` +
+        `<div class="gantt-body">${todayLineHtml}${rowsHtml}</div>` +
+        "</div></div>";
+
+      // Центрируем на "сегодня" сразу — иначе можно оказаться в самом
+      // начале шкалы, далеко от актуального (весь диапазон теперь шире
+      // экрана и не виден целиком одним взглядом, item 2, Phase 41).
+      const scrollEl = document.getElementById("gantt-scroll");
+      scrollEl.scrollLeft = Math.max(0, todayX - scrollEl.clientWidth / 2);
     }
 
     function renderAiSummary(text) {
@@ -4970,12 +5179,15 @@
         spheresEl.innerHTML = '<div class="chart-empty">Не удалось загрузить.</div>';
       }
 
-      try {
-        const month = await api("/miniapp/api/analytics/month");
-        renderMonthChart(month);
-      } catch (e) {
-        monthEl.innerHTML = '<div class="chart-empty">Не удалось загрузить.</div>';
+      // Локальная дата устройства, не boardState (loadBoard идёт
+      // параллельно, к этому моменту ещё может не успеть) — тот же приём,
+      // что уже даёт today0 у месячного календаря (см. calYear/calMonth).
+      if (analyticsMonthYear === null) {
+        const now = new Date();
+        analyticsMonthYear = now.getFullYear();
+        analyticsMonthMonth = now.getMonth() + 1;
       }
+      await loadMonthChart();
 
       renderGanttChart();
 
@@ -5179,7 +5391,11 @@
     // Подгружает текущий + соседние месяцы разом — карусель (см. ниже)
     // держит все три панели отрендеренными постоянно, не только в
     // момент активного свайпа, иначе при перетаскивании было бы видно
-    // пустые соседние панели вместо реального контента.
+    // пустые соседние панели вместо реального контента. Это —
+    // единственная часть, которую дожидается сам свайп (см.
+    // monthSettling в settleMonthCarousel: новый жест заблокирован,
+    // пока не выполнится), поэтому тут только непосредственные соседи,
+    // не весь радиус прогрева ниже.
     async function loadMonthEvents() {
       const prev = adjMonth(calYear, calMonth, -1);
       const next = adjMonth(calYear, calMonth, 1);
@@ -5189,6 +5405,22 @@
         ensureMonthData(next.year, next.month),
       ]);
       renderMonthCalendar();
+      // Прогрев кэша на ±4 месяца в фоне, НЕ дожидаясь (item 4, Phase 41)
+      // — жалоба была "календарь не листается быстро", разбор показал:
+      // monthSettling блокирует новый свайп, пока не отработает как раз
+      // этот await выше, а он ждёт сеть при каждом ходе за пределы уже
+      // закешированных соседей. Заранее прогретые ±4 месяца — значит к
+      // моменту, когда до них реально долистают, ensureMonthData найдёт
+      // их уже в calEventsByMonth/calMoodsByMonth и вернётся мгновенно,
+      // без похода в сеть и без блокировки следующего свайпа.
+      prefetchSurroundingMonths(calYear, calMonth, 4);
+    }
+
+    function prefetchSurroundingMonths(centerYear, centerMonth, radius) {
+      for (let d = -radius; d <= radius; d++) {
+        const { year, month } = adjMonth(centerYear, centerMonth, d);
+        ensureMonthData(year, month).catch(() => {});
+      }
     }
 
     function moodClass(avg) {

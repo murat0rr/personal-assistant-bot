@@ -786,9 +786,18 @@ async def analytics_spheres_endpoint(user: dict = Depends(get_authorized_user)) 
 
 
 @app.get("/miniapp/api/analytics/month")
-async def analytics_month_endpoint(user: dict = Depends(get_authorized_user)) -> dict:
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
-    return await analytics_repo.month_breakdown(user["id"], today)
+async def analytics_month_endpoint(
+    month: str | None = None, user: dict = Depends(get_authorized_user)
+) -> dict:
+    # month — тот же формат "YYYY-MM", что у /calendar/month (Phase 41,
+    # график теперь листается по месяцам, а не только "этот месяц").
+    # Без параметра — текущий месяц, как раньше.
+    if month:
+        year_str, month_str = month.split("-")
+        anchor = date(int(year_str), int(month_str), 1)
+    else:
+        anchor = datetime.now(ZoneInfo(settings.timezone)).date()
+    return await analytics_repo.month_breakdown(user["id"], anchor)
 
 
 @app.get("/miniapp/api/analytics/summary")
