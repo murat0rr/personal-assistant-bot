@@ -80,33 +80,38 @@
       left: 0;
       right: 0;
       height: 100vh;
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
-      padding: 16px;
+      overflow: hidden; /* сам экран не скроллит — скроллит только .screen-content */
       background: var(--bg);
       display: flex;
       flex-direction: column;
     }
     #main-screen { top: 0; }
     #extended-screen { top: 100vh; }
+    /* Скроллится только эта часть — полоска-переключатель вынесена из
+       потока скролла отдельным flex-элементом ниже, поэтому она жёстко
+       стоит на нижнем краю экрана, а не «плавает» там, где кончился
+       контент (в т.ч. когда контента меньше одного viewport). */
+    .screen-content {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 16px;
+      min-height: 0; /* иначе flex-контейнер не даёт себя сжать до overflow */
+    }
     /* Плоская "галочка"-подсказка внизу каждого экрана — одновременно и
        подсказка направления (всегда свайп вверх, см. JS), и запасная
-       кнопка на тап для тех, кто жест не найдёт. */
-    /* sticky, не просто margin-top:auto — если контент экрана длиннее
-       одного viewport (много задач), полоска всё равно должна быть
-       доступна без докрутки до самого конца: короткий контент — она
-       естественно внизу; длинный — прилипает к низу видимой области при
-       скролле. */
+       кнопка на тап для тех, кто жест не найдёт. flex: 0 0 auto — не
+       часть скроллящегося .screen-content, всегда на нижнем краю. Верхний
+       padding заметно больше видимой полоски — это увеличивает зону
+       старта жеста (см. attachScreenTransition), сама полоска визуально
+       не растёт: лишний padding того же цвета фона, что и экран. */
     .bottom-pill-wrap {
-      flex-shrink: 0;
-      margin-top: auto;
-      position: sticky;
-      bottom: 0;
+      flex: 0 0 auto;
       background: var(--bg);
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 10px 0 4px;
+      padding: 30px 0 8px;
       touch-action: none;
       cursor: ns-resize;
     }
@@ -987,6 +992,7 @@
 <body>
 <div id="screen-stack">
   <div id="main-screen" class="app-screen">
+  <div class="screen-content">
   <div class="section">
     <p class="section-label" id="day-label">Сегодня</p>
     <div class="day-carousel" id="day-carousel">
@@ -1028,6 +1034,7 @@
     <p class="section-label">Утренний дайджест</p>
     <div id="digest" class="list digest">Загрузка…</div>
   </div>
+  </div>
 
   <div class="bottom-pill-wrap" id="pill-main">
     <svg class="screen-chevron" viewBox="0 0 34 10"><path d="M2 8 L17 2 L32 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1036,6 +1043,7 @@
   </div>
 
   <div id="extended-screen" class="app-screen">
+  <div class="screen-content">
   <div class="section">
     <p class="section-label" id="pg-label">Проекты и цели</p>
     <div class="analytics-carousel" id="pg-carousel">
@@ -1089,6 +1097,7 @@
       <button class="entity-create-btn" id="btn-create-goal">+ Цель</button>
       <button class="small-btn" id="btn-open-settings" aria-label="Настройки">⚙</button>
     </div>
+  </div>
   </div>
 
   <div class="bottom-pill-wrap" id="pill-extended">

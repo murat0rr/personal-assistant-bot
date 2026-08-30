@@ -204,7 +204,7 @@ async def _finish_tier(
                     project = await find_project_by_title(item.project_title)
                 task = Task(
                     title=item.title,
-                    due_date=datetime.combine(item.due_date, datetime.min.time()),
+                    due_date=None,
                     priority="средний",
                     source="goal",
                     sort_order=time.time(),
