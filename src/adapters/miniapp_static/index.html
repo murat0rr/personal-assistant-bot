@@ -1066,6 +1066,57 @@
       transition: background-color 0.15s ease, opacity 0.15s ease;
     }
     .bottom-sheet-handle.armed { background: var(--accent); opacity: 1; }
+    /* Окно создания/правки проекта/цели (Phase 33) — плавающая карточка
+       по центру экрана вместо шторки, выезжающей снизу: концепцию
+       обсуждали и утвердили отдельно через интерактивный прототип
+       (узкая ручка сверху шторки была источником бага — тап по ней
+       иногда резко дёргал всю шторку вверх — и вообще путала). Никакого
+       свайпа для закрытия — только крестик в шапке, тап по
+       .reorder-scrim или кнопка "Готово" внизу формы, все три ведут в
+       один и тот же closeCreateEntitySheet. z-index 26, как у обычных
+       .bottom-sheet — #date-picker-sheet (27) всё ещё корректно
+       всплывает поверх, когда открыт выбор даты внутри формы. */
+    .entity-window {
+      display: none;
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 26;
+      width: 88vw;
+      max-height: 80vh;
+      background: var(--bg);
+      border-radius: 20px;
+      box-shadow: 0 16px 50px rgba(0, 0, 0, 0.4);
+      flex-direction: column;
+    }
+    .entity-window.visible { display: flex; }
+    .entity-window-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px 10px;
+      flex-shrink: 0;
+    }
+    .entity-window-title { font-size: 15px; font-weight: 600; color: var(--text); }
+    .entity-window-close {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      border: none;
+      background: var(--card-bg);
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      flex-shrink: 0;
+    }
+    .entity-window-body {
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 4px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+    }
     /* Всплывающий календарь (Phase 28) — компактная карточка по центру
        экрана поверх формы создания/правки (не ещё один .bottom-sheet той
        же высоты — они бы перекрывали друг друга один в один). Тот же
@@ -1359,10 +1410,15 @@
     <div id="color-picker-list" class="list"></div>
   </div>
 
-  <div id="create-entity-sheet" class="bottom-sheet">
-    <div class="bottom-sheet-handle"></div>
-    <p class="section-label" id="create-entity-title">Новый проект</p>
-    <div id="create-entity-form" class="list"></div>
+  <!-- Окно создания/правки проекта/цели (Phase 33) — плавающая карточка
+       по центру экрана вместо шторки снизу (см. .entity-window в CSS):
+       макет обсуждали и утвердили отдельно (интерактивный прототип). -->
+  <div id="create-entity-sheet" class="entity-window">
+    <div class="entity-window-head">
+      <span class="entity-window-title" id="create-entity-title">Новый проект</span>
+      <button type="button" class="entity-window-close" id="create-entity-close" aria-label="Закрыть">✕</button>
+    </div>
+    <div id="create-entity-form" class="entity-window-body"></div>
   </div>
 
   <div id="date-picker-sheet">
@@ -2460,8 +2516,13 @@
       grip.innerHTML = gripIcon();
       row.append(grip);
 
+      // Зачёркивание выполненных видно и в режиме переноса (item 3,
+      // Phase 33) — раньше строка не показывала done вообще (Phase 14 —
+      // "текст показывается полностью без статуса/приоритета", но
+      // зачёркивание это не статус-кружок/приоритет, а как раз то, что
+      // помогает не перепутать задачи, пока их двигаешь).
       const title = document.createElement("span");
-      title.className = "title title-full";
+      title.className = "title title-full" + (task.done ? " done" : "");
       title.textContent = task.title;
       row.append(title);
 
@@ -3586,7 +3647,17 @@
       }
 
       const listKey = "cal:" + selectedWeekDate;
-      if (!weekDetailListEl || !el.contains(weekDetailListEl)) {
+      if (!weekDetailListEl) {
+        // БАГ (Phase 33): раньше тут ещё проверялось !el.contains(...) —
+        // но пока активен режим переноса, элемент ЗАКОНОМЕРНО не лежит
+        // в el (он в <body>, см. applyReorderElevation), и это условие
+        // ошибочно пересоздавало список заново. Новый узел создавался,
+        // рендерился в el, а СТАРЫЙ (настоящий, элевированный) так и
+        // оставался висеть в body — applyReorderElevation(false) на нём
+        // никогда не вызывался, потому что renderList теперь работал
+        // с другим объектом. Тап по фону закрывал режим переноса
+        // (scrim гас), но осиротевшее окно оставалось на экране до
+        // перезахода в приложение. Проверяем только на null.
         weekDetailListEl = document.createElement("div");
         weekDetailListEl.className = "list";
         // Геттер, не фиксированная строка — selectedWeekDate может
@@ -4456,41 +4527,60 @@
         return;
       }
 
-      const size = 160;
-      const r = 60;
-      const cx = size / 2;
-      const cy = size / 2;
-      const circumference = 2 * Math.PI * r;
-      let offset = 0;
-      // Внутри сегмента каждой сферы — выполненное сплошным цветом,
-      // невыполненное тем же цветом, но приглушённым stroke-opacity
-      // (item 8, Phase 29): видно с одного взгляда не только пропорцию
-      // сфер, но и сколько в каждой реально сделано.
-      const arcs = data
-        .map((s) => {
-          const color = sphereColor(s.sphere);
-          const totalDash = (s.count / total) * circumference;
-          const doneDash = s.count ? totalDash * (s.done / s.count) : 0;
-          const notDoneDash = totalDash - doneDash;
-          let segment = "";
-          if (doneDash > 0) {
-            segment +=
-              `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" ` +
-              `stroke-width="22" stroke-dasharray="${doneDash} ${circumference - doneDash}" ` +
-              `stroke-dashoffset="${-offset}" transform="rotate(-90 ${cx} ${cy})"/>`;
-          }
-          if (notDoneDash > 0) {
-            segment +=
-              `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-opacity="0.3" ` +
-              `stroke-width="22" stroke-dasharray="${notDoneDash} ${circumference - notDoneDash}" ` +
-              `stroke-dashoffset="${-(offset + doneDash)}" transform="rotate(-90 ${cx} ${cy})"/>`;
-          }
-          offset += totalDash;
-          return segment;
+      // Столбчатая диаграмма вместо тортика (item 4, Phase 33) — один
+      // столбец на сферу, нижняя часть темнее (выполнено), верхняя —
+      // обычный цвет сферы (не выполнено). Тот же приём color-mix, что
+      // уже даёт .gantt-bar-progress (только к белому — для
+      // противоположного эффекта, здесь к чёрному — темнее).
+      const max = Math.max(1, ...data.map((s) => s.count));
+      const w = 300;
+      const h = 130;
+      const padLeft = 20;
+      const padBottom = 18;
+      const padTop = 4;
+      const plotW = w - padLeft - 4;
+      const plotH = h - padTop - padBottom;
+      const barGap = 10;
+      const barW = (plotW - barGap * (data.length - 1)) / data.length;
+
+      const yTicks = Array.from(new Set([0, Math.round(max / 2), max]));
+      const yToPx = (v) => padTop + plotH - (v / max) * plotH;
+      const gridLines = yTicks
+        .map((v) => {
+          const y = yToPx(v);
+          return (
+            `<line x1="${padLeft}" y1="${y}" x2="${w - 4}" y2="${y}" stroke="var(--hairline)" stroke-width="1"/>` +
+            `<text x="${padLeft - 4}" y="${y + 3}" font-size="8" fill="var(--text-muted)" text-anchor="end">${v}</text>`
+          );
         })
         .join("");
 
-      const svg = `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" style="display:block;margin:0 auto;">${arcs}</svg>`;
+      const bars = data
+        .map((s, i) => {
+          const color = sphereColor(s.sphere);
+          const darker = `color-mix(in srgb, ${color} 65%, black 35%)`;
+          const x = padLeft + i * (barW + barGap);
+          const totalH = (s.count / max) * plotH;
+          const doneH = s.count ? totalH * (s.done / s.count) : 0;
+          const notDoneH = totalH - doneH;
+          const topY = padTop + plotH - totalH;
+          const doneY = padTop + plotH - doneH;
+          let bar = "";
+          if (notDoneH > 0) {
+            bar += `<rect x="${x}" y="${topY}" width="${barW}" height="${notDoneH}" fill="${color}"/>`;
+          }
+          if (doneH > 0) {
+            bar += `<rect x="${x}" y="${doneY}" width="${barW}" height="${doneH}" fill="${darker}"/>`;
+          }
+          const labelX = x + barW / 2;
+          bar +=
+            `<text x="${labelX}" y="${h - 3}" font-size="8" fill="var(--text-muted)" text-anchor="middle">` +
+            `${s.sphere.slice(0, 4)}</text>`;
+          return bar;
+        })
+        .join("");
+
+      const svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">${gridLines}${bars}</svg>`;
       const legend = data
         .map(
           (s) =>
@@ -4714,8 +4804,21 @@
     // свою анимацию и "спорить" с программной установкой scrollLeft —
     // заметная на глаз вспышка/мигание контента (item 4, Phase 32, БАГ).
     function silentJump(left) {
+      // На обычном (не медленном) свайпе к моменту телепорта нативный
+      // momentum-скролл ещё реально доигрывает свою анимацию — просто
+      // снять scroll-snap-type недостаточно (Phase 32 сделала это, баг
+      // остался, Phase 33, БАГ): momentum не останавливается сам,
+      // JS-присвоение scrollLeft с ним не конкурирует, а лишь на кадр
+      // "спорит" — заметная вспышка. overflow-x: hidden на один тик —
+      // жёсткий, гарантированный способ оборвать недоигранный momentum
+      // (скролл физически становится невозможен, анимации нечего
+      // продолжать), потом возвращаем как было уже с новым scrollLeft.
       analyticsCarousel.classList.add("no-snap");
+      const prevOverflowX = analyticsCarousel.style.overflowX;
+      analyticsCarousel.style.overflowX = "hidden";
       analyticsCarousel.scrollLeft = left;
+      void analyticsCarousel.offsetWidth; // форсируем reflow между приложением стилей
+      analyticsCarousel.style.overflowX = prevOverflowX;
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           analyticsCarousel.classList.remove("no-snap");
@@ -5240,11 +5343,10 @@
       document.getElementById("color-picker-list"),
       closeColorPicker
     );
-    attachSheetOverswipeClose(
-      document.getElementById("create-entity-sheet"),
-      document.getElementById("create-entity-form"),
-      closeCreateEntitySheet
-    );
+    // create-entity-sheet больше не .bottom-sheet (Phase 33) — окно по
+    // центру, закрывается крестиком/тапом по фону/кнопкой "Готово", без
+    // свайпа (см. .entity-window в CSS и комментарий там же).
+    document.getElementById("create-entity-close").addEventListener("click", closeCreateEntitySheet);
     attachSheetOverswipeClose(
       document.getElementById("settings-sheet"),
       document.getElementById("settings-sheet").querySelector(".list"),
