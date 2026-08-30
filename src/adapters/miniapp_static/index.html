@@ -699,8 +699,16 @@
     /* Сегодня/выбранный день — та же логика, что у .week-cell недельного
        календаря: сегодня — лёгкая заливка акцентом, выбран — обводка
        акцентом; оба берут цвет из одного --accent, поэтому естественно
-       комбинируются на одной плитке. */
-    .month-cal-day.today { background: color-mix(in srgb, var(--accent) 18%, var(--card-bg)); }
+       комбинируются на одной плитке. БАГ (Phase 38): подмешивали акцент в
+       var(--card-bg) вместо transparent — у .month-cal-day свой непрозрачный
+       фон card-bg уже задан отдельным правилом выше, но результат смеси
+       "18% акцента в 82% card-bg" на светлой/серой теме почти не отличим
+       от обычной плитки на глаз (два близких по тону пастельных цвета).
+       .week-cell смешивает с transparent — тогда сегодняшняя плитка
+       буквально садится на другую основу (сквозь неё видно то, что под
+       календарём, --bg, а не card-bg), что и даёт заметный контраст.
+       Поправлено на точно ту же смесь, что у .week-cell. */
+    .month-cal-day.today { background: color-mix(in srgb, var(--accent) 18%, transparent); }
     .month-cal-day.selected { border-color: var(--accent); }
     .month-cal-day.other-month { opacity: 0.35; }
     .month-cal-day.weekend .month-cal-num { color: var(--neutral-blue); }
@@ -1022,6 +1030,21 @@
       -webkit-overflow-scrolling: touch;
       border-radius: 16px;
       box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+      transition: filter 0.15s ease, opacity 0.15s ease;
+    }
+    /* БАГ (Phase 38): значок шаблонов доступен и внутри уже открытого
+       окна переноса (см. renderAddTaskRow в renderList) — тап по нему
+       поднимает #templates-sheet ещё выше (z-index 27, см. Phase 36), но
+       само окно переноса (z-index 26) при этом оставалось полностью
+       чётким и активным на заднем плане, хотя весь остальной экран под
+       .reorder-scrim уже размыт — по сути получались два "активных" слоя
+       вместо одного. Размываем и глушим само окно переноса точно так же,
+       как .reorder-scrim глушит всё остальное, пока поверх него открыта
+       шторка шаблонов. */
+    .list.reorder-window.reorder-dimmed {
+      filter: blur(3px);
+      opacity: 0.5;
+      pointer-events: none;
     }
 
     /* Глобальное меню (Phase 30) — гамбургер справа сверху, вне
@@ -3361,6 +3384,11 @@
       // плане", а всё остальное на странице просто перекрыто .reorder-scrim.
       container.classList.toggle("reorder-active-list", reorderMode);
       applyReorderElevation(container, reorderMode);
+      // Значок шаблонов доступен и внутри открытого окна переноса (см.
+      // renderAddTaskRow ниже) — пока поверх него открыта шторка
+      // шаблонов, само окно переноса тоже должно выглядеть неактивным
+      // (item, Phase 38), а не чётким вторым "передним планом".
+      container.classList.toggle("reorder-dimmed", reorderMode && templatesPickerOpen);
       container.innerHTML = "";
       const sorted = sortByOrder(tasks);
       if (sorted.length === 0) {

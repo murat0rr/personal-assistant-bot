@@ -123,27 +123,48 @@ async def _tidy_inbox_job(bot: Bot) -> None:
 
 async def _cleanup_old_messages(bot: Bot) -> None:
     tz = ZoneInfo(settings.timezone)
-    today = datetime.now(tz).date()
+    now = datetime.now(tz)
+    today = now.date()
+    # Telegram физически не даёт удалить сообщение старше 48 часов — после
+    # этого порога дальнейшие попытки бессмысленны, строку можно забыть.
+    # До порога — БАГ (найден при разборе жалобы "очистка не работает"):
+    # строка удалялась из chat_messages независимо от того, удалилось ли
+    # само сообщение в Telegram. Любая временная ошибка (сеть, недоступен
+    # API и т.п.) на bot.delete_message молча "забывала" сообщение
+    # навсегда — повторной попытки на следующий день уже не было, а лог
+    # всё равно бодро отчитывался «удалено N», хотя на самом деле не
+    # удалялось ничего. Теперь строка удаляется из БД только если
+    # сообщение реально удалено (или Telegram явно говорит, что удалять
+    # больше нечего) — иначе остаётся и уйдёт в следующую попытку ночью.
+    give_up_after = now - timedelta(hours=47)
 
+    deleted = 0
     async with async_session() as session:
         result = await session.execute(select(ChatMessage))
-        old_messages = [
+        candidates = [
             row for row in result.scalars().all() if row.sent_at.astimezone(tz).date() < today
         ]
 
-        for row in old_messages:
+        for row in candidates:
             try:
                 await bot.delete_message(
                     chat_id=settings.telegram_user_id, message_id=row.message_id
                 )
             except TelegramBadRequest:
-                # уже удалено вручную, старше 48ч и т.п. — не критично
-                pass
+                # Уже удалено вручную, чат недоступен и т.п. — Telegram
+                # прямо сказал "нечего удалять" или "нельзя". Если ещё не
+                # уткнулись в 48-часовой порог — оставляем строку на
+                # повторную попытку следующей ночью (мало ли API
+                # подглючило именно сейчас); иначе дальше пытаться нет
+                # смысла — забываем.
+                if row.sent_at >= give_up_after:
+                    continue
             await session.delete(row)
+            deleted += 1
 
         await session.commit()
 
-    logger.info("Автоочистка чата: удалено сообщений %s", len(old_messages))
+    logger.info("Автоочистка чата: удалено %s из %s сообщений", deleted, len(candidates))
 
 
 async def _finance_reminder_job(bot: Bot) -> None:
