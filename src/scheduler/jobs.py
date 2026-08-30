@@ -21,7 +21,8 @@ from src.handlers.f11_weekly_review import build_weekly_review
 from src.handlers.f12_briefing import build_morning_briefing
 from src.handlers.f_goals import start_goal_flow
 from src.handlers.f_reminders import check_reminders
-from src.integrations.claude_client import suggest_new_templates
+from src.handlers.miniapp_tasks import build_task_board
+from src.integrations.claude_client import suggest_new_templates, tidy_task_titles
 from src.models.chat_message import ChatMessage
 from src.models.screen_time import ScreenTime
 from src.models.task import Task
@@ -63,6 +64,52 @@ async def _evening_diary(bot: Bot, storage: BaseStorage) -> None:
     state = FSMContext(storage=storage, key=key)
     await state.set_data({})
     await ask_question(bot, state, DiaryStates.physical)
+
+
+async def _tidy_inbox_job(bot: Bot) -> None:
+    """Ночной разбор инбокса (Phase 22) — причёсывает заголовки задач в
+    инбоксе (та же выборка, что build_task_board: без даты или
+    просроченные невыполненные), не трогая смысл. Отчитывается только
+    если что-то реально поменялось — тихая ночь без изменений не должна
+    ничего слать."""
+    logger.info("Разбираю инбокс")
+    today = datetime.now(ZoneInfo(settings.timezone)).date()
+
+    async with async_session() as session:
+        result = await session.execute(select(Task).where(Task.archived.is_(False)))
+        tasks = result.scalars().all()
+    board = build_task_board(list(tasks), today)
+    inbox_tasks = {t["id"]: t for t in board["inbox"]}
+    if not inbox_tasks:
+        return
+
+    ids = list(inbox_tasks.keys())
+    titles = [inbox_tasks[i]["title"] for i in ids]
+    tidied = await tidy_task_titles(titles)
+
+    changes: list[tuple[str, str]] = []
+    async with async_session() as session:
+        for item in tidied:
+            if not item.changed or not (0 <= item.index < len(ids)):
+                continue
+            new_title = item.tidied_title.strip()
+            old_title = titles[item.index]
+            if not new_title or new_title == old_title:
+                continue
+            task = await session.get(Task, ids[item.index])
+            if task is None:
+                continue
+            task.title = new_title
+            changes.append((old_title, new_title))
+        if changes:
+            await session.commit()
+
+    if changes:
+        lines = "\n".join(f"— «{old}» → «{new}»" for old, new in changes)
+        await bot.send_message(
+            chat_id=settings.telegram_user_id,
+            text=f"🧹 Причесал заголовки в инбоксе:\n{lines}",
+        )
 
 
 async def _cleanup_old_messages(bot: Bot) -> None:
@@ -224,6 +271,9 @@ def setup_scheduler(bot: Bot, storage: BaseStorage) -> AsyncIOScheduler:
     scheduler.add_job(_cleanup_old_messages, CronTrigger(hour=0, minute=5), args=[bot])
     # Материализация повторяющихся задач (Phase 21) — до утренней сводки.
     scheduler.add_job(_materialize_recurring_tasks_job, CronTrigger(hour=7, minute=0), args=[bot])
+    # Разбор инбокса (Phase 22) — ночью, до материализации повторяющихся
+    # (07:00) и утренней сводки (08:00), не пересекается с ними.
+    scheduler.add_job(_tidy_inbox_job, CronTrigger(hour=3, minute=0), args=[bot])
     scheduler.add_job(
         _suggest_templates_job, CronTrigger(day_of_week="sun", hour=9, minute=0), args=[bot]
     )

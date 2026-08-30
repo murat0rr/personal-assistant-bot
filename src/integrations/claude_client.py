@@ -487,3 +487,78 @@ async def propose_projects_from_goals(goals: list[dict], today: date) -> list[Pr
     if tool_use is None:
         return []
     return ProposedProjects.model_validate(tool_use.input).projects
+
+
+_TIDY_TASKS_TOOL = {
+    "name": "tidy_tasks",
+    "description": (
+        "Сделать заголовки задач лаконичнее и понятнее, сохранив исходный "
+        "смысл — без выдумывания деталей, которых не было."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "index": {
+                            "type": "integer",
+                            "description": "Индекс задачи из присланного списка",
+                        },
+                        "tidied_title": {
+                            "type": "string",
+                            "description": "Улучшенный заголовок (или тот же, если менять нечего)",
+                        },
+                        "changed": {
+                            "type": "boolean",
+                            "description": "true, только если заголовок реально стал лучше",
+                        },
+                    },
+                    "required": ["index", "tidied_title", "changed"],
+                },
+            },
+        },
+        "required": ["items"],
+    },
+}
+
+
+class TidiedTask(BaseModel):
+    index: int
+    tidied_title: str
+    changed: bool
+
+
+class TidiedTasks(BaseModel):
+    items: list[TidiedTask]
+
+
+async def tidy_task_titles(titles: list[str]) -> list[TidiedTask]:
+    """Ночной разбор инбокса (см. scheduler/jobs.py::_tidy_inbox_job) —
+    причёсывает заголовки задач: убирает опечатки, лишние слова, делает
+    формулировку понятнее, не трогая смысл. changed=false для заголовков,
+    которые и так в порядке — не переписывать ради переписывания."""
+    if not titles:
+        return []
+    numbered = "\n".join(f"{i}. {t}" for i, t in enumerate(titles))
+    response = await client.messages.create(
+        model=settings.claude_model_haiku,
+        max_tokens=1500,
+        system=(
+            "Вот заголовки задач пользователя (нумерованный список). Для "
+            "каждой — предложи более лаконичную и понятную формулировку, если "
+            "она реально нужна (опечатки, лишние слова, невнятная "
+            "формулировка). Не меняй смысл и не добавляй деталей, которых не "
+            "было. Если заголовок уже хорош — верни его как есть с "
+            "changed=false."
+        ),
+        tools=[_TIDY_TASKS_TOOL],
+        tool_choice={"type": "tool", "name": "tidy_tasks"},
+        messages=[{"role": "user", "content": numbered}],
+    )
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+    if tool_use is None:
+        return []
+    return TidiedTasks.model_validate(tool_use.input).items
