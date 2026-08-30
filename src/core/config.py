@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # Лёгкий staging для Mini App (SPEC.md §5) — полный URL /miniapp-staging/
     # на проде; пусто = команда /staging отвечает, что не настроено.
     staging_miniapp_url: str = ""
+    # Полный URL боевого /miniapp/ — используется для кнопки меню чата
+    # (см. telegram_bot.py::main, set_chat_menu_button), чтобы открывать
+    # Mini App прямо из строки чата в списке чатов, в один тап, без
+    # /start и лишних кнопок. Пусто = кнопку меню не трогаем.
+    miniapp_url: str = ""
 
 
 settings = Settings()

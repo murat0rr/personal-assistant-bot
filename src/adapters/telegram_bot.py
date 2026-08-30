@@ -10,6 +10,7 @@ from aiogram.types import (
     BotCommand,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    MenuButtonWebApp,
     Message,
     WebAppInfo,
 )
@@ -103,6 +104,18 @@ async def main() -> None:
             BotCommand(command="staging", description="Открыть staging Mini App"),
         ]
     )
+
+    # Кнопка меню чата (SPEC.md §5) — заменяет иконку "/" рядом с полем
+    # ввода на прямой запуск Mini App, виден сразу в строке чата в списке
+    # чатов, без /start и без похода в меню команд — один тап.
+    if settings.miniapp_url:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text="Открыть", web_app=WebAppInfo(url=settings.miniapp_url)
+            )
+        )
+    else:
+        logger.warning("MINIAPP_URL не задан — кнопка меню чата не настроена")
 
     # Задачи и привычки теперь в Postgres (Phase 10) — никакого синка с
     # Notion перед стартом планировщика больше не нужно, джобы стартуют
