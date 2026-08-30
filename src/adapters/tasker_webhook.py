@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from src.core.bot_client import get_bot
 from src.core.config import settings
 from src.core.db import async_session
+from src.core.user_location import user_today
 from src.handlers.f_reminders import check_location_reminders
 from src.models.screen_time import ScreenTime
 
@@ -41,8 +42,11 @@ async def receive_screen_time(
         entry_date = datetime.fromisoformat(payload.date).date()
     else:
         # Tasker шлёт итог в конце дня — по умолчанию считаем, что это
-        # сегодняшний день по локальной таймзоне.
-        entry_date = datetime.now(ZoneInfo(settings.timezone)).date()
+        # сегодняшний день по личному часовому поясу владельца (одно
+        # физическое устройство — F10 всегда владельца, Phase 40), не
+        # settings.timezone напрямую (Phase 43 — тот же класс бага,
+        # что и в api.py).
+        entry_date = await user_today(settings.telegram_user_id)
 
     async with async_session() as session:
         existing = await session.get(ScreenTime, entry_date)

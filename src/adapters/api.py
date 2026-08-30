@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated
-from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
@@ -23,7 +22,7 @@ from src.core.auth import is_authorized
 from src.core.config import settings
 from src.core.db import async_session
 from src.core.telegram_auth import verify_miniapp_init_data
-from src.core.user_location import apply_stored_timezone
+from src.core.user_location import apply_stored_timezone, user_today
 from src.handlers.f8_habits import check_habit
 from src.handlers.miniapp_tasks import build_task_board
 from src.integrations.claude_client import analyze_productivity, find_tasks_for_entity
@@ -223,7 +222,13 @@ async def list_tasks(user: dict = Depends(get_authorized_user)) -> dict:
         )
         tasks = result.scalars().all()
 
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    # Личный часовой пояс пользователя (Phase 39/40), не общий
+    # settings.timezone — иначе "сегодня"/"вчера" и деление
+    # прошлое/будущее в календаре плывут на разницу поясов (баг,
+    # найденный в Phase 43: settings.timezone по умолчанию
+    # "Europe/Moscow", реальный пользователь в другом поясе — несколько
+    # часов в сутки сервер думал, что ещё вчера).
+    today = await user_today(uid)
     return build_task_board(list(tasks), today)
 
 
@@ -406,7 +411,7 @@ async def create_habit_endpoint(
 
 @app.post("/miniapp/api/habits/{habit_id}/check")
 async def mark_habit_checked(habit_id: int, user: dict = Depends(get_authorized_user)) -> dict:
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    today = await user_today(user["id"])
     try:
         new_streak = await check_habit(habit_id, user["id"], today)
     except ValueError as exc:
@@ -419,7 +424,7 @@ async def mark_habit_checked(habit_id: int, user: dict = Depends(get_authorized_
 # как у habits, а не инлайн-SQLAlchemy, как у задач).
 @app.get("/miniapp/api/templates")
 async def list_templates_endpoint(user: dict = Depends(get_authorized_user)) -> list[dict]:
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    today = await user_today(user["id"])
     return await templates_repo.list_templates(user["id"], today)
 
 
@@ -559,9 +564,7 @@ async def _unlinked_candidate_tasks(user_id: int, field: str) -> list[dict]:
     # due_date в БД — naive timestamp (см. models/task.py) — сравнение
     # тоже должно быть naive, иначе asyncpg ругается на offset-aware
     # datetime (тот же приём, что в scheduler/jobs.py::_suggest_templates_job).
-    today_start = datetime.combine(
-        datetime.now(ZoneInfo(settings.timezone)).date(), datetime.min.time()
-    )
+    today_start = datetime.combine(await user_today(user_id), datetime.min.time())
     column = Task.project_id if field == "project_id" else Task.sphere
     async with async_session() as session:
         result = await session.execute(
@@ -621,7 +624,7 @@ async def create_goal_endpoint(
     payload: CreateGoalRequest, user: dict = Depends(get_authorized_user)
 ) -> dict:
     uid = user["id"]
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    today = await user_today(uid)
     reference_date = date.fromisoformat(payload.reference_date) if payload.reference_date else None
     goal = await goals_repo.create_goal_now(
         uid, payload.sphere, payload.tier, payload.text, today, reference_date
@@ -677,7 +680,7 @@ async def set_goal_text_endpoint(
 async def edit_goal_endpoint(
     goal_id: int, payload: EditGoalRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    today = await user_today(user["id"])
     reference_date = date.fromisoformat(payload.reference_date) if payload.reference_date else None
     try:
         await goals_repo.update_goal(
@@ -796,14 +799,14 @@ async def analytics_month_endpoint(
         year_str, month_str = month.split("-")
         anchor = date(int(year_str), int(month_str), 1)
     else:
-        anchor = datetime.now(ZoneInfo(settings.timezone)).date()
+        anchor = await user_today(user["id"])
     return await analytics_repo.month_breakdown(user["id"], anchor)
 
 
 @app.get("/miniapp/api/analytics/summary")
 async def analytics_summary_endpoint(user: dict = Depends(get_authorized_user)) -> dict:
     uid = user["id"]
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    today = await user_today(uid)
     spheres = await analytics_repo.sphere_breakdown(uid)
     month = await analytics_repo.month_breakdown(uid, today)
     projects = await projects_repo.list_projects(uid)

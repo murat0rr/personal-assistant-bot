@@ -1,6 +1,4 @@
 import logging
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
 from aiogram.filters import StateFilter
@@ -10,6 +8,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from src.core.auth import is_authorized
 from src.core.config import settings
+from src.core.user_location import user_today
 from src.integrations.claude_client import summarize_diary
 from src.integrations.notion import create_diary_entry
 
@@ -102,7 +101,10 @@ async def _advance(bot: Bot, state: FSMContext, current: State) -> None:
 
 async def _finish(bot: Bot, state: FSMContext) -> None:
     data = await state.get_data()
-    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    # Дневник — только у владельца (Phase 40), поэтому личный часовой
+    # пояс — его собственный (Phase 43: тот же класс бага, что и в
+    # api.py — settings.timezone мог не совпадать с реальным поясом).
+    today = await user_today(settings.telegram_user_id)
 
     ratings = {field: data.get(field) for field in _RATING_FIELDS}
     highlight = data.get("highlight") or None
