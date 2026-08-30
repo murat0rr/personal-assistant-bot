@@ -143,6 +143,69 @@ async def parse_reminder(text: str, today: date) -> ReminderPlan:
     return ReminderPlan.model_validate(tool_use.input)
 
 
+_SUGGEST_TEMPLATES_TOOL = {
+    "name": "suggest_templates",
+    "description": (
+        "Предложить новые шаблоны частых задач на основе заголовков задач "
+        "пользователя за последнюю неделю."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "suggestions": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "0-3 лаконичные формулировки для задач, которые реально "
+                    "повторяются за неделю и ещё не покрыты существующими "
+                    "шаблонами. Пустой список, если ничего подходящего нет — "
+                    "не выдумывай шаблоны только чтобы что-то предложить."
+                ),
+            },
+        },
+        "required": ["suggestions"],
+    },
+}
+
+
+class TemplateSuggestions(BaseModel):
+    suggestions: list[str]
+
+
+async def suggest_new_templates(recent_titles: list[str], existing_titles: list[str]) -> list[str]:
+    """Раз в неделю (см. scheduler/jobs.py::_suggest_templates_job) — по
+    заголовкам задач за неделю предлагает 0-3 новых частых формулировки,
+    которых ещё нет среди существующих шаблонов."""
+    response = await client.messages.create(
+        model=settings.claude_model_haiku,
+        max_tokens=300,
+        system=(
+            "Вот заголовки задач пользователя за последнюю неделю и уже "
+            "существующие шаблоны частых задач (список готовых формулировок "
+            "для быстрого добавления). Предложи новые шаблоны только для "
+            "того, что реально повторяется в задачах за неделю и ещё не "
+            "покрыто существующими шаблонами — по смыслу, не только по "
+            "точному совпадению текста. Не предлагай ничего, если нечего "
+            "предложить."
+        ),
+        tools=[_SUGGEST_TEMPLATES_TOOL],
+        tool_choice={"type": "tool", "name": "suggest_templates"},
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    f"Задачи за неделю:\n{chr(10).join(recent_titles) or '(нет)'}\n\n"
+                    f"Существующие шаблоны:\n{chr(10).join(existing_titles) or '(нет)'}"
+                ),
+            }
+        ],
+    )
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+    if tool_use is None:
+        return []
+    return TemplateSuggestions.model_validate(tool_use.input).suggestions
+
+
 async def summarize_finance_csv(csv_text: str) -> str:
     response = await client.messages.create(
         model=settings.claude_model_sonnet,

@@ -13,13 +13,16 @@ from sqlalchemy import select
 from src.core.config import settings
 from src.core.db import async_session
 from src.core.habits import list_habits
+from src.core.task_templates import create_ai_template, list_templates
 from src.handlers.f4_diary import DiaryStates, ask_question
 from src.handlers.f9_finance import FINANCE_GUIDE
 from src.handlers.f11_weekly_review import build_weekly_review
 from src.handlers.f12_briefing import build_morning_briefing
 from src.handlers.f_reminders import check_reminders
+from src.integrations.claude_client import suggest_new_templates
 from src.models.chat_message import ChatMessage
 from src.models.screen_time import ScreenTime
+from src.models.task import Task
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +118,40 @@ async def _habit_reminders(bot: Bot) -> None:
     )
 
 
+async def _suggest_templates_job(bot: Bot) -> None:
+    """Раз в неделю (воскресенье, 09:00) — смотрит на заголовки задач за
+    последние 7 дней и предлагает новые шаблоны частых задач через Claude
+    (см. claude_client.suggest_new_templates). Не чаще 1 раза в неделю —
+    ровно как попросили."""
+    logger.info("Анализирую частые задачи для новых шаблонов")
+    tz = ZoneInfo(settings.timezone)
+    # due_date в БД — naive timestamp (локальное время без tz), см.
+    # models/task.py — сравнение тоже должно быть naive, иначе asyncpg
+    # ругается на offset-aware datetime для timestamp without time zone.
+    since = (datetime.now(tz) - timedelta(days=7)).replace(tzinfo=None)
+
+    async with async_session() as session:
+        result = await session.execute(select(Task.title).where(Task.due_date >= since))
+        recent_titles = [row[0] for row in result.all()]
+
+    existing = await list_templates(datetime.now(tz).date())
+    existing_titles = [t["title"] for t in existing]
+
+    suggestions = await suggest_new_templates(recent_titles, existing_titles)
+    if not suggestions:
+        logger.info("Новых шаблонов не предложено")
+        return
+
+    for title in suggestions:
+        await create_ai_template(title)
+
+    names = "\n".join(f"— {title}" for title in suggestions)
+    await bot.send_message(
+        chat_id=settings.telegram_user_id,
+        text=f"✨ Добавил новые шаблоны частых задач по итогам недели:\n{names}",
+    )
+
+
 def setup_scheduler(bot: Bot, storage: BaseStorage) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
     scheduler.add_job(_morning_digest, CronTrigger(hour=8, minute=0), args=[bot])
@@ -125,4 +162,7 @@ def setup_scheduler(bot: Bot, storage: BaseStorage) -> AsyncIOScheduler:
     scheduler.add_job(_habit_reminders, CronTrigger(hour=20, minute=0), args=[bot])
     scheduler.add_job(_evening_diary, CronTrigger(hour=21, minute=0), args=[bot, storage])
     scheduler.add_job(_cleanup_old_messages, CronTrigger(hour=0, minute=5), args=[bot])
+    scheduler.add_job(
+        _suggest_templates_job, CronTrigger(day_of_week="sun", hour=9, minute=0), args=[bot]
+    )
     return scheduler

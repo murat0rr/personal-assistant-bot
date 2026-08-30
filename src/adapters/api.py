@@ -11,6 +11,7 @@ from sqlalchemy import select, update
 
 from src.adapters.tasker_webhook import router as tasker_webhook_router
 from src.core import habits as habits_repo
+from src.core import task_templates as templates_repo
 from src.core.auth import is_authorized
 from src.core.config import settings
 from src.core.db import async_session
@@ -281,6 +282,63 @@ async def mark_habit_checked(habit_id: int, _: dict = Depends(get_authorized_use
     today = datetime.now(ZoneInfo(settings.timezone)).date()
     new_streak = await check_habit(habit_id, today)
     return {"status": "ok", "streak": new_streak}
+
+
+# Шаблонные задачи (Phase 18) — эндпоинты зеркалят /tasks/*, но вся
+# логика делегируется src/core/task_templates.py (репозиторный слой,
+# как у habits, а не инлайн-SQLAlchemy, как у задач).
+@app.get("/miniapp/api/templates")
+async def list_templates_endpoint(_: dict = Depends(get_authorized_user)) -> list[dict]:
+    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    return await templates_repo.list_templates(today)
+
+
+@app.post("/miniapp/api/templates")
+async def create_template_endpoint(
+    payload: SetTitleRequest, _: dict = Depends(get_authorized_user)
+) -> dict:
+    return await templates_repo.create_template(payload.title)
+
+
+@app.post("/miniapp/api/templates/{template_id}/reorder")
+async def reorder_template_endpoint(
+    template_id: int, payload: SetSortOrderRequest, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    try:
+        await templates_repo.reorder_template(template_id, payload.sort_order)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="template not found") from exc
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/templates/{template_id}/title")
+async def rename_template_endpoint(
+    template_id: int, payload: SetTitleRequest, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    try:
+        await templates_repo.rename_template(template_id, payload.title)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="template not found") from exc
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/templates/archive-batch")
+async def archive_templates_batch_endpoint(
+    payload: BatchArchiveRequest, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    await templates_repo.archive_templates_batch(payload.ids)
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/templates/{template_id}/use")
+async def use_template_endpoint(
+    template_id: int, payload: SetDueDateRequest, _: dict = Depends(get_authorized_user)
+) -> dict:
+    due_date = _parse_due_date(payload.due_date)
+    try:
+        return await templates_repo.use_template(template_id, due_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="template not found") from exc
 
 
 # Лёгкий staging для Mini App (SPEC.md §5) — второй, полностью отдельный от

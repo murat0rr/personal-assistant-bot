@@ -54,6 +54,8 @@ window.Telegram = {
 
 let _nextId = 1000;
 const _tasks = __TASKS_JSON__;
+let _nextTemplateId = 100;
+const _templates = __TEMPLATES_JSON__;
 
 function _serialize(t) {
   return {
@@ -64,6 +66,21 @@ function _serialize(t) {
     priority: t.priority,
     done: t.done,
     sort_order: t.sort_order,
+  };
+}
+
+function _isStale(lastUsed, staleAfter, todayIso) {
+  if (!lastUsed) return true;
+  const days = (new Date(todayIso) - new Date(lastUsed)) / 86400000;
+  return days >= staleAfter;
+}
+
+function _serializeTemplate(t) {
+  return {
+    id: t.id,
+    title: t.title,
+    sort_order: t.sort_order,
+    is_stale: _isStale(t.last_used, t.stale_after, __TODAY_JSON__),
   };
 }
 
@@ -135,9 +152,57 @@ window.fetch = async (path, options = {}) => {
     result = { weather: "дев-харнесс, погода не настроена" };
   } else if (path === "/miniapp/api/habits" && method === "GET") {
     result = [];
+  } else if (path === "/miniapp/api/templates" && method === "GET") {
+    result = _templates
+      .filter((t) => !t.archived)
+      .map((t) => _serializeTemplate(t))
+      .sort((a, b) => a.sort_order - b.sort_order);
+  } else if (path === "/miniapp/api/templates" && method === "POST") {
+    const id = _nextTemplateId++;
+    const t = {
+      id,
+      title: body.title,
+      sort_order: Date.now(),
+      archived: false,
+      last_used: null,
+      stale_after: 14,
+    };
+    _templates.push(t);
+    result = _serializeTemplate(t);
+  } else if (path === "/miniapp/api/templates/archive-batch" && method === "POST") {
+    for (const id of body.ids) {
+      const t = _templates.find((x) => x.id === id);
+      if (t) t.archived = true;
+    }
+  } else if (path.match(/\\/templates\\/(\\d+)\\/(\\w[\\w-]*)/)) {
+    const m = path.match(/\\/templates\\/(\\d+)\\/(\\w[\\w-]*)/);
+    const id = Number(m[1]);
+    const action = m[2];
+    const t = _templates.find((x) => x.id === id);
+    if (!t) return { ok: false, status: 404, json: async () => ({}) };
+    if (action === "reorder") {
+      t.sort_order = body.sort_order;
+    } else if (action === "title") {
+      t.title = body.title;
+    } else if (action === "use") {
+      const due = body.due_date;
+      const taskId = _nextId++;
+      _tasks.push({
+        id: taskId,
+        title: t.title,
+        due: due.slice(0, 10),
+        time: due.length > 10 ? due.slice(11, 16) : null,
+        priority: "средний",
+        done: false,
+        sort_order: Date.now(),
+      });
+      t.last_used = due.slice(0, 10);
+      result = { id: taskId, title: t.title };
+    }
   }
 
   window.__lastTasks = _tasks;
+  window.__lastTemplates = _templates;
   return { ok: true, status: 200, json: async () => result };
 };
 
@@ -248,33 +313,69 @@ def _default_tasks(count: int) -> list[dict]:
     return tasks
 
 
-def _build_mock_script(tasks: list[dict]) -> str:
+def _default_templates() -> list[dict]:
+    # Три показательных случая подсветки "давно не делал" (Phase 18,
+    # _is_stale): недавно использованный, явно устаревший, ни разу не
+    # использованный (last_used=None — тоже сразу stale).
+    today = date.today()
+    return [
+        {
+            "id": 1,
+            "title": "Тренировка по боксу",
+            "sort_order": 1000,
+            "archived": False,
+            "last_used": (today - timedelta(days=2)).isoformat(),
+            "stale_after": 14,
+        },
+        {
+            "id": 2,
+            "title": "Стирка",
+            "sort_order": 2000,
+            "archived": False,
+            "last_used": (today - timedelta(days=20)).isoformat(),
+            "stale_after": 14,
+        },
+        {
+            "id": 3,
+            "title": "Продукты",
+            "sort_order": 3000,
+            "archived": False,
+            "last_used": None,
+            "stale_after": 14,
+        },
+    ]
+
+
+def _build_mock_script(tasks: list[dict], templates: list[dict]) -> str:
     today = date.today().isoformat()
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     script = MOCK_SCRIPT.replace("__TASKS_JSON__", json.dumps(tasks, ensure_ascii=False))
+    script = script.replace("__TEMPLATES_JSON__", json.dumps(templates, ensure_ascii=False))
     script = script.replace("__TODAY_JSON__", json.dumps(today))
     script = script.replace("__YESTERDAY_JSON__", json.dumps(yesterday))
     return script
 
 
-def build_merged_html(tasks: list[dict]) -> bytes:
+def build_merged_html(tasks: list[dict], templates: list[dict]) -> bytes:
     html = INDEX_HTML.read_text(encoding="utf-8")
     if TELEGRAM_SCRIPT_TAG not in html:
         raise RuntimeError(
             "index.html изменил структуру — тег telegram-web-app.js не найден, "
             "обнови TELEGRAM_SCRIPT_TAG в scripts/miniapp_dev_server.py"
         )
-    mock = f"<script>{_build_mock_script(tasks)}</script>\n"
+    mock = f"<script>{_build_mock_script(tasks, templates)}</script>\n"
     merged = html.replace(TELEGRAM_SCRIPT_TAG, mock)
     return merged.encode("utf-8")
 
 
-def make_handler(tasks: list[dict]) -> type[http.server.BaseHTTPRequestHandler]:
+def make_handler(
+    tasks: list[dict], templates: list[dict]
+) -> type[http.server.BaseHTTPRequestHandler]:
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 (метод BaseHTTPRequestHandler)
             if self.path in ("/", "/index.html"):
                 try:
-                    body = build_merged_html(tasks)
+                    body = build_merged_html(tasks, templates)
                 except RuntimeError as exc:
                     self.send_response(500)
                     self.end_headers()
@@ -317,11 +418,12 @@ def main() -> None:
         if args.tasks
         else _default_tasks(args.count)
     )
+    templates = _default_templates()
 
-    handler = make_handler(tasks)
+    handler = make_handler(tasks, templates)
     server = http.server.HTTPServer(("127.0.0.1", args.port), handler)
     print(f"Mini App dev-сервер: http://127.0.0.1:{args.port}/  (Ctrl+C — остановить)")
-    print(f"Задач в наборе: {len(tasks)}")
+    print(f"Задач в наборе: {len(tasks)}, шаблонов: {len(templates)}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

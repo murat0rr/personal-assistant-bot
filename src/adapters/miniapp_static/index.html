@@ -445,6 +445,44 @@
       z-index: 26;
       box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
     }
+
+    /* Шаблонные задачи (Phase 18) — значок слева от кнопки подтверждения
+       в строке добавления (.small-btn уже даёт нужный приглушённый цвет и
+       размер, свой стиль здесь не нужен), открывает bottom sheet со
+       списком. Постоянный bottom sheet, живёт всё время (как .reorder-scrim) —
+       видимость только через класс. Тот же z-index, что у
+       .list.reorder-active-list — сам список шаблонов внутри тоже может
+       войти в режим переноса и "прорасти" выше .reorder-scrim ровно так
+       же, как обычные списки. */
+    .templates-sheet {
+      display: none;
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 26;
+      background: var(--bg);
+      border-radius: 16px 16px 0 0;
+      padding: 8px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+      max-height: 70vh;
+      overflow-y: auto;
+      box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.35);
+    }
+    .templates-sheet.visible { display: block; }
+    .templates-sheet-handle {
+      width: 36px;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--text-muted);
+      opacity: 0.4;
+      margin: 6px auto 12px;
+    }
+    /* Подсветка "давно не пользовался" (>= stale_after_days, см.
+       core/task_templates.py::_is_stale) — тёплый едва заметный тинт, не
+       агрессивная плашка/бейдж, как и было заявлено в требованиях. */
+    .template-row.stale {
+      background: color-mix(in srgb, var(--accent) 6%, transparent);
+    }
   </style>
 </head>
 <body>
@@ -491,6 +529,12 @@
   </div>
 
   <div id="reorder-scrim" class="reorder-scrim"></div>
+
+  <div id="templates-sheet" class="templates-sheet">
+    <div class="templates-sheet-handle"></div>
+    <p class="section-label">Шаблоны</p>
+    <div id="templates-list" class="list"></div>
+  </div>
 
   <script>
     const tg = window.Telegram?.WebApp;
@@ -551,11 +595,30 @@
     function undoIcon() {
       return icon('<path d="M4 10h9a5 5 0 010 10H9"/><path d="M4 10l5-5M4 10l5 5"/>', 16);
     }
+    // Шаблонные задачи (Phase 18) — контур звезды, "избранное/быстрый
+    // выбор", слева от кнопки подтверждения в строке добавления.
+    function starIcon() {
+      return icon(
+        '<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>',
+        18
+      );
+    }
 
     // ---- Состояние. Рендер идёт из него, без похода в сеть на каждое действие
     // (optimistic UI) — сеть только подтверждает то, что уже видно на экране.
     let boardState = { days: {}, dated_tasks: [], inbox: [] };
     const pendingIds = new Set();
+
+    // Шаблонные задачи (Phase 18) — отдельный список, живёт в bottom sheet
+    // (#templates-sheet), открывается значком-звездой в строке добавления
+    // задачи (Вчера/Сегодня/календарь — не Инбокс, см. showTemplatesPicker).
+    let templatesData = [];
+    const pendingTemplateIds = new Set();
+    let templatesPickerOpen = false;
+    // dateFor того списка, из которого открыли sheet — тап по шаблону
+    // должен создать задачу на ту же дату, что предложила бы обычная
+    // строка добавления в этом же списке.
+    let templatesPickerDateFor = null;
 
     // Порядок — ручной (Phase 13), хранится в task.sort_order (float),
     // приходит с бэкенда и обновляется через /reorder при перетаскивании.
@@ -621,6 +684,7 @@
     // batch-запросом, без подтверждения (сам режим переноса с явным
     // выходом — уже достаточная защита от случайного удаления).
     async function exitReorderMode() {
+      const isTemplates = reorderActiveKey === "templates";
       const ids = Array.from(pendingArchiveIds);
       reorderActiveKey = null;
       pendingArchiveIds = new Set();
@@ -628,18 +692,23 @@
         render();
         return;
       }
-      ids.forEach((id) => pendingIds.add(id));
+      const idSet = isTemplates ? pendingTemplateIds : pendingIds;
+      ids.forEach((id) => idSet.add(id));
       render();
       try {
-        await api("/miniapp/api/tasks/archive-batch", {
-          method: "POST",
-          body: JSON.stringify({ ids }),
-        });
-        ids.forEach((id) => removeTaskEverywhere(id));
+        await api(
+          isTemplates ? "/miniapp/api/templates/archive-batch" : "/miniapp/api/tasks/archive-batch",
+          { method: "POST", body: JSON.stringify({ ids }) }
+        );
+        if (isTemplates) {
+          templatesData = templatesData.filter((t) => !ids.includes(t.id));
+        } else {
+          ids.forEach((id) => removeTaskEverywhere(id));
+        }
       } catch (e) {
-        alert("Не удалось удалить задачи.");
+        alert(isTemplates ? "Не удалось удалить шаблоны." : "Не удалось удалить задачи.");
       } finally {
-        ids.forEach((id) => pendingIds.delete(id));
+        ids.forEach((id) => idSet.delete(id));
         render();
       }
     }
@@ -1361,7 +1430,7 @@
     // поле ввода — тянуть каретку в сторону не нужно, это уже умеет сам
     // телефон (нативная ручка-капелька под курсором есть у любого
     // сфокусированного текстового поля на iOS/Android).
-    function startReorderInlineEdit(row, title, task, clickX) {
+    function startReorderInlineEdit(row, title, task, clickX, renameFn = renameTask) {
       const input = document.createElement("input");
       input.type = "text";
       input.className = "title-edit title-full";
@@ -1388,7 +1457,7 @@
           const trimmed = input.value.trim();
           if (trimmed && trimmed !== task.title) {
             title.textContent = trimmed;
-            renameTask(task, trimmed);
+            renameFn(task, trimmed);
           }
         }
         row.replaceChild(title, input);
@@ -1463,6 +1532,148 @@
       return row;
     }
 
+    // Строка шаблона в режиме переноса (Phase 18) — двойник renderReorderRow
+    // выше, с поправкой на источник данных (шаблоны, не задачи) и своим
+    // набором эндпоинтов. Не обобщаю в одну общую функцию с
+    // renderReorderRow — риск задеть уже отлаженный путь для задач выше
+    // пользы; дублирование тут ровно то, что почистит будущая разбивка
+    // index.html на модули (SPEC.md §5), не стоит делать это попутно здесь.
+    function renderTemplateReorderRow(template) {
+      const isPending = pendingTemplateIds.has(template.id);
+      const markedForArchive = pendingArchiveIds.has(template.id);
+
+      const row = document.createElement("div");
+      row.className =
+        "row reorder-row" + (isPending ? " pending" : "") + (markedForArchive ? " pending-archive" : "");
+      row.dataset.sortOrder = String(template.sort_order);
+
+      const grip = document.createElement("span");
+      grip.className = "grip";
+      grip.setAttribute("aria-label", "Перетащить");
+      grip.innerHTML = gripIcon();
+      row.append(grip);
+
+      const title = document.createElement("span");
+      title.className = "title title-full";
+      title.textContent = template.title;
+      row.append(title);
+
+      const dragCtl = setupDragReorder({
+        row,
+        trigger: grip,
+        rowSelector: ".reorder-row",
+        getSortOrder: (el) => parseFloat(el.dataset.sortOrder),
+        persist: (newOrder) => setTemplateSortOrder(template, newOrder),
+      });
+
+      title.onclick = (e) => {
+        if (isPending || markedForArchive || dragCtl.wasDragged()) return;
+        startReorderInlineEdit(row, title, template, e.clientX, renameTemplate);
+      };
+
+      const archiveBtn = document.createElement("button");
+      archiveBtn.className = "small-btn reorder-archive-btn" + (markedForArchive ? " marked" : "");
+      archiveBtn.disabled = isPending;
+      archiveBtn.setAttribute("aria-label", markedForArchive ? "Отменить удаление" : "Удалить шаблон");
+      archiveBtn.innerHTML = markedForArchive ? undoIcon() : archiveIcon();
+      archiveBtn.onclick = () => toggleReorderArchive(template);
+      row.append(archiveBtn);
+
+      return row;
+    }
+
+    // Строка шаблона в обычном режиме (Phase 18) — только текст, тап
+    // мгновенно создаёт задачу (см. useTemplate). Никакого кружка статуса
+    // или даты — пункт 1 требований прямо это исключает.
+    function renderTemplateRow(template) {
+      const isPending = pendingTemplateIds.has(template.id);
+      const row = document.createElement("div");
+      row.className =
+        "row template-row" + (template.is_stale ? " stale" : "") + (isPending ? " pending" : "");
+
+      const title = document.createElement("span");
+      title.className = "title title-full";
+      title.textContent = template.title;
+      row.append(title);
+
+      row.onclick = () => {
+        if (isPending) return;
+        useTemplate(template);
+      };
+
+      return row;
+    }
+
+    // Строка добавления нового шаблона внизу sheet — тот же паттерн, что
+    // renderAddTaskRow, но без даты/статуса и своего эндпоинта создания.
+    let templateDraft = "";
+    function renderAddTemplateRow() {
+      const row = document.createElement("div");
+      row.className = "row add-task-row";
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = "Новый шаблон";
+      input.value = templateDraft;
+      row.append(input);
+
+      const submitBtn = document.createElement("button");
+      submitBtn.className = "icon-btn add-task-submit";
+      submitBtn.setAttribute("aria-label", "Добавить шаблон");
+      submitBtn.innerHTML = plusIcon();
+      submitBtn.disabled = !templateDraft.trim();
+      input.addEventListener("input", () => {
+        templateDraft = input.value;
+        submitBtn.disabled = !input.value.trim();
+      });
+
+      const submit = () => {
+        const value = input.value.trim();
+        if (!value) return;
+        templateDraft = "";
+        createTemplate(value);
+      };
+      submitBtn.onclick = submit;
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") submit();
+      });
+      row.append(submitBtn);
+
+      return row;
+    }
+
+    // Рендерит #templates-list — вызывается из общего render(), как
+    // остальные списки. Тот же переключатель обычный/reorder режим, что и
+    // renderList, но своя реализация: коллекция шаблонов не участвует в
+    // группировке по дням/событиям, ей это не нужно.
+    function renderTemplatesList() {
+      const container = document.getElementById("templates-list");
+      const reorderMode = isReorderActive("templates");
+      container.classList.toggle("reorder-active-list", reorderMode);
+      container.innerHTML = "";
+      const sorted = [...templatesData].sort((a, b) => a.sort_order - b.sort_order);
+      if (sorted.length === 0) {
+        renderEmpty(container);
+      } else {
+        sorted.forEach((t) => {
+          container.append(reorderMode ? renderTemplateReorderRow(t) : renderTemplateRow(t));
+        });
+      }
+      container.append(renderAddTemplateRow());
+    }
+
+    function openTemplatesPicker(dateFor) {
+      templatesPickerDateFor = dateFor;
+      templatesPickerOpen = true;
+      render();
+    }
+
+    function closeTemplatesPicker() {
+      templatesPickerOpen = false;
+      templatesPickerDateFor = null;
+      render();
+    }
+
     // Черновики строки добавления — переживают пересборку списка. render()
     // перестраивает ВСЕ списки на любое действие в приложении (даже в
     // другом месте), а не только тот, где что-то реально изменилось —
@@ -1514,6 +1725,18 @@
         input.placeholder = "Новая задача";
         input.value = draft.text;
         row.append(input);
+      }
+
+      // Значок шаблонов (Phase 18) — слева от кнопки подтверждения, только
+      // там, где это уместно (не в Инбоксе, см. showTemplatesPicker/пункт
+      // 5 требований). Открывает bottom sheet со списком частых задач.
+      if (ctx.showTemplatesPicker) {
+        const templatesBtn = document.createElement("button");
+        templatesBtn.className = "small-btn templates-btn";
+        templatesBtn.setAttribute("aria-label", "Частые задачи");
+        templatesBtn.innerHTML = starIcon();
+        templatesBtn.onclick = () => openTemplatesPicker(ctx.dateFor);
+        row.append(templatesBtn);
       }
 
       const submitBtn = document.createElement("button");
@@ -1607,12 +1830,14 @@
         listKey: "yesterday",
         style: "swipe",
         showMoveToToday: true,
+        showTemplatesPicker: true,
         dateFor: () => boardState.days.yesterday?.date,
       },
       today: {
         listKey: "today",
         style: "swipe",
         showMoveToToday: false,
+        showTemplatesPicker: true,
         dateFor: () => boardState.days.today?.date,
       },
     };
@@ -1703,6 +1928,7 @@
         listKey,
         style: "swipe",
         showMoveToToday: false,
+        showTemplatesPicker: true,
         dateFor: () => selectedWeekDate,
       });
       el.append(listEl);
@@ -1728,7 +1954,11 @@
       renderInboxHeader();
       renderWeekCarousel();
       renderWeekDetail();
-      document.getElementById("reorder-scrim").classList.toggle("visible", reorderActiveKey !== null);
+      renderTemplatesList();
+      document
+        .getElementById("reorder-scrim")
+        .classList.toggle("visible", reorderActiveKey !== null || templatesPickerOpen);
+      document.getElementById("templates-sheet").classList.toggle("visible", templatesPickerOpen);
     }
 
     function addDaysIso(iso, days) {
@@ -1949,6 +2179,126 @@
       }
     }
 
+    // ---- Шаблонные задачи (Phase 18) — тот же optimistic-паттерн, что и у
+    // остальных правок задач/списков выше, применённый к отдельной
+    // коллекции templatesData (не части boardState).
+
+    async function loadTemplates() {
+      try {
+        templatesData = await api("/miniapp/api/templates");
+      } catch (e) {
+        templatesData = [];
+      }
+      render();
+    }
+
+    async function setTemplateSortOrder(template, newOrder) {
+      const id = template.id;
+      const prevOrder = template.sort_order;
+      template.sort_order = newOrder;
+      pendingTemplateIds.add(id);
+      render();
+      try {
+        await api(`/miniapp/api/templates/${encodeURIComponent(id)}/reorder`, {
+          method: "POST",
+          body: JSON.stringify({ sort_order: newOrder }),
+        });
+      } catch (e) {
+        template.sort_order = prevOrder;
+        alert("Не удалось изменить порядок шаблонов.");
+      } finally {
+        pendingTemplateIds.delete(id);
+        render();
+      }
+    }
+
+    async function renameTemplate(template, newTitle) {
+      const trimmed = newTitle.trim();
+      if (!trimmed || trimmed === template.title) return;
+      const id = template.id;
+      const prevTitle = template.title;
+      template.title = trimmed;
+      pendingTemplateIds.add(id);
+      render();
+      try {
+        await api(`/miniapp/api/templates/${encodeURIComponent(id)}/title`, {
+          method: "POST",
+          body: JSON.stringify({ title: trimmed }),
+        });
+      } catch (e) {
+        template.title = prevTitle;
+        alert("Не удалось переименовать шаблон.");
+      } finally {
+        pendingTemplateIds.delete(id);
+        render();
+      }
+    }
+
+    async function createTemplate(title) {
+      const tempId = "pending-" + Date.now();
+      const tempTemplate = { id: tempId, title, sort_order: Date.now(), is_stale: false };
+      pendingTemplateIds.add(tempId);
+      templatesData.push(tempTemplate);
+      render();
+      try {
+        const result = await api("/miniapp/api/templates", {
+          method: "POST",
+          body: JSON.stringify({ title }),
+        });
+        tempTemplate.id = result.id;
+        tempTemplate.sort_order = result.sort_order;
+        tempTemplate.is_stale = result.is_stale;
+      } catch (e) {
+        templatesData = templatesData.filter((t) => t.id !== tempId);
+        alert("Не удалось создать шаблон.");
+      } finally {
+        pendingTemplateIds.delete(tempTemplate.id);
+        render();
+      }
+    }
+
+    // Тап по шаблону в обычном режиме — мгновенно создаёт задачу с тем же
+    // due_date, что и обычная строка добавления в списке, из которого
+    // открыли sheet (см. openTemplatesPicker/templatesPickerDateFor).
+    // last_used_date на бэкенде обновляется на дату НОВОЙ задачи, не на
+    // сегодня — здесь просто гасим is_stale оптимистично, реальную дату
+    // подтянет следующая полная загрузка.
+    async function useTemplate(template) {
+      const dueDate = templatesPickerDateFor ? templatesPickerDateFor() : undefined;
+      if (dueDate === undefined) return;
+      closeTemplatesPicker();
+
+      const tempId = "pending-" + Date.now();
+      const tempTask = {
+        id: tempId,
+        title: template.title,
+        due_date: dueDate,
+        due_time: null,
+        priority: "средний",
+        done: false,
+        sort_order: Date.now(),
+      };
+      pendingIds.add(tempId);
+      rebucketTask(tempTask);
+      const prevStale = template.is_stale;
+      template.is_stale = false;
+      render();
+      try {
+        const result = await api(`/miniapp/api/templates/${encodeURIComponent(template.id)}/use`, {
+          method: "POST",
+          body: JSON.stringify({ due_date: dueDate }),
+        });
+        tempTask.id = result.id;
+      } catch (e) {
+        removeTaskEverywhere(tempId);
+        template.is_stale = prevStale;
+        alert("Не удалось создать задачу из шаблона.");
+      } finally {
+        pendingIds.delete(tempId);
+        render();
+      }
+    }
+
     // Инбокс свёрнут по умолчанию — только заголовок со счётчиком, тап
     // разворачивает список и поле добавления.
     let inboxExpanded = false;
@@ -1968,11 +2318,22 @@
     attachReorderEntry(document.getElementById("yesterday-list"), "yesterday");
     attachReorderEntry(document.getElementById("today-list"), "today");
     attachReorderEntry(document.getElementById("inbox-list"), "inbox");
+    attachReorderEntry(document.getElementById("templates-list"), "templates");
 
     // Тап по затемнению — единственный выход из режима переноса (кнопки
     // "Готово" больше нет): список рисуется выше .reorder-scrim (см. CSS),
     // так что клики внутри него сюда не долетают — только клики "мимо".
-    document.getElementById("reorder-scrim").addEventListener("click", () => exitReorderMode());
+    document.getElementById("reorder-scrim").addEventListener("click", () => {
+      // Тап по затемнению: если в этот момент активен режим переноса
+      // (в т.ч. для шаблонов) — обычный выход из него (архивирует
+      // отмеченное). Иначе, если просто открыт picker шаблонов без
+      // режима переноса — закрывает его без побочных эффектов.
+      if (reorderActiveKey !== null) {
+        exitReorderMode();
+      } else if (templatesPickerOpen) {
+        closeTemplatesPicker();
+      }
+    });
 
     // Полоска недель — палец двигает .week-track напрямую через transform
     // (1:1, без нативного скролла), а после отпускания доезжает ровно
@@ -2166,6 +2527,7 @@
 
     loadBoard();
     loadDigest();
+    loadTemplates();
   </script>
 </body>
 </html>

@@ -4,5 +4,15 @@ from src.models.habit import Habit
 from src.models.reminder import Reminder
 from src.models.screen_time import ScreenTime
 from src.models.task import Base, Task
+from src.models.task_template import TaskTemplate
 
-__all__ = ["Base", "Task", "Habit", "ChatMessage", "Reminder", "ScreenTime", "AuthorizedUser"]
+__all__ = [
+    "Base",
+    "Task",
+    "Habit",
+    "ChatMessage",
+    "Reminder",
+    "ScreenTime",
+    "AuthorizedUser",
+    "TaskTemplate",
+]

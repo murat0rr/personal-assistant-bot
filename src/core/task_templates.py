@@ -1,0 +1,102 @@
+import time
+from datetime import date, datetime
+
+from sqlalchemy import select, update
+
+from src.core.db import async_session
+from src.models.task import Task
+from src.models.task_template import TaskTemplate
+
+_DEFAULT_PRIORITY = "средний"
+
+
+def _is_stale(last_used: date | None, stale_after_days: int, today: date) -> bool:
+    """Шаблоном, которым ни разу не пользовались (last_used=None) — самый
+    явный случай "давно не делал", подсвечиваем сразу, не ждём порога."""
+    if last_used is None:
+        return True
+    return (today - last_used).days >= stale_after_days
+
+
+def _serialize(template: TaskTemplate, today: date) -> dict:
+    return {
+        "id": template.id,
+        "title": template.title,
+        "sort_order": template.sort_order,
+        "is_stale": _is_stale(template.last_used_date, template.stale_after_days, today),
+    }
+
+
+async def list_templates(today: date) -> list[dict]:
+    async with async_session() as session:
+        result = await session.execute(select(TaskTemplate).where(TaskTemplate.archived.is_(False)))
+        templates = result.scalars().all()
+    return sorted((_serialize(t, today) for t in templates), key=lambda t: t["sort_order"])
+
+
+async def create_template(title: str, source: str = "manual") -> dict:
+    async with async_session() as session:
+        template = TaskTemplate(title=title, source=source)
+        session.add(template)
+        await session.commit()
+        await session.refresh(template)
+    return _serialize(template, date.today())
+
+
+async def create_ai_template(title: str) -> dict:
+    """Шаблон, предложенный еженедельной джобой анализа частых задач
+    (см. scheduler/jobs.py::_suggest_templates_job) — отдельная тонкая
+    обёртка, чтобы вызывающий код не путался в источнике по строке."""
+    return await create_template(title, source="ai")
+
+
+async def rename_template(template_id: int, title: str) -> None:
+    async with async_session() as session:
+        template = await session.get(TaskTemplate, template_id)
+        if template is None:
+            raise ValueError("template not found")
+        template.title = title
+        await session.commit()
+
+
+async def reorder_template(template_id: int, sort_order: float) -> None:
+    async with async_session() as session:
+        template = await session.get(TaskTemplate, template_id)
+        if template is None:
+            raise ValueError("template not found")
+        template.sort_order = sort_order
+        await session.commit()
+
+
+async def archive_templates_batch(ids: list[int]) -> None:
+    if not ids:
+        return
+    async with async_session() as session:
+        await session.execute(
+            update(TaskTemplate).where(TaskTemplate.id.in_(ids)).values(archived=True)
+        )
+        await session.commit()
+
+
+async def use_template(template_id: int, due_date: datetime) -> dict:
+    """Создаёт задачу из шаблона (тот же набор дефолтных полей, что
+    обычное создание через Mini App — см. api.py::create_task_endpoint)
+    и обновляет last_used_date шаблона на дату НОВОЙ задачи (не сегодня —
+    "на какую дату ты поставил", см. модель)."""
+    async with async_session() as session:
+        template = await session.get(TaskTemplate, template_id)
+        if template is None:
+            raise ValueError("template not found")
+
+        task = Task(
+            title=template.title,
+            due_date=due_date,
+            priority=_DEFAULT_PRIORITY,
+            source="template",
+            sort_order=time.time(),
+        )
+        session.add(task)
+        template.last_used_date = due_date.date()
+        await session.commit()
+        await session.refresh(task)
+        return {"id": task.id, "title": task.title}
