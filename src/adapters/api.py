@@ -1,5 +1,7 @@
 import logging
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -20,6 +22,7 @@ from src.core.auth import is_authorized
 from src.core.config import settings
 from src.core.db import async_session
 from src.core.telegram_auth import verify_miniapp_init_data
+from src.core.user_location import apply_stored_timezone
 from src.handlers.f8_habits import check_habit
 from src.handlers.miniapp_tasks import build_task_board
 from src.integrations.claude_client import analyze_productivity, find_tasks_for_entity
@@ -43,7 +46,20 @@ def _parse_due_date(value: str) -> datetime:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Личный ассистент API")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # Отдельный процесс от bot — своя память, свой settings.timezone.
+    # Подтягиваем то, что владелец мог установить командой /timezone,
+    # сразу на старте (Phase 39, см. src/core/user_location.py). Без
+    # этого API-процесс продолжал бы считать "сегодня" по старой зоне
+    # (месячный календарь и т.д.; автоочистка чата тут не участвует — она
+    # только в bot) до следующего деплоя.
+    await apply_stored_timezone()
+    yield
+
+
+app = FastAPI(title="Личный ассистент API", lifespan=_lifespan)
 app.include_router(tasker_webhook_router)
 
 

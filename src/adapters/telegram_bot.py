@@ -19,6 +19,7 @@ from src.core.auth import is_authorized
 from src.core.config import settings
 from src.core.message_tracking import attach_message_tracking, track_incoming
 from src.core.orchestrator import router as orchestrator_router
+from src.core.user_location import apply_stored_timezone
 from src.handlers.f4_diary import router as diary_router
 from src.handlers.f9_finance import router as finance_router
 from src.handlers.f_auth import AuthStates
@@ -26,6 +27,7 @@ from src.handlers.f_auth import router as auth_router
 from src.handlers.f_goals import router as goals_router
 from src.handlers.f_morning_advice import router as morning_advice_router
 from src.handlers.f_reminders import router as reminders_router
+from src.handlers.f_timezone import router as timezone_router
 from src.handlers.mode_buttons import MAIN_KEYBOARD
 from src.handlers.mode_buttons import router as mode_buttons_router
 from src.scheduler.jobs import setup_scheduler
@@ -48,6 +50,7 @@ dp.include_router(morning_advice_router)
 dp.include_router(mode_buttons_router)
 dp.include_router(reminders_router)
 dp.include_router(finance_router)
+dp.include_router(timezone_router)
 dp.include_router(orchestrator_router)
 
 
@@ -96,10 +99,16 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     bot = Bot(token=settings.telegram_bot_token)
     attach_message_tracking(bot)
+    # Подтягиваем сохранённый командой /timezone часовой пояс владельца
+    # поверх статичного settings.timezone из .env (Phase 39) — до
+    # setup_scheduler, чтобы планировщик сразу стартовал в правильной
+    # зоне, а не в дефолтной с последующей пересборкой.
+    await apply_stored_timezone()
     await bot.set_my_commands(
         [
             BotCommand(command="start", description="Начать / показать кнопки"),
             BotCommand(command="reminders", description="Список напоминаний"),
+            BotCommand(command="timezone", description="Определить часовой пояс по геопозиции"),
             BotCommand(command="staging", description="Открыть staging Mini App"),
         ]
     )
@@ -121,6 +130,11 @@ async def main() -> None:
     # безусловно.
     scheduler = setup_scheduler(bot, dp.storage)
     scheduler.start()
+    # /timezone (Phase 39) пересобирает триггеры джобов в рантайме — нужен
+    # доступ к scheduler/storage из хендлера, aiogram подставляет их как
+    # именованные параметры из workflow_data (bot передаётся автоматически).
+    dp["scheduler"] = scheduler
+    dp["storage"] = dp.storage
 
     await dp.start_polling(bot)
 

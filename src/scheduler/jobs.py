@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
@@ -257,38 +258,84 @@ async def _suggest_templates_job(bot: Bot) -> None:
     )
 
 
+def _job_specs(bot: Bot, storage: BaseStorage) -> list[tuple[str, Any, dict, list]]:
+    """Единый источник правды для расписания всех джобов — используется и
+    setup_scheduler (первичная регистрация), и reschedule_for_timezone
+    (Phase 39, команда /timezone: пересобирает триггеры на новый часовой
+    пояс в рантайме). id у каждого джоба стабильный и явный — нужен,
+    чтобы reschedule_job мог найти конкретный джоб позже."""
+    return [
+        ("morning_digest", _morning_digest, {"hour": 8, "minute": 0}, [bot, storage]),
+        ("reminders", _reminders_job, {"hour": 8, "minute": 0}, [bot]),
+        ("screen_time_digest", _screen_time_digest, {"hour": 8, "minute": 0}, [bot]),
+        ("finance_reminder", _finance_reminder_job, {"day": 1, "hour": 8, "minute": 0}, [bot]),
+        (
+            "weekly_review",
+            _weekly_review,
+            {"day_of_week": "sun", "hour": 19, "minute": 0},
+            [bot],
+        ),
+        ("habit_reminders", _habit_reminders, {"hour": 20, "minute": 0}, [bot]),
+        ("evening_diary", _evening_diary, {"hour": 21, "minute": 0}, [bot, storage]),
+        ("cleanup_old_messages", _cleanup_old_messages, {"hour": 0, "minute": 5}, [bot]),
+        # Материализация повторяющихся задач (Phase 21) — до утренней сводки.
+        (
+            "materialize_recurring_tasks",
+            _materialize_recurring_tasks_job,
+            {"hour": 7, "minute": 0},
+            [bot],
+        ),
+        # Разбор инбокса (Phase 22) — ночью, до материализации повторяющихся
+        # (07:00) и утренней сводки (08:00), не пересекается с ними.
+        ("tidy_inbox", _tidy_inbox_job, {"hour": 3, "minute": 0}, [bot]),
+        (
+            "suggest_templates",
+            _suggest_templates_job,
+            {"day_of_week": "sun", "hour": 9, "minute": 0},
+            [bot],
+        ),
+        # Цели (Phase 20) — недельные каждое воскресенье; месячные в начале
+        # месяца; годовые — только в январе. Раздельные дни (2/4 числа),
+        # чтобы не наваливать несколько опросов в одно утро.
+        (
+            "goal_prompt_weekly",
+            _goal_prompt_job,
+            {"day_of_week": "sun", "hour": 12, "minute": 0},
+            [bot, storage, "weekly"],
+        ),
+        (
+            "goal_prompt_monthly",
+            _goal_prompt_job,
+            {"day": 2, "hour": 10, "minute": 0},
+            [bot, storage, "monthly"],
+        ),
+        (
+            "goal_prompt_yearly",
+            _goal_prompt_job,
+            {"day": 4, "hour": 10, "minute": 0, "month": 1},
+            [bot, storage, "yearly"],
+        ),
+    ]
+
+
 def setup_scheduler(bot: Bot, storage: BaseStorage) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
-    scheduler.add_job(_morning_digest, CronTrigger(hour=8, minute=0), args=[bot, storage])
-    scheduler.add_job(_reminders_job, CronTrigger(hour=8, minute=0), args=[bot])
-    scheduler.add_job(_screen_time_digest, CronTrigger(hour=8, minute=0), args=[bot])
-    scheduler.add_job(_finance_reminder_job, CronTrigger(day=1, hour=8, minute=0), args=[bot])
-    scheduler.add_job(_weekly_review, CronTrigger(day_of_week="sun", hour=19, minute=0), args=[bot])
-    scheduler.add_job(_habit_reminders, CronTrigger(hour=20, minute=0), args=[bot])
-    scheduler.add_job(_evening_diary, CronTrigger(hour=21, minute=0), args=[bot, storage])
-    scheduler.add_job(_cleanup_old_messages, CronTrigger(hour=0, minute=5), args=[bot])
-    # Материализация повторяющихся задач (Phase 21) — до утренней сводки.
-    scheduler.add_job(_materialize_recurring_tasks_job, CronTrigger(hour=7, minute=0), args=[bot])
-    # Разбор инбокса (Phase 22) — ночью, до материализации повторяющихся
-    # (07:00) и утренней сводки (08:00), не пересекается с ними.
-    scheduler.add_job(_tidy_inbox_job, CronTrigger(hour=3, minute=0), args=[bot])
-    scheduler.add_job(
-        _suggest_templates_job, CronTrigger(day_of_week="sun", hour=9, minute=0), args=[bot]
-    )
-    # Цели (Phase 20) — недельные каждое воскресенье; месячные в начале
-    # месяца; годовые — только в январе. Раздельные дни (2/4 числа),
-    # чтобы не наваливать несколько опросов в одно утро.
-    scheduler.add_job(
-        _goal_prompt_job,
-        CronTrigger(day_of_week="sun", hour=12, minute=0),
-        args=[bot, storage, "weekly"],
-    )
-    scheduler.add_job(
-        _goal_prompt_job, CronTrigger(day=2, hour=10, minute=0), args=[bot, storage, "monthly"]
-    )
-    scheduler.add_job(
-        _goal_prompt_job,
-        CronTrigger(day=4, hour=10, minute=0, month=1),
-        args=[bot, storage, "yearly"],
-    )
+    for job_id, func, trigger_kwargs, args in _job_specs(bot, storage):
+        scheduler.add_job(func, CronTrigger(**trigger_kwargs), args=args, id=job_id)
     return scheduler
+
+
+def reschedule_for_timezone(
+    scheduler: AsyncIOScheduler, bot: Bot, storage: BaseStorage, tz_name: str
+) -> None:
+    """Часовой пояс сменился в рантайме (команда /timezone,
+    handlers/f_timezone.py) — пересобирает триггеры всех джобов на новую
+    зону. AsyncIOScheduler(timezone=...) задаёт таймзону по умолчанию
+    только для триггеров, у которых она явно не указана, и делает это
+    один раз в момент создания триггера (CronTrigger резолвит tzinfo при
+    конструировании, не держит живую ссылку на scheduler.timezone) —
+    просто поменять scheduler.timezone задним числом ничего не даст,
+    нужно явно пересоздать CronTrigger с новым timezone для каждого
+    джоба."""
+    for job_id, _func, trigger_kwargs, _args in _job_specs(bot, storage):
+        scheduler.reschedule_job(job_id, trigger=CronTrigger(**trigger_kwargs, timezone=tz_name))

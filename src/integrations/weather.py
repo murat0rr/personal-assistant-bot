@@ -3,6 +3,7 @@ import logging
 import httpx
 
 from src.core.config import settings
+from src.core.user_location import get_owner_location
 
 logger = logging.getLogger(__name__)
 
@@ -48,23 +49,37 @@ def _format_weather(weather_code: int, temp_c: float, wind_kmh: float) -> str:
     return f"{emoji} {round(temp_c)}°C, ветер {round(wind_kmh)} км/ч"
 
 
-async def get_weather_summary() -> str | None:
+async def _resolve_coordinates(client: httpx.AsyncClient) -> tuple[float, float] | None:
+    # Живая геопозиция из /timezone (Phase 39) — приоритетнее статичного
+    # weather_city из .env: точнее (конкретная точка, не центр города по
+    # имени) и не требует лишнего geocoding-запроса на каждый вызов.
+    owner = await get_owner_location()
+    if owner and owner.latitude is not None and owner.longitude is not None:
+        return owner.latitude, owner.longitude
+
     if not settings.weather_city:
         return None
 
+    geo_response = await client.get(
+        _GEOCODE_URL,
+        params={"name": settings.weather_city, "count": 1, "language": "ru"},
+    )
+    geo_response.raise_for_status()
+    results = geo_response.json().get("results")
+    if not results:
+        logger.warning("Не найден город для погоды: %r", settings.weather_city)
+        return None
+    return results[0]["latitude"], results[0]["longitude"]
+
+
+async def get_weather_summary() -> str | None:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            geo_response = await client.get(
-                _GEOCODE_URL,
-                params={"name": settings.weather_city, "count": 1, "language": "ru"},
-            )
-            geo_response.raise_for_status()
-            results = geo_response.json().get("results")
-            if not results:
-                logger.warning("Не найден город для погоды: %r", settings.weather_city)
+            coords = await _resolve_coordinates(client)
+            if coords is None:
                 return None
+            latitude, longitude = coords
 
-            latitude, longitude = results[0]["latitude"], results[0]["longitude"]
             forecast_response = await client.get(
                 _FORECAST_URL,
                 params={
