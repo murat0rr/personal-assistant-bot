@@ -403,7 +403,7 @@
     #week-day-detail { margin-top: 8px; }
     /* Режим переноса (Phase 14) — вместо кружка статуса слева ручка,
        текст показывается полностью (см. .title-full выше), справа —
-       отложенное удаление (архивируется пачкой по кнопке "Готово"). */
+       отложенное удаление (архивируется пачкой при выходе из режима). */
     .grip {
       width: 22px;
       height: 22px;
@@ -424,28 +424,31 @@
     .reorder-archive-btn.marked {
       color: var(--accent);
     }
-    /* Одна на всё приложение, всегда в правом нижнем углу — крупная и
-       синяя специально, чтобы было удобно попадать пальцем не глядя. */
-    .reorder-fab {
+    /* Затемняющий фон на весь экран (Phase 14) — активный список рисуется
+       выше него (см. .reorder-active-list), поэтому визуально оказывается
+       "на переднем плане", а всё остальное (другие секции, add-row,
+       карусель дней) просто перекрыто этим слоем — клики по нему не
+       доходят до того, что под ним, ровно то и нужно ("некликабельно").
+       Тап по самому затемнению — единственный выход из режима, кнопки
+       "Готово" больше нет. */
+    .reorder-scrim {
       display: none;
       position: fixed;
-      right: 20px;
-      bottom: max(20px, env(safe-area-inset-bottom));
-      height: 56px;
-      padding: 0 26px;
-      border-radius: 28px;
-      background: var(--accent);
-      color: var(--accent-text);
-      border: none;
-      font-size: 16px;
-      font-weight: 500;
-      align-items: center;
-      gap: 8px;
-      z-index: 30;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(3px);
+      -webkit-backdrop-filter: blur(3px);
+      z-index: 25;
     }
-    .reorder-fab.visible { display: flex; }
-    .reorder-fab svg { width: 20px; height: 20px; flex-shrink: 0; }
+    .reorder-scrim.visible { display: block; }
+    /* z-index выше затемнения — список остаётся на своём обычном месте в
+       разметке (карусель/Инбокс не трогаем), просто "прорастает" поверх
+       .reorder-scrim. Тень усиливает ощущение приподнятости. */
+    .list.reorder-active-list {
+      position: relative;
+      z-index: 26;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+    }
   </style>
 </head>
 <body>
@@ -506,7 +509,7 @@
     <div id="digest" class="list digest">Загрузка…</div>
   </div>
 
-  <button id="reorder-done-fab" class="reorder-fab" aria-label="Готово"></button>
+  <div id="reorder-scrim" class="reorder-scrim"></div>
 
   <script>
     const tg = window.Telegram?.WebApp;
@@ -632,10 +635,10 @@
       render();
     }
 
-    // "Готово" — единственный выход из режима. Отмеченные задачи реально
-    // архивируются только сейчас, одним batch-запросом, без подтверждения
-    // (сам режим переноса с явным выходом — уже достаточная защита от
-    // случайного удаления).
+    // Тап по затемнению (см. .reorder-scrim) — единственный выход из
+    // режима. Отмеченные задачи реально архивируются только сейчас, одним
+    // batch-запросом, без подтверждения (сам режим переноса с явным
+    // выходом — уже достаточная защита от случайного удаления).
     async function exitReorderMode() {
       const ids = Array.from(pendingArchiveIds);
       reorderActiveKey = null;
@@ -1433,7 +1436,7 @@
     // календаря, и для Инбокса: слева ручка вместо кружка статуса, текст
     // целиком без усечения и без жирности/зачёркивания (никакого
     // статуса/приоритета в этом режиме не показываем), справа — отложенное
-    // удаление (архивируется пачкой по кнопке "Готово", см.
+    // удаление (архивируется пачкой при выходе из режима, см.
     // toggleReorderArchive/exitReorderMode).
     function renderReorderRow(task, ctx) {
       const isPending = pendingIds.has(task.id);
@@ -1480,13 +1483,17 @@
     }
 
     function renderList(container, tasks, ctx) {
+      const reorderMode = isReorderActive(ctx.listKey);
+      // Список в режиме переноса рисуется выше затемняющего фона (см.
+      // .reorder-active-list в CSS) — тем самым и выглядит "на переднем
+      // плане", а всё остальное на странице просто перекрыто .reorder-scrim.
+      container.classList.toggle("reorder-active-list", reorderMode);
       container.innerHTML = "";
       const sorted = sortByOrder(tasks);
       if (sorted.length === 0) {
         renderEmpty(container);
         return;
       }
-      const reorderMode = isReorderActive(ctx.listKey);
       sorted.forEach((t) => {
         if (reorderMode) {
           container.append(renderReorderRow(t, ctx));
@@ -1665,7 +1672,7 @@
       renderInboxHeader();
       renderWeekCarousel();
       renderWeekDetail();
-      document.getElementById("reorder-done-fab").classList.toggle("visible", reorderActiveKey !== null);
+      document.getElementById("reorder-scrim").classList.toggle("visible", reorderActiveKey !== null);
     }
 
     function addDaysIso(iso, days) {
@@ -1960,9 +1967,10 @@
     attachReorderEntry(document.getElementById("today-list"), "today");
     attachReorderEntry(document.getElementById("inbox-list"), "inbox");
 
-    const reorderFab = document.getElementById("reorder-done-fab");
-    reorderFab.innerHTML = `<span style="display:flex">${checkIcon()}</span>Готово`;
-    reorderFab.onclick = () => exitReorderMode();
+    // Тап по затемнению — единственный выход из режима переноса (кнопки
+    // "Готово" больше нет): список рисуется выше .reorder-scrim (см. CSS),
+    // так что клики внутри него сюда не долетают — только клики "мимо".
+    document.getElementById("reorder-scrim").addEventListener("click", () => exitReorderMode());
 
     // Полоска недель — палец двигает .week-track напрямую через transform
     // (1:1, без нативного скролла), а после отпускания доезжает ровно
