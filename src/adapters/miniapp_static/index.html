@@ -23,7 +23,7 @@
     }
     /* Явный выбор темы в настройках (Phase 26) — переопределяет то, что
        даёт сама Telegram: тема Mini App должна уметь отличаться от темы
-       клиента Telegram, если пользователь так решил (см. #settings-sheet).
+       клиента Telegram, если пользователь так решил (см. #side-drawer).
        localStorage, не сервер — это чисто визуальное предпочтение
        конкретного устройства. */
     :root[data-theme="dark"] {
@@ -160,6 +160,64 @@
       transition: color 0.15s ease;
     }
     .pill-label.armed { color: var(--accent); }
+
+    /* Нижняя панель вкладок расширенного экрана (Phase 35) — обычный
+       flex-сосед .screen-content внутри #extended-screen (а не
+       position:fixed — см. комментарий в HTML), поэтому всегда видна,
+       пока содержимое панели скроллится над ней. */
+    .ext-tabbar {
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      padding: 8px 10px;
+      background: var(--card-bg);
+      border-top: 1px solid color-mix(in srgb, var(--text-muted) 15%, transparent);
+      flex-shrink: 0;
+    }
+    .ext-tab-btn {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      background: none;
+      border: none;
+      font-family: inherit;
+      font-size: 10.5px;
+      color: var(--text-muted);
+      padding: 6px 2px;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+    .ext-tab-btn.active { color: var(--accent); }
+    .ext-tab-icon { width: 20px; height: 20px; }
+    /* "Основной экран" — тот же #pill-extended, что и раньше (см.
+       setupPill), просто крупнее и по центру панели кнопок, вместо
+       отдельной плашки внизу экрана (item, Phase 35). */
+    .ext-tab-main {
+      flex: 1.3;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      padding: 0 2px 6px;
+      touch-action: none;
+      cursor: ns-resize;
+    }
+    .ext-tab-main-circle {
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      background: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: -18px;
+      box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 45%, transparent);
+    }
+    .ext-tab-main .screen-chevron { width: 20px; height: 8px; color: var(--accent-text); opacity: 1; }
+    .ext-tab-main .pill-label { font-size: 10.5px; margin-top: 2px; font-weight: 600; }
+
     .section { margin-bottom: 24px; }
     .section-label {
       font-size: 13px;
@@ -460,48 +518,6 @@
     .day-dot.active { opacity: 1; }
     .digest { padding: 12px 14px; font-size: 14px; color: var(--text-muted); }
 
-    /* Аналитика (Phase 24) — тот же карусельный паттерн, что
-       .day-carousel/.day-page/.day-dots (нативный scroll-snap), но
-       намеренно не переиспользован напрямую — .day-carousel завязан на
-       конкретную структуру (карусель дней), рисковать им ради общего
-       компонента здесь не стоит (см. решение по renderReorderRow,
-       Phase 18 — тот же принцип контролируемого дублирования). */
-    .analytics-carousel {
-      display: flex;
-      overflow-x: auto;
-      scroll-snap-type: x mandatory;
-      -webkit-overflow-scrolling: touch;
-      scrollbar-width: none;
-    }
-    .analytics-carousel::-webkit-scrollbar { display: none; }
-    /* Пока идёт тихий "телепорт" с теневой страницы на настоящую (item
-       12, круговая карусель) — снимаем scroll-snap на пару кадров
-       (item 4, Phase 32, БАГ): нативный snap-движок иногда ещё
-       доигрывал свою анимацию в момент программной установки
-       scrollLeft и "спорил" с ней — заметная на глаз вспышка/мигание
-       контента на долю секунды. */
-    .analytics-carousel.no-snap { scroll-snap-type: none; }
-    .analytics-page {
-      flex: 0 0 100%;
-      min-width: 100%;
-      scroll-snap-align: start;
-      scroll-snap-stop: always;
-    }
-    .analytics-dots {
-      display: flex;
-      justify-content: center;
-      gap: 6px;
-      margin-top: 8px;
-    }
-    .analytics-dot {
-      display: block;
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--text-muted);
-      opacity: 0.35;
-    }
-    .analytics-dot.active { opacity: 1; }
     .chart-card {
       background: var(--card-bg);
       border-radius: 12px;
@@ -633,8 +649,6 @@
       border-radius: 50%;
       flex-shrink: 0;
     }
-    .entity-create-row { display: flex; gap: 10px; align-items: center; justify-content: flex-end; }
-
     /* Месячный календарь (Phase 26/27/29) — три панели (пред./тек./
        след. месяц) в .month-cal-track, палец двигает track напрямую
        через transform (1:1, без damping — в отличие от перехода
@@ -723,10 +737,13 @@
     }
     #month-cal-day-info.visible { display: block; }
     #month-cal-day-info .day-info-title { color: var(--text-muted); font-size: 12px; margin: 0 0 6px; }
-    #month-cal-day-info .day-info-task { padding: 2px 0; }
     #month-cal-day-info .day-info-ratings { display: flex; gap: 10px; margin-bottom: 6px; }
     #month-cal-day-info .day-info-rating { color: var(--text-muted); }
     #month-cal-day-info .day-info-rating b { color: var(--text); }
+    /* Список задач выбранного дня в месячном календаре (item 3, Phase
+       35) — тот же компонент, что и #week-day-detail в недельном виде
+       (см. renderMonthDayDetail в JS). */
+    #month-day-detail-list { margin-top: 8px; }
 
     /* Форма создания проекта/цели — переиспользует .bottom-sheet. */
     .entity-form-field {
@@ -1345,66 +1362,89 @@
 
   <div id="extended-screen" class="app-screen">
   <div class="screen-content">
-  <div class="section">
-    <p class="section-label" id="analytics-label">Аналитика</p>
-    <div class="analytics-carousel" id="analytics-carousel">
-      <div class="analytics-page"><div id="analytics-ai-lead" class="chart-card" aria-hidden="true"></div></div>
-      <div class="analytics-page"><div id="analytics-spheres" class="chart-card"></div></div>
-      <div class="analytics-page"><div id="analytics-month" class="chart-card"></div></div>
-      <div class="analytics-page"><div id="analytics-gantt" class="chart-card"></div></div>
-      <div class="analytics-page"><div id="analytics-ai" class="chart-card"></div></div>
-      <div class="analytics-page"><div id="analytics-spheres-trail" class="chart-card" aria-hidden="true"></div></div>
+
+  <!-- Вкладки расширенного экрана (Phase 35) — заменили две горизонтальные
+       карусели (аналитика, проекты/цели) на панели, переключаемые нижней
+       панелью кнопок (см. .ext-tabbar ниже). Каждая панель — вертикальный
+       список, друг под другом, без свайпа и точек. Показывается только
+       одна панель за раз (display:none у остальных), их состояние
+       (extendedActiveTab) — в JS, см. switchExtendedTab. -->
+  <div id="ext-panel-analytics">
+    <div class="section">
+      <p class="section-label">Аналитика</p>
+      <div id="analytics-spheres" class="chart-card"></div>
     </div>
-    <div class="analytics-dots" id="analytics-dots">
-      <span class="analytics-dot active" data-index="0"></span>
-      <span class="analytics-dot" data-index="1"></span>
-      <span class="analytics-dot" data-index="2"></span>
-      <span class="analytics-dot" data-index="3"></span>
-    </div>
+    <div class="section"><div id="analytics-month" class="chart-card"></div></div>
+    <div class="section"><div id="analytics-gantt" class="chart-card"></div></div>
+    <div class="section"><div id="analytics-ai" class="chart-card"></div></div>
   </div>
 
-  <div class="section" id="month-cal-section">
-    <div class="month-cal-nav">
-      <button class="small-btn" id="month-cal-prev" aria-label="Предыдущий месяц">‹</button>
-      <span id="month-cal-title"></span>
-      <button class="small-btn" id="month-cal-next" aria-label="Следующий месяц">›</button>
-    </div>
-    <div class="month-cal-carousel" id="month-cal-carousel">
-      <div class="month-cal-track" id="month-cal-track">
-        <div class="month-cal-panel"><div class="month-cal-grid" data-slot="prev"></div></div>
-        <div class="month-cal-panel"><div class="month-cal-grid" data-slot="current"></div></div>
-        <div class="month-cal-panel"><div class="month-cal-grid" data-slot="next"></div></div>
+  <div id="ext-panel-calendar" style="display:none">
+    <div class="section" id="month-cal-section">
+      <p class="section-label">Календарь</p>
+      <div class="month-cal-nav">
+        <button class="small-btn" id="month-cal-prev" aria-label="Предыдущий месяц">‹</button>
+        <span id="month-cal-title"></span>
+        <button class="small-btn" id="month-cal-next" aria-label="Следующий месяц">›</button>
       </div>
-    </div>
-    <div id="month-cal-day-info"></div>
-  </div>
-
-  <div class="section">
-    <div class="entity-create-row">
-      <button class="small-btn" id="btn-open-settings" aria-label="Настройки">⚙</button>
-    </div>
-  </div>
-
-  <div class="section">
-    <p class="section-label" id="pg-label">Проекты</p>
-    <div class="analytics-carousel" id="pg-carousel">
-      <div class="analytics-page"><div id="pg-projects" class="list"></div></div>
-      <div class="analytics-page"><div id="pg-goals-weekly" class="list"></div></div>
-      <div class="analytics-page"><div id="pg-goals-monthly" class="list"></div></div>
-      <div class="analytics-page"><div id="pg-goals-yearly" class="list"></div></div>
-    </div>
-    <div class="analytics-dots" id="pg-dots">
-      <span class="analytics-dot active" data-index="0"></span>
-      <span class="analytics-dot" data-index="1"></span>
-      <span class="analytics-dot" data-index="2"></span>
-      <span class="analytics-dot" data-index="3"></span>
+      <div class="month-cal-carousel" id="month-cal-carousel">
+        <div class="month-cal-track" id="month-cal-track">
+          <div class="month-cal-panel"><div class="month-cal-grid" data-slot="prev"></div></div>
+          <div class="month-cal-panel"><div class="month-cal-grid" data-slot="current"></div></div>
+          <div class="month-cal-panel"><div class="month-cal-grid" data-slot="next"></div></div>
+        </div>
+      </div>
+      <div id="month-cal-day-info"></div>
+      <div id="month-day-detail-list"></div>
     </div>
   </div>
 
-  <div class="bottom-pill-wrap" id="pill-extended">
-    <svg class="screen-chevron" viewBox="0 0 34 10"><path d="M2 8 L17 2 L32 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <span class="pill-label">Основной экран</span>
+  <div id="ext-panel-projects" style="display:none">
+    <div class="section">
+      <p class="section-label">Проекты</p>
+      <div id="pg-projects" class="list"></div>
+    </div>
+    <div class="section">
+      <p class="section-label">Недельные цели</p>
+      <div id="pg-goals-weekly" class="list"></div>
+    </div>
+    <div class="section">
+      <p class="section-label">Месячные цели</p>
+      <div id="pg-goals-monthly" class="list"></div>
+    </div>
+    <div class="section">
+      <p class="section-label">Годовые цели</p>
+      <div id="pg-goals-yearly" class="list"></div>
+    </div>
   </div>
+
+  </div>
+
+  <!-- Нижняя панель вкладок (Phase 35) — вне .screen-content, обычный
+       flex-сосед в колонке .app-screen, поэтому остаётся на месте, пока
+       .screen-content скроллится сама по себе (никакого position:fixed —
+       и, значит, никакой ловушки со stacking context, см. комментарий
+       у applyReorderElevation). "Основной экран" — не панель, а тот же
+       самый жест/тап, что раньше делала #pill-extended (см. setupPill в
+       attachScreenTransition) — просто теперь выглядит как более крупная
+       кнопка по центру панели, а не отдельная плашка внизу экрана. -->
+  <div class="ext-tabbar">
+    <button type="button" class="ext-tab-btn active" data-tab="analytics" aria-label="Аналитика">
+      <svg class="ext-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18M7 20V10M12 20V4M17 20v-7"/></svg>
+      <span>Аналитика</span>
+    </button>
+    <div class="ext-tab-main" id="pill-extended">
+      <span class="ext-tab-main-circle"><svg class="screen-chevron" viewBox="0 0 34 10"><path d="M2 8 L17 2 L32 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <span class="pill-label">Основной экран</span>
+    </div>
+    <button type="button" class="ext-tab-btn" data-tab="calendar" aria-label="Календарь">
+      <svg class="ext-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+      <span>Календарь</span>
+    </button>
+    <button type="button" class="ext-tab-btn" data-tab="projects" aria-label="Проекты">
+      <svg class="ext-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+      <span>Проекты</span>
+    </button>
   </div>
   </div>
 </div>
@@ -1464,21 +1504,6 @@
     </div>
     <div class="month-cal-grid" id="date-picker-grid"></div>
     <button type="button" id="date-picker-clear">Не указывать</button>
-  </div>
-
-  <div id="settings-sheet" class="bottom-sheet">
-    <div class="bottom-sheet-handle"></div>
-    <p class="section-label">Настройки</p>
-    <div class="list">
-      <div class="settings-row">
-        <span>Тема</span>
-        <div class="settings-theme-toggle theme-toggle-group" id="settings-theme-toggle">
-          <button data-theme="">Системная</button>
-          <button data-theme="light">Светлая</button>
-          <button data-theme="dark">Тёмная</button>
-        </div>
-      </div>
-    </div>
   </div>
 
   <script>
@@ -1634,7 +1659,6 @@
     let datePickerSelectedIso = null;
     let datePickerOnPick = null;
 
-    let settingsSheetOpen = false;
     let sideDrawerOpen = false;
 
     // Та же палитра, что уже показывали на макете-прототипе — 20 цветов,
@@ -3504,6 +3528,11 @@
               stack.addEventListener("transitionend", settle, { once: true });
             }
             showingMain = willShowMain;
+            // На главный уходим со своей вкладкой в расширенном как есть
+            // (вернутся — увидят то же самое), а вот заходя на расширенный
+            // — всегда с "Аналитики" (item 2, Phase 35), как и раньше,
+            // когда это был верх одной длинной страницы.
+            if (!willShowMain) switchExtendedTab("analytics");
             updateHamburgerVisibility();
           } else {
             stack.style.transform = `translateY(${base}px)`;
@@ -3541,6 +3570,7 @@
           resetTargetScroll(false);
           stack.style.transform = `translateY(-${vh()}px)`;
           showingMain = false;
+          switchExtendedTab("analytics");
         } else {
           resetTargetScroll(true);
           mainScreen.style.top = vh() * 2 + "px";
@@ -3732,6 +3762,7 @@
       renderInboxHeader();
       renderWeekCarousel();
       renderWeekDetail();
+      refreshMonthDayDetail();
       renderTemplatesList();
       renderProjectsPage();
       renderGoalsPages();
@@ -3745,7 +3776,6 @@
         colorPickerProject !== null ||
         createEntityKind !== null ||
         datePickerOpen ||
-        settingsSheetOpen ||
         sideDrawerOpen;
       document
         .getElementById("reorder-scrim")
@@ -3761,7 +3791,6 @@
         .getElementById("create-entity-sheet")
         .classList.toggle("visible", createEntityKind !== null);
       document.getElementById("date-picker-sheet").classList.toggle("visible", datePickerOpen);
-      document.getElementById("settings-sheet").classList.toggle("visible", settingsSheetOpen);
       document.getElementById("side-drawer").classList.toggle("visible", sideDrawerOpen);
     }
 
@@ -3780,6 +3809,9 @@
           const tomorrowIso = addDaysIso(boardState.days.today.date, 1);
           weekStart = computeWeekStart(tomorrowIso);
           selectedWeekDate = tomorrowIso;
+          // По умолчанию в месячном календаре выбран сегодняшний день
+          // (item 3, Phase 35) — а не пустой выбор, как раньше.
+          calSelectedDay = boardState.days.today.date;
         }
         render();
         // Центрируем полоску недель на "текущей" (средней) панели только
@@ -4803,130 +4835,40 @@
       } catch (e) {
         aiEl.innerHTML = '<div class="chart-empty">Не удалось загрузить.</div>';
       }
-
-      syncAnalyticsEdges();
     }
 
-    // Карусель аналитики — тот же native scroll-snap + точки, что у
-    // .day-carousel (см. комментарий у .analytics-carousel в CSS), но по
-    // кругу (item 12, Phase 29): с самой правой страницы свайп вправо
-    // переносит на самую левую и наоборот. Native scroll-snap сам по себе
-    // границы не заворачивает, поэтому по краям — по одной "теневой"
-    // странице-дублю (analytics-ai-lead/analytics-spheres-trail, HTML), в
-    // которые перед каждой полной перерисовкой аналитики копируется
-    // содержимое настоящих крайних страниц (см. syncAnalyticsEdges).
-    // Долистал(-ась) до дубля — мгновенно (без анимации) телепортируем
-    // scrollLeft на настоящую страницу с тем же содержимым: с той же
-    // "невидимый возврат в центр" философией, что у недельной/месячной
-    // карусели, только через scrollLeft, а не transform.
-    const analyticsCarousel = document.getElementById("analytics-carousel");
-    const analyticsDots = Array.from(document.querySelectorAll("#analytics-dots .analytics-dot"));
-    const ANALYTICS_REAL_COUNT = analyticsDots.length; // 4
-    let _analyticsTracking = false;
+    // Вкладки расширенного экрана (Phase 35) — заменили обе горизонтальные
+    // карусели (аналитика, проекты/цели) простым show/hide между тремя
+    // панелями; переключает нижняя панель кнопок .ext-tabbar. "Основной
+    // экран" сюда не входит — это #pill-extended, тот же жест/тап, что и
+    // раньше (см. setupPill в attachScreenTransition), просто переехавший
+    // в общую панель кнопок визуально.
+    let extendedActiveTab = "analytics";
+    const EXT_TAB_PANELS = {
+      analytics: document.getElementById("ext-panel-analytics"),
+      calendar: document.getElementById("ext-panel-calendar"),
+      projects: document.getElementById("ext-panel-projects"),
+    };
+    const extTabBtns = Array.from(document.querySelectorAll(".ext-tab-btn"));
 
-    function syncAnalyticsEdges() {
-      document.getElementById("analytics-ai-lead").innerHTML = document.getElementById("analytics-ai").innerHTML;
-      document.getElementById("analytics-spheres-trail").innerHTML =
-        document.getElementById("analytics-spheres").innerHTML;
+    function switchExtendedTab(tab) {
+      extendedActiveTab = tab;
+      Object.entries(EXT_TAB_PANELS).forEach(([key, el]) => {
+        el.style.display = key === tab ? "" : "none";
+      });
+      extTabBtns.forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tab));
+      const scrollEl = document.getElementById("extended-screen").querySelector(".screen-content");
+      if (scrollEl) scrollEl.scrollTop = 0;
     }
 
-    analyticsCarousel.scrollLeft = analyticsCarousel.clientWidth * 1; // страница 1 = настоящая первая (spheres)
-
-    // Тихий "телепорт" с теневой страницы на настоящую — снимаем
-    // scroll-snap на время самого прыжка и ещё пару кадров после (см.
-    // .no-snap в CSS), иначе нативный snap-движок мог всё ещё доигрывать
-    // свою анимацию и "спорить" с программной установкой scrollLeft —
-    // заметная на глаз вспышка/мигание контента (item 4, Phase 32, БАГ).
-    function silentJump(left) {
-      // На обычном (не медленном) свайпе к моменту телепорта нативный
-      // momentum-скролл ещё реально доигрывает свою анимацию — просто
-      // снять scroll-snap-type недостаточно (Phase 32 сделала это, баг
-      // остался, Phase 33, БАГ): momentum не останавливается сам,
-      // JS-присвоение scrollLeft с ним не конкурирует, а лишь на кадр
-      // "спорит" — заметная вспышка. overflow-x: hidden на один тик —
-      // жёсткий, гарантированный способ оборвать недоигранный momentum
-      // (скролл физически становится невозможен, анимации нечего
-      // продолжать), потом возвращаем как было уже с новым scrollLeft.
-      analyticsCarousel.classList.add("no-snap");
-      const prevOverflowX = analyticsCarousel.style.overflowX;
-      analyticsCarousel.style.overflowX = "hidden";
-      analyticsCarousel.scrollLeft = left;
-      void analyticsCarousel.offsetWidth; // форсируем reflow между приложением стилей
-      analyticsCarousel.style.overflowX = prevOverflowX;
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          analyticsCarousel.classList.remove("no-snap");
-        });
-      });
-    }
-
-    analyticsCarousel.addEventListener("scroll", () => {
-      if (_analyticsTracking) return;
-      _analyticsTracking = true;
-      requestAnimationFrame(() => {
-        _analyticsTracking = false;
-        const w = analyticsCarousel.clientWidth;
-        const rawIndex = Math.round(analyticsCarousel.scrollLeft / w);
-        let dotIndex = rawIndex - 1;
-        if (rawIndex === 0) {
-          dotIndex = ANALYTICS_REAL_COUNT - 1;
-          silentJump(w * ANALYTICS_REAL_COUNT);
-        } else if (rawIndex === ANALYTICS_REAL_COUNT + 1) {
-          dotIndex = 0;
-          silentJump(w * 1);
-        }
-        analyticsDots.forEach((dot, i) => dot.classList.toggle("active", i === dotIndex));
-      });
-    });
-    analyticsDots.forEach((dot) => {
-      dot.addEventListener("click", () => {
-        analyticsCarousel.scrollTo({
-          left: analyticsCarousel.clientWidth * (Number(dot.dataset.index) + 1),
-          behavior: "smooth",
-        });
-      });
+    extTabBtns.forEach((btn) => {
+      btn.addEventListener("click", () => switchExtendedTab(btn.dataset.tab));
     });
 
-    // Та же карусель-обвязка для переключателя Проекты/Цели. Подпись
-    // сверху меняется по странице — "Проекты", "Недельные цели",
-    // "Месячные цели", "Годовые цели" — вместо одного статичного текста
-    // на все страницы.
-    const pgCarousel = document.getElementById("pg-carousel");
-    const pgDots = Array.from(document.querySelectorAll("#pg-dots .analytics-dot"));
-    const pgLabel = document.getElementById("pg-label");
-    const PG_PAGE_LABELS = ["Проекты", "Недельные цели", "Месячные цели", "Годовые цели"];
-    let _pgTracking = false;
-    pgCarousel.addEventListener("scroll", () => {
-      if (_pgTracking) return;
-      _pgTracking = true;
-      requestAnimationFrame(() => {
-        const index = Math.round(pgCarousel.scrollLeft / pgCarousel.clientWidth);
-        pgDots.forEach((dot, i) => dot.classList.toggle("active", i === index));
-        pgLabel.textContent = PG_PAGE_LABELS[index] || PG_PAGE_LABELS[0];
-        _pgTracking = false;
-      });
-    });
-    pgDots.forEach((dot) => {
-      dot.addEventListener("click", () => {
-        pgCarousel.scrollTo({ left: pgCarousel.clientWidth * Number(dot.dataset.index), behavior: "smooth" });
-      });
-    });
-
-    // ---- Настройки (Phase 26) — пока только тема.
-
-    function openSettingsSheet() {
-      settingsSheetOpen = true;
-      render();
-    }
-    function closeSettingsSheet() {
-      settingsSheetOpen = false;
-      render();
-    }
-    // Переключатель темы теперь в двух местах — старой шторке настроек
-    // (#settings-sheet, гамбургер вместо неё пока не заменяет) и новом
-    // глобальном меню (#side-drawer, Phase 30) — общий класс
-    // .theme-toggle-group на обеих группах кнопок, синхронизируются
-    // вместе одной функцией, а не дублированием кода.
+    // ---- Настройки — переключатель темы (Phase 26), теперь только в
+    // глобальном меню (#side-drawer, Phase 30); отдельная шторка
+    // настроек (#settings-sheet) была её точной дублирующей копией и
+    // удалена вместе с кнопкой ⚙ под проектами (Phase 35).
     function syncSettingsThemeButtons() {
       const current = getStoredTheme() || "";
       document.querySelectorAll(".theme-toggle-group button").forEach((btn) => {
@@ -4956,8 +4898,6 @@
       if (sideDrawerOpen) closeSideDrawer();
       else openSideDrawer();
     };
-
-    document.getElementById("btn-open-settings").onclick = () => openSettingsSheet();
 
     // ---- Месячный календарь (Phase 26) — только текущий месяц, только
     // события (не вся загрузка дня — для этого есть график в аналитике).
@@ -5172,6 +5112,7 @@
       calMonth = target.month;
       calSelectedDay = null;
       document.getElementById("month-cal-day-info").classList.remove("visible");
+      renderMonthDayDetail(null);
       await loadMonthEvents();
     }
 
@@ -5314,32 +5255,78 @@
       if (cb) cb(null);
     };
 
+    // Список задач выбранного дня в месячном календаре (item 3, Phase 35)
+    // — тот же компонент и тот же персистентный-узел паттерн, что уже
+    // отработан у недельного вида (см. подробный комментарий у
+    // weekDetailListEl/renderWeekDetail выше): пересоздание узла на
+    // каждый render() ломает applyReorderElevation, поэтому узел создаётся
+    // один раз и живёт, пока в месячном календаре вообще что-то выбрано.
+    let monthDetailListEl = null;
+
+    function renderMonthDayDetail(iso) {
+      const el = document.getElementById("month-day-detail-list");
+      if (!iso) {
+        el.innerHTML = "";
+        monthDetailListEl = null;
+        return;
+      }
+      const listKey = "month:" + iso;
+      if (!monthDetailListEl) {
+        monthDetailListEl = document.createElement("div");
+        monthDetailListEl.className = "list";
+        attachReorderEntry(monthDetailListEl, () => "month:" + calSelectedDay);
+        el.innerHTML = "";
+        el.append(monthDetailListEl);
+      }
+      renderList(monthDetailListEl, tasksForDate(iso), {
+        listKey,
+        style: "swipe",
+        showMoveToToday: false,
+        showTemplatesPicker: true,
+        dateFor: () => calSelectedDay,
+      });
+    }
+
+    // Обновляет список задач выбранного дня после любой правки где-либо
+    // (галочка, перенос даты и т.д.) — вызывается из общего render(), как
+    // и renderWeekDetail(). Для дня в прошлом список не нужен (там ревью
+    // дневника, не зависящее от задач) — не трогаем его тут, тяжёлый
+    // сетевой поход за ревью не должен повторяться на каждый render().
+    function refreshMonthDayDetail() {
+      if (!calSelectedDay) return;
+      const todayIso = boardState.days.today ? boardState.days.today.date : null;
+      if (todayIso !== null && calSelectedDay >= todayIso) {
+        renderMonthDayDetail(calSelectedDay);
+      }
+    }
+
     async function showDayInfo(iso) {
       const el = document.getElementById("month-cal-day-info");
       if (!iso) {
         el.classList.remove("visible");
+        renderMonthDayDetail(null);
         return;
       }
-      el.classList.add("visible");
       const todayIso = boardState.days.today ? boardState.days.today.date : null;
       const [y, m, d] = iso.split("-");
       const label = `${d}.${m}.${y}`;
 
       if (todayIso !== null && iso >= todayIso) {
-        // Будущее/сегодня — лаконично, из уже загруженных данных, без похода в сеть.
-        const tasks = (boardState.dated_tasks || []).filter((t) => t.due_date === iso);
-        el.innerHTML = `<p class="day-info-title">${label}</p>`;
-        if (tasks.length === 0) {
-          el.innerHTML += '<div class="day-info-task" style="color:var(--text-muted)">Задач нет</div>';
-        } else {
-          el.innerHTML += tasks
-            .map((t) => `<div class="day-info-task">${t.done ? "✓ " : "— "}${t.title}</div>`)
-            .join("");
-        }
+        // Сегодня/будущее — полноценный список задач дня вместо прежнего
+        // упрощённого read-only списка (item 3, Phase 35): тот же
+        // компонент, что и в недельном виде, с чекбоксами, свайпом,
+        // переносом и добавлением задач прямо на этот день.
+        el.classList.remove("visible");
+        renderMonthDayDetail(iso);
         return;
       }
 
-      // Прошлое — ревью дня из дневника (Notion), если заполнено.
+      // Прошлое — ревью дня из дневника (Notion), если заполнено; список
+      // задач тут не показываем (у прошлого дня список неактуален, а
+      // ревью — единственное место в приложении, где он вообще виден, не
+      // трогаем эту ветку, Phase 29).
+      renderMonthDayDetail(null);
+      el.classList.add("visible");
       el.innerHTML = `<p class="day-info-title">${label}</p><div style="color:var(--text-muted)">Загрузка…</div>`;
       try {
         const entry = await api(`/miniapp/api/diary/${iso}`);
@@ -5399,11 +5386,6 @@
     // центру, закрывается крестиком/тапом по фону/кнопкой "Готово", без
     // свайпа (см. .entity-window в CSS и комментарий там же).
     document.getElementById("create-entity-close").addEventListener("click", closeCreateEntitySheet);
-    attachSheetOverswipeClose(
-      document.getElementById("settings-sheet"),
-      document.getElementById("settings-sheet").querySelector(".list"),
-      closeSettingsSheet
-    );
 
     attachScreenTransition();
 
@@ -5430,8 +5412,6 @@
         closeDatePickerSheet();
       } else if (createEntityKind !== null) {
         closeCreateEntitySheet();
-      } else if (settingsSheetOpen) {
-        closeSettingsSheet();
       } else if (sideDrawerOpen) {
         closeSideDrawer();
       }
