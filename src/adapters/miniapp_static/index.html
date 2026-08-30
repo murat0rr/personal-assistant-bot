@@ -1081,6 +1081,24 @@
       gap: 2px;
     }
     #side-drawer .settings-theme-toggle button { padding: 6px 7px; font-size: 12px; }
+    /* Пункт "Помощь" (Phase 37) — простая строка-ссылка под темой,
+       отделена верхней границей, той же плотности, что settings-row. */
+    .drawer-link {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      margin-top: 4px;
+      padding: 12px 0 4px;
+      border: none;
+      border-top: 1px solid color-mix(in srgb, var(--text-muted) 15%, transparent);
+      background: none;
+      font-family: inherit;
+      font-size: 14px;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .drawer-link-chevron { color: var(--text-muted); font-size: 16px; }
 
     /* Постоянный bottom sheet (Phase 18) — общий каркас для любого
        "выбери из списка" сценария (шаблоны, выбор проекта у задачи и
@@ -1184,6 +1202,41 @@
       -webkit-overflow-scrolling: touch;
       padding: 4px 16px calc(16px + env(safe-area-inset-bottom, 0px));
     }
+    /* Содержимое экрана помощи (Phase 37) — текстовые разделы по областям
+       приложения, у жестов (тап/долгое нажатие/свайп/перетаскивание) —
+       маленькая иконка слева для узнаваемости, у обычных кнопок/полей —
+       без иконки, они не нуждаются в пояснении "как выглядит жест". */
+    .help-section { margin-bottom: 18px; }
+    .help-section:last-child { margin-bottom: 4px; }
+    .help-section h4 {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin: 0 0 8px;
+    }
+    .help-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 7px 0;
+      font-size: 13.5px;
+      line-height: 1.45;
+      color: var(--text);
+    }
+    .help-row-icon {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      border-radius: 7px;
+      background: var(--card-bg);
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 1px;
+    }
+    .help-row b { font-weight: 600; }
+    .help-row span.help-muted { color: var(--text-muted); }
     /* Всплывающий календарь (Phase 28) — компактная карточка по центру
        экрана поверх формы создания/правки (не ещё один .bottom-sheet той
        же высоты — они бы перекрывали друг друга один в один). Тот же
@@ -1480,6 +1533,22 @@
         <button data-theme="dark">Тёмная</button>
       </div>
     </div>
+    <button type="button" class="drawer-link" id="btn-open-help">
+      <span>Помощь</span>
+      <span class="drawer-link-chevron">›</span>
+    </button>
+  </div>
+
+  <!-- Экран помощи (Phase 37) — тот же .entity-window, что и окно
+       создания/правки проекта/цели (плавающая карточка по центру,
+       max-height 80vh, скроллится сама), просто с текстовым содержимым
+       вместо формы. Открывается пунктом "Помощь" в ☰-меню. -->
+  <div id="help-sheet" class="entity-window">
+    <div class="entity-window-head">
+      <span class="entity-window-title">Помощь</span>
+      <button type="button" class="entity-window-close" id="help-close" aria-label="Закрыть">✕</button>
+    </div>
+    <div class="entity-window-body" id="help-body"></div>
   </div>
 
   <div id="templates-sheet" class="bottom-sheet">
@@ -1618,6 +1687,25 @@
         18
       );
     }
+    // Иконки жестов для экрана помощи (Phase 37) — узнаваемые метафоры,
+    // не буквальные скриншоты: точка+кольцо = тап/долгое нажатие (кольцо
+    // штрихом отличает "долго" от "коротко"), стрелка = свайп, двойная
+    // стрелка вверх-вниз = перетаскивание/перенос порядка.
+    function tapGestureIcon() {
+      return icon('<circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="7"/>', 16);
+    }
+    function longPressGestureIcon() {
+      return icon(
+        '<circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="7" stroke-dasharray="2.2 3"/>',
+        16
+      );
+    }
+    function swipeGestureIcon() {
+      return icon('<path d="M3 12h15M12 6l6 6-6 6"/>', 16);
+    }
+    function dragGestureIcon() {
+      return icon('<path d="M12 3v18M7 8l5-5 5 5M7 16l5 5 5-5"/>', 16);
+    }
     // Проекты (Phase 19) — папка, кнопка привязки задачи к проекту.
     function projectIcon() {
       return icon(
@@ -1675,6 +1763,7 @@
     let datePickerOnPick = null;
 
     let sideDrawerOpen = false;
+    let helpSheetOpen = false;
 
     // Та же палитра, что уже показывали на макете-прототипе — 20 цветов,
     // без внешних библиотек.
@@ -3791,7 +3880,8 @@
         colorPickerProject !== null ||
         createEntityKind !== null ||
         datePickerOpen ||
-        sideDrawerOpen;
+        sideDrawerOpen ||
+        helpSheetOpen;
       document
         .getElementById("reorder-scrim")
         .classList.toggle("visible", reorderActiveKey !== null || anySheetOpen);
@@ -3807,6 +3897,7 @@
         .classList.toggle("visible", createEntityKind !== null);
       document.getElementById("date-picker-sheet").classList.toggle("visible", datePickerOpen);
       document.getElementById("side-drawer").classList.toggle("visible", sideDrawerOpen);
+      document.getElementById("help-sheet").classList.toggle("visible", helpSheetOpen);
     }
 
     function addDaysIso(iso, days) {
@@ -4914,6 +5005,79 @@
       else openSideDrawer();
     };
 
+    // ---- Помощь (Phase 37) — текстовый экран по областям приложения,
+    // открывается пунктом "Помощь" в ☰-меню. Содержимое строится один раз
+    // при загрузке (не зависит от данных, только от текста ниже) — а не
+    // перерисовывается в общем render(), как остальные списки.
+    function helpRow(gestureIcon, html) {
+      return (
+        '<div class="help-row">' +
+        (gestureIcon ? `<span class="help-row-icon">${gestureIcon}</span>` : "") +
+        `<span>${html}</span></div>`
+      );
+    }
+    function renderHelpContent() {
+      const el = document.getElementById("help-body");
+      el.innerHTML =
+        '<div class="help-section"><h4>Задачи</h4>' +
+        helpRow(null, "<b>Отметить выполненной</b> — тап по кружку слева.") +
+        helpRow(tapGestureIcon(), "<b>Изменить текст</b> — тап по самому тексту задачи, курсор встанет туда, куда нажал.") +
+        helpRow(swipeGestureIcon(), "<b>Важность, событие, дата, архив</b> — свайп влево по строке открывает кнопки действий.") +
+        helpRow(swipeGestureIcon(), "<b>Перенести на сегодня</b> — у вчерашней задачи в свайпе есть отдельная кнопка.") +
+        helpRow(
+          longPressGestureIcon(),
+          "<b>Изменить порядок</b> — долгое нажатие на строку (около секунды), список превращается в отдельное окно, дальше перетаскивай пальцем."
+        ) +
+        helpRow(null, "<b>Частые шаблоны</b> — значок звезды у поля добавления: тап по шаблону сразу создаёт задачу.") +
+        "</div>" +
+        '<div class="help-section"><h4>Инбокс</h4>' +
+        helpRow(tapGestureIcon(), "Задачи без даты. Тап по заголовку разворачивает список.") +
+        helpRow(swipeGestureIcon(), "Свайп по задаче — поставить дату или удалить.") +
+        "</div>" +
+        '<div class="help-section"><h4>Календарь</h4>' +
+        helpRow(swipeGestureIcon(), "Сетка месяца — свайп влево/вправо между месяцами, или стрелки ‹ ›.") +
+        helpRow(
+          tapGestureIcon(),
+          "Тап по дню — список задач на этот день (сегодня/будущее) или запись дневника, если день уже прошёл."
+        ) +
+        helpRow(null, "Цветная точка на плитке дня — как прошёл день, по вечерней рефлексии.") +
+        "</div>" +
+        '<div class="help-section"><h4>Аналитика</h4>' +
+        helpRow(
+          null,
+          "Графики идут один за другим: задачи по сферам, выполнено за месяц, по проектам, текстовый разбор от ИИ."
+        ) +
+        "</div>" +
+        '<div class="help-section"><h4>Проекты и цели</h4>' +
+        helpRow(null, "Тот же принцип, что у задач — тап по кружку отмечает выполненным.") +
+        helpRow(swipeGestureIcon(), "Свайп открывает архив (и цвет — у проектов).") +
+        helpRow(longPressGestureIcon(), "Долгое нажатие открывает окно редактирования — название, сфера, даты, цвет.") +
+        helpRow(null, "Цели разбиты по срокам — недельные, месячные, годовые, каждый список отдельно.") +
+        "</div>" +
+        '<div class="help-section"><h4>Общее</h4>' +
+        helpRow(null, "☰ в углу расширенного экрана — тема оформления (системная/светлая/тёмная) и этот экран.") +
+        helpRow(
+          swipeGestureIcon(),
+          "Плашка внизу главного экрана — свайп вверх или тап переключает на расширенный экран (аналитика/календарь/проекты); кнопка «Основной экран» там же возвращает обратно."
+        ) +
+        "</div>";
+    }
+    renderHelpContent();
+
+    function openHelpSheet() {
+      helpSheetOpen = true;
+      render();
+    }
+    function closeHelpSheet() {
+      helpSheetOpen = false;
+      render();
+    }
+    document.getElementById("btn-open-help").onclick = () => {
+      closeSideDrawer();
+      openHelpSheet();
+    };
+    document.getElementById("help-close").addEventListener("click", closeHelpSheet);
+
     // ---- Месячный календарь (Phase 26) — только текущий месяц, только
     // события (не вся загрузка дня — для этого есть график в аналитике).
 
@@ -5427,6 +5591,8 @@
         closeDatePickerSheet();
       } else if (createEntityKind !== null) {
         closeCreateEntitySheet();
+      } else if (helpSheetOpen) {
+        closeHelpSheet();
       } else if (sideDrawerOpen) {
         closeSideDrawer();
       }
