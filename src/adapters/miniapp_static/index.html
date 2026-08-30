@@ -951,6 +951,19 @@
     const REORDER_HOLD_MS = 450;
     const REORDER_MOVE_THRESHOLD = 8;
 
+    // Виброотклик в момент, когда хват подтверждён (долгое нажатие на
+    // ручку доспело) — через нативный Telegram WebApp API, не через
+    // navigator.vibrate(): внутри Mini App это надёжнее и чувствуется
+    // "родным" для клиента, а не просто дрожью браузера.
+    function hapticGrab() {
+      try {
+        tg?.HapticFeedback?.impactOccurred("medium");
+      } catch (err) {
+        // Не критично — на устройствах без вибро/старом клиенте просто
+        // тихо ничего не происходит.
+      }
+    }
+
     function dragSiblings(row, selector) {
       return Array.from(row.parentElement.children).filter((n) => n.matches(selector));
     }
@@ -970,18 +983,28 @@
     // mid-animation").
     const siblingAnimations = new WeakMap();
 
-    // immediate — для ручки в режиме переноса: мы уже явно в этом режиме,
-    // ждать долгого нажатия незачем, тащим сразу с первого сдвига пальца
-    // (armed=true с самого начала — дальше та же логика, что и обычная
-    // "долгое нажатие", просто без самого ожидания).
-    function setupDragReorder({ row, trigger, rowSelector, isExcluded, getSortOrder, persist, immediate }) {
+    // Долгое нажатие именно на ручку (не мгновенный старт) — то же
+    // "стандартное" время REORDER_HOLD_MS, что и у входа в сам режим
+    // переноса. В момент, когда оно доспевает, — виброотклик, и дальше
+    // палец можно уводить куда угодно по экрану, не только строго по
+    // вертикали: слежение идёт через document, а не через границы самой
+    // ручки (см. onDocPointerMove/Up/Cancel ниже). Раньше слушали
+    // pointermove/up прямо на ручке и полагались на setPointerCapture,
+    // чтобы продолжать получать события, даже когда палец уходит за её
+    // пределы — но в Telegram WebView это не всегда надёжно: стоило
+    // пальцу чуть отклониться от вертикали за пределы 22px-иконки, и
+    // событий больше не приходило вовсе, перенос зависал навсегда с
+    // повисшим transform и тенью — отсюда и было то самое "залипание
+    // поверх соседней", которое пережило и фикс плавности, и фикс
+    // разворота направления (оба чинили саму анимацию, а не эту
+    // причину). Слушатели на document такой границы просто не имеют.
+    function setupDragReorder({ row, trigger, rowSelector, getSortOrder, persist }) {
       let holdTimer = null;
-      let armed = false; // время удержания истекло, ждём первого сдвига
       let dragging = false;
       let moved = false; // реальный перенос состоялся — подавляет клик по названию
       let pointerId = null;
-      let startX = 0;
-      let startY = 0;
+      let startY = 0; // точка отсчёта dy — пересчитывается на момент хвата (beginDrag), не на pointerdown
+      let curY = 0; // последняя известная позиция пальца, обновляется всё время, пока указатель "нажат"
       let compensation = 0; // накопленная поправка от свапов соседей
       let lastDy = 0;
       let settleAnim = null; // доводка ЭТОЙ строки при отпускании (endDrag), если ещё идёт
@@ -1072,9 +1095,16 @@
           // renderSwipeableTaskRow) — render() внутри closeOpenSwipeRow уже
           // пересобрал список и заменил этот DOM-узел новым, продолжать
           // перенос старым узлом больше некуда, тихо отменяем.
-          pointerId = null;
+          cleanupPointer();
           return;
         }
+        // Точка отсчёта — там, где палец находится ПРЯМО СЕЙЧАС (curY), а
+        // не там, где было изначальное нажатие: за время удержания палец
+        // мог заметно уйти в сторону (это специально разрешено — см.
+        // комментарий выше про document), и без этого пересчёта перенос
+        // стартовал бы со скачком на разницу между стартовой и текущей
+        // точкой.
+        startY = curY;
         dragging = true;
         moved = true;
         // Строку схватили заново раньше, чем доспела доводка предыдущего
@@ -1088,6 +1118,7 @@
         row.classList.add("reorder-dragging");
         compensation = 0;
         applyTransform(0);
+        hapticGrab();
       }
 
       function commitOrder() {
@@ -1134,61 +1165,58 @@
             });
         }
         dragging = false;
-        armed = false;
+        pointerId = null;
+      }
+
+      // Слушатели висят на document только пока этот конкретный указатель
+      // "нажат" (от pointerdown на ручке до pointerup/pointercancel) —
+      // снимаются сразу же в cleanupPointer, а не остаются на весь срок
+      // жизни строки: иначе на списке из десятков задач копились бы
+      // десятки document-обработчиков одновременно.
+      function onDocPointerMove(e) {
+        if (pointerId === null || e.pointerId !== pointerId) return;
+        curY = e.clientY;
+        if (!dragging) return; // ещё удерживаем, но хват не подтверждён — см. beginDrag по таймеру
+        applyTransform(curY - startY);
+        tryReorder();
+        e.preventDefault();
+      }
+
+      function onDocPointerUp(e) {
+        if (pointerId === null || e.pointerId !== pointerId) return;
+        endDrag(dragging);
+        cleanupPointer();
+      }
+
+      function onDocPointerCancel(e) {
+        if (pointerId === null || e.pointerId !== pointerId) return;
+        endDrag(false);
+        cleanupPointer();
+      }
+
+      function cleanupPointer() {
+        clearHold();
+        document.removeEventListener("pointermove", onDocPointerMove);
+        document.removeEventListener("pointerup", onDocPointerUp);
+        document.removeEventListener("pointercancel", onDocPointerCancel);
         pointerId = null;
       }
 
       trigger.addEventListener("pointerdown", (e) => {
-        if (isExcluded(e.target)) return;
+        if (pointerId !== null) return; // уже держим один палец — второй игнорируем
         pointerId = e.pointerId;
-        startX = e.clientX;
         startY = e.clientY;
+        curY = e.clientY;
         dragging = false;
         moved = false;
-        clearHold();
-        if (immediate) {
-          armed = true;
-        } else {
-          armed = false;
-          holdTimer = setTimeout(() => {
-            armed = true;
-          }, REORDER_HOLD_MS);
-        }
-      });
-
-      trigger.addEventListener("pointermove", (e) => {
-        if (pointerId === null || e.pointerId !== pointerId) return;
-        const dx = e.clientX - startX;
-        const dy = e.clientY - startY;
-        if (!dragging) {
-          if (!armed) {
-            // Сдвинули палец раньше, чем истекло время удержания — это
-            // обычный тап/скролл/свайп шторки, а не перенос, отпускаем.
-            if (Math.abs(dx) > REORDER_MOVE_THRESHOLD || Math.abs(dy) > REORDER_MOVE_THRESHOLD) {
-              clearHold();
-              pointerId = null;
-            }
-            return;
-          }
+        document.addEventListener("pointermove", onDocPointerMove);
+        document.addEventListener("pointerup", onDocPointerUp);
+        document.addEventListener("pointercancel", onDocPointerCancel);
+        holdTimer = setTimeout(() => {
+          holdTimer = null;
           beginDrag();
-          if (!dragging) return; // строка исчезла — см. beginDrag
-          try {
-            trigger.setPointerCapture(pointerId);
-          } catch (err) {
-            // синтетические события в тестах — не критично
-          }
-        }
-        applyTransform(dy);
-        tryReorder();
-        e.preventDefault();
+        }, REORDER_HOLD_MS);
       });
-
-      function onUp(e) {
-        if (pointerId === null || e.pointerId !== pointerId) return;
-        endDrag(dragging);
-      }
-      trigger.addEventListener("pointerup", onUp);
-      trigger.addEventListener("pointercancel", () => endDrag(false));
 
       return {
         // Клик по названию (инлайн-правка) проверяет это перед тем как
@@ -1455,8 +1483,6 @@
         row,
         trigger: grip,
         rowSelector: ".reorder-row",
-        isExcluded: () => false,
-        immediate: true,
         getSortOrder: (el) => parseFloat(el.dataset.sortOrder),
         persist: (newOrder) => setTaskSortOrder(task, newOrder),
       });
