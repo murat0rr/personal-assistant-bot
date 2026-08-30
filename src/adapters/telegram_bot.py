@@ -100,7 +100,6 @@ async def main() -> None:
         [
             BotCommand(command="start", description="Начать / показать кнопки"),
             BotCommand(command="reminders", description="Список напоминаний"),
-            BotCommand(command="goals5y", description="Поставить цели на 5 лет"),
             BotCommand(command="staging", description="Открыть staging Mini App"),
         ]
     )

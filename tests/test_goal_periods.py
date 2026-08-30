@@ -1,6 +1,6 @@
 from datetime import date
 
-from src.core.goals import month_bounds, quarter_bounds, week_bounds, year_bounds
+from src.core.goals import month_bounds, week_bounds, year_bounds
 
 
 def test_week_bounds_from_sunday():
@@ -28,24 +28,6 @@ def test_month_bounds_february_non_leap_year():
     start, end = month_bounds(date(2026, 2, 2))
     assert start == date(2026, 2, 1)
     assert end == date(2026, 2, 28)
-
-
-def test_quarter_bounds_q1():
-    start, end = quarter_bounds(date(2026, 1, 3))
-    assert start == date(2026, 1, 1)
-    assert end == date(2026, 3, 31)
-
-
-def test_quarter_bounds_q3():
-    start, end = quarter_bounds(date(2026, 7, 3))
-    assert start == date(2026, 7, 1)
-    assert end == date(2026, 9, 30)
-
-
-def test_quarter_bounds_q4():
-    start, end = quarter_bounds(date(2026, 10, 3))
-    assert start == date(2026, 10, 1)
-    assert end == date(2026, 12, 31)
 
 
 def test_year_bounds():

@@ -314,6 +314,19 @@ window.fetch = async (path, options = {}) => {
       const [ty, tm] = t.due.split("-").map(Number);
       if (ty === year && tm === month) result[t.due] = true;
     }
+  } else if (path.match(/\\/calendar\\/month-moods\\?month=(\\d{4})-(\\d{2})/)) {
+    // Тот же паттерн "заполнено каждый третий день", что у /diary/{date}
+    // ниже — только сразу на весь месяц, для плиток календаря.
+    const m = path.match(/\\/calendar\\/month-moods\\?month=(\\d{4})-(\\d{2})/);
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    result = {};
+    for (let d = 1; d <= daysInMonth; d++) {
+      if (d % 3 !== 0) continue;
+      const iso = `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      result[iso] = [1, 2, 2, 3][d % 4]; // немного разброса по значениям
+    }
   } else if (path.match(/\\/diary\\/(\\d{4}-\\d{2}-\\d{2})/)) {
     const m = path.match(/\\/diary\\/(\\d{4}-\\d{2}-\\d{2})/);
     const iso = m[1];
@@ -548,7 +561,7 @@ def _default_goals() -> list[dict]:
         {
             "id": 3,
             "sphere": "развитие",
-            "tier": "5year",
+            "tier": "yearly",
             "text": "Выучить испанский до разговорного уровня",
             "period_start": None,
             "period_end": None,

@@ -21,15 +21,6 @@ def month_bounds(today: date) -> tuple[date, date]:
     return start, end
 
 
-def quarter_bounds(today: date) -> tuple[date, date]:
-    quarter_start_month = ((today.month - 1) // 3) * 3 + 1
-    start = today.replace(month=quarter_start_month, day=1)
-    end_month = quarter_start_month + 2
-    next_month = start.replace(month=end_month, day=28) + timedelta(days=4)
-    end = next_month.replace(day=1) - timedelta(days=1)
-    return start, end
-
-
 def year_bounds(today: date) -> tuple[date, date]:
     return today.replace(month=1, day=1), today.replace(month=12, day=31)
 
@@ -37,11 +28,11 @@ def year_bounds(today: date) -> tuple[date, date]:
 # Тир -> функция границ периода — общая для Telegram-опроса по
 # расписанию (scheduler/jobs.py) и ручного создания цели из Mini App
 # (api.py) — период всегда считается сервером по сегодняшней дате, не
-# приходит с фронтенда. "5year" сюда не входит — у него нет периода.
+# приходит с фронтенда. Тиров всего три — quarterly/5year убраны
+# целиком (Phase 27, явное решение пользователя: три тира и хватит).
 GOAL_TIER_BOUNDS = {
     "weekly": week_bounds,
     "monthly": month_bounds,
-    "quarterly": quarter_bounds,
     "yearly": year_bounds,
 }
 
@@ -73,7 +64,7 @@ async def create_goal(
 
 async def create_goal_now(sphere: str, tier: str, text: str, today: date) -> dict:
     """Ручное создание цели из Mini App (Phase 26) — период считается тут
-    же, по сегодняшней дате и тиру; для "5year" периода нет вообще."""
+    же, по сегодняшней дате и тиру."""
     bounds = GOAL_TIER_BOUNDS.get(tier)
     period_start, period_end = bounds(today) if bounds else (None, None)
     return await create_goal(sphere, tier, period_start, period_end, text)

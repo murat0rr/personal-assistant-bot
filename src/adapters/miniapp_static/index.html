@@ -15,6 +15,10 @@
       --accent: var(--tg-theme-button-color, #2481cc);
       --accent-text: var(--tg-theme-button-text-color, #ffffff);
       --pending-bg: rgba(36, 129, 204, 0.1);
+      --neutral-red: #c15c52;
+      --mood-good: #6fae6a;
+      --mood-mid: #c9a24a;
+      --mood-low: #c15c52;
     }
     /* Явный выбор темы в настройках (Phase 26) — переопределяет то, что
        даёт сама Telegram: тема Mini App должна уметь отличаться от темы
@@ -30,6 +34,10 @@
       --accent: #5eabf5;
       --accent-text: #0b1620;
       --pending-bg: rgba(94, 171, 245, 0.14);
+      --neutral-red: #d97a70;
+      --mood-good: #7dc47a;
+      --mood-mid: #d9b463;
+      --mood-low: #d97a70;
     }
     :root[data-theme="light"] {
       --bg: #ffffff;
@@ -40,6 +48,10 @@
       --accent: #2481cc;
       --accent-text: #ffffff;
       --pending-bg: rgba(36, 129, 204, 0.1);
+      --neutral-red: #c15c52;
+      --mood-good: #6fae6a;
+      --mood-mid: #c9a24a;
+      --mood-low: #c15c52;
     }
     * { box-sizing: border-box; }
     html, body {
@@ -87,27 +99,28 @@
     }
     #main-screen { top: 0; }
     #extended-screen { top: 100vh; }
-    /* Скроллится только эта часть — полоска-переключатель вынесена из
-       потока скролла отдельным flex-элементом ниже, поэтому она жёстко
-       стоит на нижнем краю экрана, а не «плавает» там, где кончился
-       контент (в т.ч. когда контента меньше одного viewport). */
     .screen-content {
       flex: 1 1 auto;
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
       padding: 16px;
       min-height: 0; /* иначе flex-контейнер не даёт себя сжать до overflow */
+      display: flex;
+      flex-direction: column;
     }
     /* Плоская "галочка"-подсказка внизу каждого экрана — одновременно и
        подсказка направления (всегда свайп вверх, см. JS), и запасная
-       кнопка на тап для тех, кто жест не найдёт. flex: 0 0 auto — не
-       часть скроллящегося .screen-content, всегда на нижнем краю. Верхний
-       padding заметно больше видимой полоски — это увеличивает зону
-       старта жеста (см. attachScreenTransition), сама полоска визуально
-       не растёт: лишний padding того же цвета фона, что и экран. */
+       кнопка на тап для тех, кто жест не найдёт. Обычный элемент в конце
+       потока .screen-content ("привязана к полотну"), а НЕ прижата к
+       вьюпорту: 100vh в Telegram WebView не всегда совпадает с реально
+       видимой областью (шапка/жесты/полноэкранный режим), из-за чего
+       вариант "прижато к экрану" мог оказаться не там, где на самом деле
+       кончается видимый контент. Верхний padding заметно больше видимой
+       полоски — увеличивает зону старта жеста (см. attachScreenTransition),
+       сама полоска визуально не растёт: лишний padding того же цвета
+       фона, что и экран. */
     .bottom-pill-wrap {
-      flex: 0 0 auto;
-      background: var(--bg);
+      margin-top: 28px;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -566,9 +579,12 @@
       padding: 11px 0;
     }
 
-    /* Месячный календарь (Phase 26) — только текущий месяц, только
-       события (та же выборка, что аналитика месяца не трогает — там
-       считаются выполненные, тут только priority=event). */
+    /* Месячный календарь (Phase 26/27) — свайп зона (nav + сетка,
+       .month-cal-swipe-zone) переключает месяцы (см. attachMonthSwipe в
+       JS), touch-action: pan-y — не мешаем вертикальному скроллу экрана
+       на явно вертикальных жестах, свайп по месяцам сам решает по оси
+       движения, не по touch-action. */
+    .month-cal-swipe-zone { touch-action: pan-y; }
     .month-cal-nav {
       display: flex;
       align-items: center;
@@ -585,7 +601,7 @@
     }
     .month-cal-day {
       aspect-ratio: 1;
-      border: none;
+      border: 1.5px solid transparent;
       border-radius: 8px;
       background: var(--card-bg);
       color: var(--text);
@@ -594,19 +610,40 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 2px;
+      gap: 1px;
       position: relative;
+      padding: 0;
     }
-    .month-cal-day.today { box-shadow: inset 0 0 0 1.5px var(--accent); }
-    .month-cal-day.selected { background: var(--accent); color: var(--accent-text); }
+    /* Первая строка чуть выше остальных — вмещает подпись дня недели
+       сверху (как .wc-label у недельного календаря), отдельной строки-
+       шапки под это не заводим, экономим высоту. */
+    .month-cal-day.first-row { aspect-ratio: 1 / 1.32; }
+    .month-cal-weekday-label { font-size: 9px; color: var(--text-muted); line-height: 1; }
+    /* Сегодня/выбранный день — та же логика, что у .week-cell недельного
+       календаря: сегодня — лёгкая заливка акцентом, выбран — обводка
+       акцентом; оба берут цвет из одного --accent, поэтому естественно
+       комбинируются на одной плитке. */
+    .month-cal-day.today { background: color-mix(in srgb, var(--accent) 18%, var(--card-bg)); }
+    .month-cal-day.selected { border-color: var(--accent); }
     .month-cal-day.other-month { opacity: 0.35; }
-    .month-cal-event-dot {
-      width: 4px;
-      height: 4px;
+    /* Первое число месяца — нейтрально-красная обводка, чтобы отличать
+       границу месяца среди "чужих" дней вокруг (см. .other-month) —
+       обводка, не заливка, чтобы не читаться как предупреждение. */
+    .month-cal-day.first-of-month { border-color: var(--neutral-red); }
+    .month-cal-day.selected.first-of-month { border-color: var(--accent); }
+    .month-cal-day.weekend .month-cal-num { color: var(--neutral-red); }
+    .month-cal-day.selected .month-cal-num { color: inherit; }
+    .month-cal-num { font-size: 12px; }
+    .month-cal-event-dot { color: var(--accent); display: flex; }
+    .month-cal-event-dot svg { width: 10px; height: 10px; }
+    .month-cal-mood-dot {
+      width: 5px;
+      height: 5px;
       border-radius: 50%;
-      background: var(--accent);
     }
-    .month-cal-day.selected .month-cal-event-dot { background: var(--accent-text); }
+    .month-cal-mood-dot.mood-good { background: var(--mood-good); }
+    .month-cal-mood-dot.mood-mid { background: var(--mood-mid); }
+    .month-cal-mood-dot.mood-low { background: var(--mood-low); }
     #month-cal-day-info {
       margin-top: 10px;
       font-size: 13px;
@@ -1034,36 +1071,16 @@
     <p class="section-label">Утренний дайджест</p>
     <div id="digest" class="list digest">Загрузка…</div>
   </div>
-  </div>
 
   <div class="bottom-pill-wrap" id="pill-main">
     <svg class="screen-chevron" viewBox="0 0 34 10"><path d="M2 8 L17 2 L32 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
     <span class="pill-label">Расширенная аналитика</span>
   </div>
   </div>
+  </div>
 
   <div id="extended-screen" class="app-screen">
   <div class="screen-content">
-  <div class="section">
-    <p class="section-label" id="pg-label">Проекты и цели</p>
-    <div class="analytics-carousel" id="pg-carousel">
-      <div class="analytics-page"><div id="pg-projects" class="list"></div></div>
-      <div class="analytics-page"><div id="pg-goals-weekly" class="list"></div></div>
-      <div class="analytics-page"><div id="pg-goals-monthly" class="list"></div></div>
-      <div class="analytics-page"><div id="pg-goals-quarterly" class="list"></div></div>
-      <div class="analytics-page"><div id="pg-goals-yearly" class="list"></div></div>
-      <div class="analytics-page"><div id="pg-goals-5year" class="list"></div></div>
-    </div>
-    <div class="analytics-dots" id="pg-dots">
-      <span class="analytics-dot active" data-index="0"></span>
-      <span class="analytics-dot" data-index="1"></span>
-      <span class="analytics-dot" data-index="2"></span>
-      <span class="analytics-dot" data-index="3"></span>
-      <span class="analytics-dot" data-index="4"></span>
-      <span class="analytics-dot" data-index="5"></span>
-    </div>
-  </div>
-
   <div class="section">
     <p class="section-label" id="analytics-label">Аналитика</p>
     <div class="analytics-carousel" id="analytics-carousel">
@@ -1080,14 +1097,15 @@
     </div>
   </div>
 
-  <div class="section">
-    <p class="section-label">Календарь</p>
-    <div class="month-cal-nav">
-      <button class="small-btn" id="month-cal-prev" aria-label="Предыдущий месяц">‹</button>
-      <span id="month-cal-title"></span>
-      <button class="small-btn" id="month-cal-next" aria-label="Следующий месяц">›</button>
+  <div class="section" id="month-cal-section">
+    <div class="month-cal-swipe-zone" id="month-cal-swipe-zone">
+      <div class="month-cal-nav">
+        <button class="small-btn" id="month-cal-prev" aria-label="Предыдущий месяц">‹</button>
+        <span id="month-cal-title"></span>
+        <button class="small-btn" id="month-cal-next" aria-label="Следующий месяц">›</button>
+      </div>
+      <div class="month-cal-grid" id="month-cal-grid"></div>
     </div>
-    <div class="month-cal-grid" id="month-cal-grid"></div>
     <div id="month-cal-day-info"></div>
   </div>
 
@@ -1098,11 +1116,27 @@
       <button class="small-btn" id="btn-open-settings" aria-label="Настройки">⚙</button>
     </div>
   </div>
+
+  <div class="section">
+    <p class="section-label" id="pg-label">Проекты</p>
+    <div class="analytics-carousel" id="pg-carousel">
+      <div class="analytics-page"><div id="pg-projects" class="list"></div></div>
+      <div class="analytics-page"><div id="pg-goals-weekly" class="list"></div></div>
+      <div class="analytics-page"><div id="pg-goals-monthly" class="list"></div></div>
+      <div class="analytics-page"><div id="pg-goals-yearly" class="list"></div></div>
+    </div>
+    <div class="analytics-dots" id="pg-dots">
+      <span class="analytics-dot active" data-index="0"></span>
+      <span class="analytics-dot" data-index="1"></span>
+      <span class="analytics-dot" data-index="2"></span>
+      <span class="analytics-dot" data-index="3"></span>
+    </div>
   </div>
 
   <div class="bottom-pill-wrap" id="pill-extended">
     <svg class="screen-chevron" viewBox="0 0 34 10"><path d="M2 8 L17 2 L32 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
     <span class="pill-label">Основной экран</span>
+  </div>
   </div>
   </div>
 </div>
@@ -2474,7 +2508,7 @@
       for (const item of items) container.append(renderEntityRow(item, kind));
     }
 
-    const GOAL_TIERS = ["weekly", "monthly", "quarterly", "yearly", "5year"];
+    const GOAL_TIERS = ["weekly", "monthly", "yearly"];
 
     function renderProjectsPage() {
       renderEntityList("pg-projects", projectsData, "project");
@@ -3584,9 +3618,7 @@
     const GOAL_TIER_LABELS = {
       weekly: "неделя",
       monthly: "месяц",
-      quarterly: "квартал",
       yearly: "год",
-      "5year": "5 лет",
     };
 
     function openCreateEntitySheet(kind) {
@@ -3936,9 +3968,14 @@
       });
     });
 
-    // Та же карусель-обвязка для переключателя Проекты/Цели.
+    // Та же карусель-обвязка для переключателя Проекты/Цели. Подпись
+    // сверху меняется по странице — "Проекты", "Недельные цели",
+    // "Месячные цели", "Годовые цели" — вместо одного статичного текста
+    // на все страницы.
     const pgCarousel = document.getElementById("pg-carousel");
     const pgDots = Array.from(document.querySelectorAll("#pg-dots .analytics-dot"));
+    const pgLabel = document.getElementById("pg-label");
+    const PG_PAGE_LABELS = ["Проекты", "Недельные цели", "Месячные цели", "Годовые цели"];
     let _pgTracking = false;
     pgCarousel.addEventListener("scroll", () => {
       if (_pgTracking) return;
@@ -3946,6 +3983,7 @@
       requestAnimationFrame(() => {
         const index = Math.round(pgCarousel.scrollLeft / pgCarousel.clientWidth);
         pgDots.forEach((dot, i) => dot.classList.toggle("active", i === index));
+        pgLabel.textContent = PG_PAGE_LABELS[index] || PG_PAGE_LABELS[0];
         _pgTracking = false;
       });
     });
@@ -3994,19 +4032,33 @@
     let calYear = today0.getFullYear();
     let calMonth = today0.getMonth() + 1; // 1-12
     let calEvents = {};
+    let calMoods = {};
     let calSelectedDay = null;
+    let calSuppressClick = false; // свайп только что переключил месяц — гасим следующий click по плитке
 
     function pad2(n) {
       return String(n).padStart(2, "0");
     }
 
+    function daysInMonth(year, month) {
+      return new Date(Date.UTC(year, month, 0)).getUTCDate();
+    }
+
     async function loadMonthEvents() {
-      try {
-        calEvents = await api(`/miniapp/api/calendar/month?month=${calYear}-${pad2(calMonth)}`);
-      } catch (e) {
-        calEvents = {};
-      }
+      const monthKey = `${calYear}-${pad2(calMonth)}`;
+      const [events, moods] = await Promise.all([
+        api(`/miniapp/api/calendar/month?month=${monthKey}`).catch(() => ({})),
+        api(`/miniapp/api/calendar/month-moods?month=${monthKey}`).catch(() => ({})),
+      ]);
+      calEvents = events;
+      calMoods = moods;
       renderMonthCalendar();
+    }
+
+    function moodClass(avg) {
+      if (avg >= 2.34) return "mood-good";
+      if (avg >= 1.67) return "mood-mid";
+      return "mood-low";
     }
 
     function renderMonthCalendar() {
@@ -4016,63 +4068,168 @@
 
       const firstOfMonth = new Date(Date.UTC(calYear, calMonth - 1, 1));
       const firstWeekday = (firstOfMonth.getUTCDay() + 6) % 7; // Пн=0
-      const daysInMonth = new Date(Date.UTC(calYear, calMonth, 0)).getUTCDate();
+      const thisMonthDays = daysInMonth(calYear, calMonth);
       const todayIso = boardState.days.today ? boardState.days.today.date : null;
 
-      const cells = [];
-      for (let i = 0; i < firstWeekday; i++) cells.push(null);
-      for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+      // Соседние месяцы — чтобы заполнить ведущие/хвостовые плитки
+      // реальными числами вместо пустых (item 3), с корректным переходом
+      // года на границе декабрь/январь.
+      const prevMonth = calMonth === 1 ? 12 : calMonth - 1;
+      const prevYear = calMonth === 1 ? calYear - 1 : calYear;
+      const prevMonthDays = daysInMonth(prevYear, prevMonth);
+      const nextMonth = calMonth === 12 ? 1 : calMonth + 1;
+      const nextYear = calMonth === 12 ? calYear + 1 : calYear;
 
-      for (const d of cells) {
+      // Ровно до конца последней недели месяца — без лишней 6-й строки,
+      // когда месяц укладывается в 5 недель.
+      const totalCells = Math.ceil((firstWeekday + thisMonthDays) / 7) * 7;
+      const trailingCount = totalCells - firstWeekday - thisMonthDays;
+
+      const cells = [];
+      for (let i = 0; i < firstWeekday; i++) {
+        cells.push({ d: prevMonthDays - firstWeekday + 1 + i, year: prevYear, month: prevMonth, other: true });
+      }
+      for (let d = 1; d <= thisMonthDays; d++) {
+        cells.push({ d, year: calYear, month: calMonth, other: false });
+      }
+      for (let i = 0; i < trailingCount; i++) {
+        cells.push({ d: i + 1, year: nextYear, month: nextMonth, other: true });
+      }
+
+      cells.forEach((cell, index) => {
         const btn = document.createElement("button");
         btn.className = "month-cal-day";
-        if (d === null) {
-          btn.classList.add("other-month");
-          btn.disabled = true;
-          grid.append(btn);
-          continue;
-        }
-        const iso = `${calYear}-${pad2(calMonth)}-${pad2(d)}`;
+        const weekdayIndex = index % 7; // Пн=0 .. Вс=6
+        if (index < 7) btn.classList.add("first-row");
+        if (weekdayIndex >= 5) btn.classList.add("weekend");
+        if (cell.other) btn.classList.add("other-month");
+
+        const iso = `${cell.year}-${pad2(cell.month)}-${pad2(cell.d)}`;
+        if (!cell.other && cell.d === 1) btn.classList.add("first-of-month");
         if (iso === todayIso) btn.classList.add("today");
         if (iso === calSelectedDay) btn.classList.add("selected");
 
-        const num = document.createElement("span");
-        num.textContent = String(d);
-        btn.append(num);
-        if (calEvents[iso]) {
-          const dot = document.createElement("span");
-          dot.className = "month-cal-event-dot";
-          btn.append(dot);
+        if (index < 7) {
+          const wd = document.createElement("span");
+          wd.className = "month-cal-weekday-label";
+          wd.textContent = WEEKDAY_LABELS[weekdayIndex];
+          btn.append(wd);
         }
+
+        const num = document.createElement("span");
+        num.className = "month-cal-num";
+        num.textContent = String(cell.d);
+        btn.append(num);
+
+        // Плитка показывает максимум один индикатор: для сегодня/будущего
+        // с событием — иконка геометки; для прошлого с заполненной
+        // вечерней рефлексией — цветной кружок "как прошёл день"
+        // (по среднему баллу physical/social/productivity/happiness,
+        // вдохновлено привычным паттерном mood-календарей вроде Daylio —
+        // один цвет на плитку, без текста, читается с одного взгляда).
+        if (!cell.other) {
+          const isPastDay = todayIso !== null && iso < todayIso;
+          if (!isPastDay && calEvents[iso]) {
+            const pin = document.createElement("span");
+            pin.className = "month-cal-event-dot";
+            pin.innerHTML = eventPinIcon();
+            btn.append(pin);
+          } else if (isPastDay && calMoods[iso] != null) {
+            const dot = document.createElement("span");
+            dot.className = "month-cal-mood-dot " + moodClass(calMoods[iso]);
+            btn.append(dot);
+          }
+        }
+
         btn.onclick = () => {
-          calSelectedDay = calSelectedDay === iso ? null : iso;
-          renderMonthCalendar();
+          if (calSuppressClick) return;
+          if (cell.other) {
+            calYear = cell.year;
+            calMonth = cell.month;
+            calSelectedDay = iso;
+            loadMonthEvents();
+          } else {
+            calSelectedDay = calSelectedDay === iso ? null : iso;
+            renderMonthCalendar();
+          }
           showDayInfo(calSelectedDay);
+          if (calSelectedDay) {
+            // item 1 — экран адаптируется так, чтобы надпись месяца была
+            // вверху видимой области, а не терялась выше открывшегося
+            // блока информации о дне.
+            document.getElementById("month-cal-section").scrollIntoView({ behavior: "smooth", block: "start" });
+          }
         };
         grid.append(btn);
-      }
+      });
     }
 
-    document.getElementById("month-cal-prev").onclick = () => {
-      calMonth -= 1;
+    function goToMonth(delta) {
+      calMonth += delta;
       if (calMonth < 1) {
         calMonth = 12;
         calYear -= 1;
-      }
-      calSelectedDay = null;
-      loadMonthEvents();
-      document.getElementById("month-cal-day-info").classList.remove("visible");
-    };
-    document.getElementById("month-cal-next").onclick = () => {
-      calMonth += 1;
-      if (calMonth > 12) {
+      } else if (calMonth > 12) {
         calMonth = 1;
         calYear += 1;
       }
       calSelectedDay = null;
       loadMonthEvents();
       document.getElementById("month-cal-day-info").classList.remove("visible");
-    };
+    }
+
+    document.getElementById("month-cal-prev").onclick = () => goToMonth(-1);
+    document.getElementById("month-cal-next").onclick = () => goToMonth(1);
+
+    // Свайп по месяцам (item 0) — активная зона: вся сетка + надпись
+    // месяца (#month-cal-swipe-zone оборачивает nav+grid). Порог — тот же
+    // "стандартный свайп" 40px, что и остальные пороговые жесты в
+    // приложении. Направление (гор./верт.) определяем по первому заметному
+    // сдвигу и не мешаем обычному вертикальному скроллу экрана.
+    function attachMonthSwipe() {
+      const zone = document.getElementById("month-cal-swipe-zone");
+      const THRESHOLD = 40;
+      let dragging = false;
+      let pointerId = null;
+      let startX = 0;
+      let startY = 0;
+      let horizontal = null;
+
+      zone.addEventListener("pointerdown", (e) => {
+        dragging = true;
+        pointerId = e.pointerId;
+        startX = e.clientX;
+        startY = e.clientY;
+        horizontal = null;
+      });
+      document.addEventListener("pointermove", (e) => {
+        if (!dragging || e.pointerId !== pointerId) return;
+        if (horizontal === null) {
+          const dx = e.clientX - startX;
+          const dy = e.clientY - startY;
+          if (Math.abs(dx) > 6 || Math.abs(dy) > 6) horizontal = Math.abs(dx) > Math.abs(dy);
+        }
+      });
+      document.addEventListener("pointerup", (e) => {
+        if (!dragging || e.pointerId !== pointerId) return;
+        dragging = false;
+        if (horizontal) {
+          const dx = e.clientX - startX;
+          if (dx > THRESHOLD) {
+            calSuppressClick = true;
+            goToMonth(-1);
+          } else if (dx < -THRESHOLD) {
+            calSuppressClick = true;
+            goToMonth(1);
+          }
+          setTimeout(() => (calSuppressClick = false), 250);
+        }
+      });
+      document.addEventListener("pointercancel", (e) => {
+        if (e.pointerId === pointerId) dragging = false;
+      });
+    }
+    attachMonthSwipe();
 
     async function showDayInfo(iso) {
       const el = document.getElementById("month-cal-day-info");

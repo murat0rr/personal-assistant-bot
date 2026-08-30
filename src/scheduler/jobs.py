@@ -255,9 +255,8 @@ def setup_scheduler(bot: Bot, storage: BaseStorage) -> AsyncIOScheduler:
         _suggest_templates_job, CronTrigger(day_of_week="sun", hour=9, minute=0), args=[bot]
     )
     # Цели (Phase 20) — недельные каждое воскресенье; месячные в начале
-    # месяца; квартальные/годовые — только в месяцы начала квартала/года.
-    # Раздельные дни (2/3/4 числа), чтобы не наваливать несколько
-    # опросов в одно утро.
+    # месяца; годовые — только в январе. Раздельные дни (2/4 числа),
+    # чтобы не наваливать несколько опросов в одно утро.
     scheduler.add_job(
         _goal_prompt_job,
         CronTrigger(day_of_week="sun", hour=12, minute=0),
@@ -265,11 +264,6 @@ def setup_scheduler(bot: Bot, storage: BaseStorage) -> AsyncIOScheduler:
     )
     scheduler.add_job(
         _goal_prompt_job, CronTrigger(day=2, hour=10, minute=0), args=[bot, storage, "monthly"]
-    )
-    scheduler.add_job(
-        _goal_prompt_job,
-        CronTrigger(day=3, hour=10, minute=0, month="1,4,7,10"),
-        args=[bot, storage, "quarterly"],
     )
     scheduler.add_job(
         _goal_prompt_job,

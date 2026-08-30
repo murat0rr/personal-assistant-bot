@@ -4,7 +4,6 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
-from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -30,13 +29,11 @@ SPHERES = ["учёба", "работа", "спорт", "развитие", "от
 _TIER_LABELS = {
     "weekly": "неделю",
     "monthly": "месяц",
-    "quarterly": "квартал",
     "yearly": "год",
-    "5year": "5 лет",
 }
-# Только эти тиры автоматически раскладываются на задачи/проекты — см.
-# CLAUDE.md-контекст фазы: квартальные/годовые/пятилетние цели прямо не
-# просили превращать в задачи, только фиксировать для будущей аналитики.
+# Только эти тиры автоматически раскладываются на задачи/проекты —
+# годовые цели прямо не просили превращать в задачи, только фиксировать
+# для будущей аналитики.
 _TASK_GENERATING_TIERS = {"weekly", "monthly"}
 
 
@@ -72,17 +69,6 @@ async def start_goal_flow(
         reply_markup=_sphere_keyboard([]),
     )
     await state.set_state(GoalStates.picking_sphere)
-
-
-@router.message(Command("goals5y"))
-async def handle_goals5y_command(message: Message, state: FSMContext) -> None:
-    if (
-        not message.from_user
-        or not await is_authorized(message.from_user.id)
-        or message.bot is None
-    ):
-        return
-    await start_goal_flow(message.bot, state, "5year", None, None)
 
 
 @router.callback_query(F.data.startswith("goal:sphere:"))

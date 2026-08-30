@@ -631,6 +631,17 @@ async def calendar_month_endpoint(
     return await calendar_view.month_events(int(year_str), int(month_str))
 
 
+# Индикатор "как прошёл день" в плитках месячного календаря (Phase 27) —
+# средний балл вечерней рефлексии по дням, где она заполнена (см.
+# calendar_view.month_diary_moods).
+@app.get("/miniapp/api/calendar/month-moods")
+async def calendar_month_moods_endpoint(
+    month: str, _: dict = Depends(get_authorized_user)
+) -> dict[str, float]:
+    year_str, month_str = month.split("-")
+    return await calendar_view.month_diary_moods(int(year_str), int(month_str))
+
+
 # Дневник (Phase 26) — ревью прошедшего дня в расширенном экране; сам
 # дневник по-прежнему только в Notion (Diary), тут просто читаем и
 # фильтруем по дате на своей стороне (list_diary_entries — маленький
