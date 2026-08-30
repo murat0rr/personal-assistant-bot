@@ -969,6 +969,11 @@
       let startY = 0;
       let compensation = 0; // накопленная поправка от свапов соседей
       let lastDy = 0;
+      // Счётчик переносов этой строки — если строку схватили заново раньше,
+      // чем доспела доводка предыдущего переноса (endDrag), finalize того,
+      // старого, вызова должен молча выйти, а не дёрнуть commitOrder/
+      // render() посреди уже нового активного перетаскивания.
+      let dragGeneration = 0;
 
       function applyTransform(dy) {
         lastDy = dy;
@@ -982,27 +987,65 @@
         }
       }
 
+      // Соседа, которого строка обгоняет, плавно сдвигаем на освободившееся
+      // место (FLIP: запоминаем его позицию до перестановки DOM, применяем
+      // разницу как мгновенный transform, затем этот transform анимируем в
+      // 0) — без этого сосед просто телепортировался бы на новое место.
+      function shiftSibling(sib, mutate) {
+        const before = sib.getBoundingClientRect().top;
+        mutate();
+        const after = sib.getBoundingClientRect().top;
+        const delta = before - after;
+        if (delta === 0) return;
+        sib.style.transition = "none";
+        sib.style.transform = `translateY(${delta}px)`;
+        sib.getBoundingClientRect(); // форсируем reflow — иначе браузер схлопнёт эти два присваивания в одно
+        requestAnimationFrame(() => {
+          sib.style.transition = "transform 160ms ease";
+          sib.style.transform = "";
+          sib.addEventListener(
+            "transitionend",
+            () => {
+              sib.style.transition = "";
+            },
+            { once: true }
+          );
+        });
+      }
+
+      // Цикл, а не одна перестановка за вызов — на резком рывке между
+      // двумя pointermove палец может пролететь сразу через несколько
+      // соседей, и если остановиться на первом же свапе, строка визуально
+      // не "догонит" палец до конца жеста (см. баг с залипанием/наложением
+      // при резком отпускании). Продолжаем, пока не перестанем находить,
+      // кого обгонять.
       function tryReorder() {
-        const rect = row.getBoundingClientRect();
-        const centerY = rect.top + rect.height / 2;
-        const all = dragSiblings(row, rowSelector);
-        const rowIndex = all.indexOf(row);
-        for (let i = 0; i < all.length; i++) {
-          const sib = all[i];
-          if (sib === row) continue;
-          const sRect = sib.getBoundingClientRect();
-          const sCenter = sRect.top + sRect.height / 2;
-          if (i < rowIndex && centerY < sCenter) {
-            row.parentElement.insertBefore(row, sib);
-            compensation += sRect.height;
-            applyTransform(lastDy);
-            return;
-          }
-          if (i > rowIndex && centerY > sCenter) {
-            row.parentElement.insertBefore(row, sib.nextSibling);
-            compensation -= sRect.height;
-            applyTransform(lastDy);
-            return;
+        let swapped = true;
+        while (swapped) {
+          swapped = false;
+          const rect = row.getBoundingClientRect();
+          const centerY = rect.top + rect.height / 2;
+          const all = dragSiblings(row, rowSelector);
+          const rowIndex = all.indexOf(row);
+          for (let i = 0; i < all.length; i++) {
+            const sib = all[i];
+            if (sib === row) continue;
+            const sRect = sib.getBoundingClientRect();
+            const sCenter = sRect.top + sRect.height / 2;
+            if (i < rowIndex && centerY < sCenter) {
+              shiftSibling(sib, () => row.parentElement.insertBefore(row, sib));
+              compensation += sRect.height;
+              applyTransform(lastDy);
+              swapped = true;
+              break;
+            }
+            if (i > rowIndex && centerY > sCenter) {
+              shiftSibling(sib, () => row.parentElement.insertBefore(row, sib.nextSibling));
+              compensation -= sRect.height;
+              applyTransform(lastDy);
+              swapped = true;
+              break;
+            }
           }
         }
       }
@@ -1020,7 +1063,12 @@
         }
         dragging = true;
         moved = true;
+        dragGeneration++;
         row.classList.add("reorder-dragging");
+        // На случай, если предыдущая доводка (endDrag) не успела дочистить
+        // transition за собой — без этого первые кадры нового переноса
+        // ехали бы за transition вместо мгновенного 1:1 слежения за пальцем.
+        row.style.transition = "none";
         compensation = 0;
         applyTransform(0);
       }
@@ -1041,9 +1089,34 @@
       function endDrag(commit) {
         clearHold();
         if (dragging) {
-          row.classList.remove("reorder-dragging");
-          row.style.transform = "";
-          if (commit) commitOrder();
+          // Доводка — translateY плавно едет к 0 (это ровно её текущее
+          // место в DOM, все свапы уже применены), тень/приподнятость
+          // снимаем и boardState фиксируем только после того, как переход
+          // реально закончился. Раньше сброс был мгновенным и фиксация
+          // происходила тут же — на резком рывке+отпускании это выглядело
+          // как строка, застрявшая поверх соседней на кадр-другой.
+          const myGeneration = dragGeneration;
+          let finalized = false;
+          const finalize = (e) => {
+            if (finalized) return;
+            if (e && e.propertyName && e.propertyName !== "transform") return;
+            finalized = true;
+            row.removeEventListener("transitionend", finalize);
+            // Строку схватили заново раньше, чем доспела эта доводка — та,
+            // новая, сама отвечает за свою фиксацию, эта уже устарела.
+            if (myGeneration !== dragGeneration) return;
+            row.style.transition = "";
+            row.classList.remove("reorder-dragging");
+            row.style.transform = "";
+            if (commit) commitOrder();
+          };
+          row.style.transition = "transform 180ms cubic-bezier(0.22, 1, 0.36, 1)";
+          row.style.transform = "translateY(0px)";
+          row.addEventListener("transitionend", finalize);
+          // Подстраховка: если переход почему-то не случится (элемент
+          // убрали из DOM, reduced motion и т.п.) — фиксация всё равно
+          // произойдёт, просто без анимации.
+          setTimeout(finalize, 220);
         }
         dragging = false;
         armed = false;
