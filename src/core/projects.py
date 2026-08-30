@@ -13,6 +13,8 @@ def _serialize(project: Project, task_count: int, done_count: int) -> dict:
         "title": project.title,
         "description": project.description,
         "sphere": project.sphere,
+        "color": project.color,
+        "done": project.done,
         "start_date": project.start_date.isoformat() if project.start_date else None,
         "end_date": project.end_date.isoformat() if project.end_date else None,
         "task_count": task_count,
@@ -56,6 +58,7 @@ async def create_project(
     sphere: str | None,
     start_date: date | None,
     end_date: date | None,
+    color: str | None = None,
 ) -> dict:
     async with async_session() as session:
         project = Project(
@@ -64,6 +67,7 @@ async def create_project(
             sphere=sphere,
             start_date=start_date,
             end_date=end_date,
+            color=color,
         )
         session.add(project)
         await session.commit()
@@ -77,6 +81,51 @@ async def archive_project(project_id: int) -> None:
         if project is None:
             raise ValueError("project not found")
         project.archived = True
+        await session.commit()
+
+
+async def set_project_done(project_id: int, done: bool) -> None:
+    async with async_session() as session:
+        project = await session.get(Project, project_id)
+        if project is None:
+            raise ValueError("project not found")
+        project.done = done
+        await session.commit()
+
+
+async def set_project_color(project_id: int, color: str | None) -> None:
+    async with async_session() as session:
+        project = await session.get(Project, project_id)
+        if project is None:
+            raise ValueError("project not found")
+        project.color = color
+        await session.commit()
+
+
+async def update_project(
+    project_id: int,
+    title: str | None = None,
+    description: str | None = None,
+    sphere: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> None:
+    """Правка полей проекта из карточки/шторки Mini App (Phase 26) — все
+    аргументы опциональны, передаётся только то, что реально поменялось."""
+    async with async_session() as session:
+        project = await session.get(Project, project_id)
+        if project is None:
+            raise ValueError("project not found")
+        if title is not None:
+            project.title = title
+        if description is not None:
+            project.description = description
+        if sphere is not None:
+            project.sphere = sphere
+        if start_date is not None:
+            project.start_date = start_date
+        if end_date is not None:
+            project.end_date = end_date
         await session.commit()
 
 

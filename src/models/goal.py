@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Integer, String
+from sqlalchemy import Boolean, Date, DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -23,4 +23,9 @@ class Goal(Base):
     period_start: Mapped[date | None] = mapped_column(Date, nullable=True)
     period_end: Mapped[date | None] = mapped_column(Date, nullable=True)
     text: Mapped[str] = mapped_column(String)
+    # Phase 26 — отображение в стиле задач (Mini App): статус выполнено/
+    # не выполнено (ручной, как у Task) + возможность архивировать
+    # (та же корзина, что у задач/проектов/шаблонов).
+    done: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

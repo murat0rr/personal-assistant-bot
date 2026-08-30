@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from src.core.config import settings
 from src.core.db import async_session
+from src.core.goals import GOAL_TIER_BOUNDS
 from src.core.habits import list_habits
 from src.core.recurring_tasks import materialize_due_rules
 from src.core.task_templates import create_ai_template, list_templates
@@ -188,33 +189,6 @@ async def _habit_reminders(bot: Bot) -> None:
     )
 
 
-def _week_bounds(today: date) -> tuple[date, date]:
-    # Цели на "предстоящую неделю" — джоба стреляет в воскресенье, значит
-    # следующий понедельник всегда tomorrow (today.weekday()==6).
-    monday = today + timedelta(days=(7 - today.weekday()) % 7 or 7)
-    return monday, monday + timedelta(days=6)
-
-
-def _month_bounds(today: date) -> tuple[date, date]:
-    start = today.replace(day=1)
-    next_month = start.replace(day=28) + timedelta(days=4)
-    end = next_month.replace(day=1) - timedelta(days=1)
-    return start, end
-
-
-def _quarter_bounds(today: date) -> tuple[date, date]:
-    quarter_start_month = ((today.month - 1) // 3) * 3 + 1
-    start = today.replace(month=quarter_start_month, day=1)
-    end_month = quarter_start_month + 2
-    next_month = start.replace(month=end_month, day=28) + timedelta(days=4)
-    end = next_month.replace(day=1) - timedelta(days=1)
-    return start, end
-
-
-def _year_bounds(today: date) -> tuple[date, date]:
-    return today.replace(month=1, day=1), today.replace(month=12, day=31)
-
-
 async def _goal_prompt_job(bot: Bot, storage: BaseStorage, tier: str) -> None:
     logger.info("Запускаю опрос целей: %s", tier)
     key = StorageKey(
@@ -224,12 +198,7 @@ async def _goal_prompt_job(bot: Bot, storage: BaseStorage, tier: str) -> None:
     )
     state = FSMContext(storage=storage, key=key)
     today = datetime.now(ZoneInfo(settings.timezone)).date()
-    bounds = {
-        "weekly": _week_bounds,
-        "monthly": _month_bounds,
-        "quarterly": _quarter_bounds,
-        "yearly": _year_bounds,
-    }[tier](today)
+    bounds = GOAL_TIER_BOUNDS[tier](today)
     await start_goal_flow(bot, state, tier, *bounds)
 
 

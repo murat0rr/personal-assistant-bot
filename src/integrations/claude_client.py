@@ -675,3 +675,68 @@ async def analyze_productivity(spheres: list[dict], month: dict, projects: list[
         ],
     )
     return "".join(block.text for block in response.content if block.type == "text")
+
+
+_LINK_TASKS_TOOL = {
+    "name": "link_tasks",
+    "description": "Выбрать, какие из присланных задач реально относятся к проекту/цели.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "task_ids": {
+                "type": "array",
+                "items": {"type": "integer"},
+                "description": (
+                    "id задач, которые реально относятся к проекту/цели по смыслу. "
+                    "Пустой список, если ни одна не подходит — не привязывай "
+                    "задачи только ради галочки."
+                ),
+            },
+        },
+        "required": ["task_ids"],
+    },
+}
+
+
+class LinkedTasks(BaseModel):
+    task_ids: list[int]
+
+
+async def find_tasks_for_entity(
+    entity_title: str, entity_description: str | None, candidate_tasks: list[dict]
+) -> list[int]:
+    """ "Проанализировать задачи и добавить в проект/цель" (Phase 26,
+    форма создания в Mini App) — среди уже существующих задач без
+    привязки (инбокс + будущие) выбирает те, что реально относятся к
+    этому проекту/цели по смыслу заголовка. Не создаёт новых задач —
+    только привязывает существующие, в отличие от generate_tasks_from_goals."""
+    if not candidate_tasks:
+        return []
+    tasks_text = "\n".join(f"{t['id']}: {t['title']}" for t in candidate_tasks)
+    response = await client.messages.create(
+        model=settings.claude_model_haiku,
+        max_tokens=500,
+        system=(
+            "Вот название и описание проекта/цели, и список задач пользователя "
+            "без привязки (id: заголовок). Выбери id тех задач, что по смыслу "
+            "реально относятся к этому проекту/цели. Не выдумывай натянутые "
+            "связи — пустой список, если ничего явно не подходит."
+        ),
+        tools=[_LINK_TASKS_TOOL],
+        tool_choice={"type": "tool", "name": "link_tasks"},
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    f"Проект/цель: {entity_title}\n"
+                    f"Описание: {entity_description or '(нет)'}\n\n"
+                    f"Задачи:\n{tasks_text}"
+                ),
+            }
+        ],
+    )
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+    if tool_use is None:
+        return []
+    valid_ids = {t["id"] for t in candidate_tasks}
+    return [i for i in LinkedTasks.model_validate(tool_use.input).task_ids if i in valid_ids]

@@ -58,6 +58,8 @@ let _nextTemplateId = 100;
 const _templates = __TEMPLATES_JSON__;
 let _nextProjectId = 10;
 const _projects = __PROJECTS_JSON__;
+let _nextGoalId = 100;
+const _goals = __GOALS_JSON__;
 
 function _serialize(t) {
   return {
@@ -80,10 +82,24 @@ function _serializeProject(p) {
     title: p.title,
     description: p.description,
     sphere: p.sphere,
+    color: p.color || null,
+    done: !!p.done,
     start_date: p.start_date,
     end_date: p.end_date,
     task_count: linked.length,
     done_count: linked.filter((t) => t.done).length,
+  };
+}
+
+function _serializeGoal(g) {
+  return {
+    id: g.id,
+    sphere: g.sphere,
+    tier: g.tier,
+    period_start: g.period_start || null,
+    period_end: g.period_end || null,
+    text: g.text,
+    done: !!g.done,
   };
 }
 
@@ -232,15 +248,86 @@ window.fetch = async (path, options = {}) => {
       sphere: body.sphere,
       start_date: body.start_date,
       end_date: body.end_date,
+      color: body.color || null,
+      done: false,
       archived: false,
     };
     _projects.push(p);
+    if (body.analyze) {
+      // упрощённая имитация "проанализировать и добавить": линкуем
+      // задачи без проекта, чьё название содержит слово из названия
+      // проекта — этого достаточно для проверки самого механизма кнопки.
+      const needle = p.title.toLowerCase().split(" ")[0];
+      for (const t of _tasks) {
+        if (!t.project_id && t.title.toLowerCase().includes(needle)) t.project_id = id;
+      }
+    }
     result = _serializeProject(p);
   } else if (path.match(/\\/projects\\/(\\d+)\\/archive/)) {
     const m = path.match(/\\/projects\\/(\\d+)\\/archive/);
     const p = _projects.find((x) => x.id === Number(m[1]));
     if (!p) return { ok: false, status: 404, json: async () => ({}) };
     p.archived = true;
+  } else if (path.match(/\\/projects\\/(\\d+)\\/(done|color|edit|analyze)/)) {
+    const m = path.match(/\\/projects\\/(\\d+)\\/(done|color|edit|analyze)/);
+    const id = Number(m[1]);
+    const action = m[2];
+    const p = _projects.find((x) => x.id === id);
+    if (!p) return { ok: false, status: 404, json: async () => ({}) };
+    if (action === "done") p.done = body.done;
+    else if (action === "color") p.color = body.color;
+    else if (action === "edit") Object.assign(p, body);
+    else if (action === "analyze") result = { linked: 0 };
+  } else if (path === "/miniapp/api/goals" && method === "GET") {
+    result = _goals.filter((g) => !g.archived).map((g) => _serializeGoal(g));
+  } else if (path === "/miniapp/api/goals" && method === "POST") {
+    const id = _nextGoalId++;
+    const g = {
+      id,
+      sphere: body.sphere,
+      tier: body.tier,
+      text: body.text,
+      period_start: null,
+      period_end: null,
+      done: false,
+      archived: false,
+    };
+    _goals.push(g);
+    result = _serializeGoal(g);
+  } else if (path.match(/\\/goals\\/(\\d+)\\/(done|archive|text|analyze)/)) {
+    const m = path.match(/\\/goals\\/(\\d+)\\/(done|archive|text|analyze)/);
+    const id = Number(m[1]);
+    const action = m[2];
+    const g = _goals.find((x) => x.id === id);
+    if (!g) return { ok: false, status: 404, json: async () => ({}) };
+    if (action === "done") g.done = body.done;
+    else if (action === "archive") g.archived = true;
+    else if (action === "text") g.text = body.text;
+    else if (action === "analyze") result = { linked: 0 };
+  } else if (path.match(/\\/calendar\\/month\\?month=(\\d{4})-(\\d{2})/)) {
+    const m = path.match(/\\/calendar\\/month\\?month=(\\d{4})-(\\d{2})/);
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    result = {};
+    for (const t of _tasks) {
+      if (t.archived || t.priority !== "event" || !t.due) continue;
+      const [ty, tm] = t.due.split("-").map(Number);
+      if (ty === year && tm === month) result[t.due] = true;
+    }
+  } else if (path.match(/\\/diary\\/(\\d{4}-\\d{2}-\\d{2})/)) {
+    const m = path.match(/\\/diary\\/(\\d{4}-\\d{2}-\\d{2})/);
+    const iso = m[1];
+    const day = Number(iso.slice(8, 10));
+    result =
+      day % 3 === 0
+        ? {
+            physical: 2,
+            social: 3,
+            productivity: 1,
+            happiness: 2,
+            highlight: "дев-харнесс: пример ревью дня",
+          }
+        : null;
   } else if (path === "/miniapp/api/analytics/spheres") {
     const counts = {};
     for (const t of _tasks) {
@@ -268,6 +355,7 @@ window.fetch = async (path, options = {}) => {
   window.__lastTasks = _tasks;
   window.__lastTemplates = _templates;
   window.__lastProjects = _projects;
+  window.__lastGoals = _goals;
   return { ok: true, status: 200, json: async () => result };
 };
 
@@ -435,37 +523,77 @@ def _default_projects() -> list[dict]:
     ]
 
 
-def _build_mock_script(tasks: list[dict], templates: list[dict], projects: list[dict]) -> str:
+def _default_goals() -> list[dict]:
+    return [
+        {
+            "id": 1,
+            "sphere": "спорт",
+            "tier": "weekly",
+            "text": "Пробежать 15км за неделю",
+            "period_start": None,
+            "period_end": None,
+            "done": False,
+            "archived": False,
+        },
+        {
+            "id": 2,
+            "sphere": "работа",
+            "tier": "monthly",
+            "text": "Закрыть квартальный отчёт",
+            "period_start": None,
+            "period_end": None,
+            "done": True,
+            "archived": False,
+        },
+        {
+            "id": 3,
+            "sphere": "развитие",
+            "tier": "5year",
+            "text": "Выучить испанский до разговорного уровня",
+            "period_start": None,
+            "period_end": None,
+            "done": False,
+            "archived": False,
+        },
+    ]
+
+
+def _build_mock_script(
+    tasks: list[dict], templates: list[dict], projects: list[dict], goals: list[dict]
+) -> str:
     today = date.today().isoformat()
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     script = MOCK_SCRIPT.replace("__TASKS_JSON__", json.dumps(tasks, ensure_ascii=False))
     script = script.replace("__TEMPLATES_JSON__", json.dumps(templates, ensure_ascii=False))
     script = script.replace("__PROJECTS_JSON__", json.dumps(projects, ensure_ascii=False))
+    script = script.replace("__GOALS_JSON__", json.dumps(goals, ensure_ascii=False))
     script = script.replace("__TODAY_JSON__", json.dumps(today))
     script = script.replace("__YESTERDAY_JSON__", json.dumps(yesterday))
     return script
 
 
-def build_merged_html(tasks: list[dict], templates: list[dict], projects: list[dict]) -> bytes:
+def build_merged_html(
+    tasks: list[dict], templates: list[dict], projects: list[dict], goals: list[dict]
+) -> bytes:
     html = INDEX_HTML.read_text(encoding="utf-8")
     if TELEGRAM_SCRIPT_TAG not in html:
         raise RuntimeError(
             "index.html изменил структуру — тег telegram-web-app.js не найден, "
             "обнови TELEGRAM_SCRIPT_TAG в scripts/miniapp_dev_server.py"
         )
-    mock = f"<script>{_build_mock_script(tasks, templates, projects)}</script>\n"
+    mock = f"<script>{_build_mock_script(tasks, templates, projects, goals)}</script>\n"
     merged = html.replace(TELEGRAM_SCRIPT_TAG, mock)
     return merged.encode("utf-8")
 
 
 def make_handler(
-    tasks: list[dict], templates: list[dict], projects: list[dict]
+    tasks: list[dict], templates: list[dict], projects: list[dict], goals: list[dict]
 ) -> type[http.server.BaseHTTPRequestHandler]:
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 (метод BaseHTTPRequestHandler)
             if self.path in ("/", "/index.html"):
                 try:
-                    body = build_merged_html(tasks, templates, projects)
+                    body = build_merged_html(tasks, templates, projects, goals)
                 except RuntimeError as exc:
                     self.send_response(500)
                     self.end_headers()
@@ -519,11 +647,15 @@ def main() -> None:
     _spheres_cycle = ["учёба", "работа", "спорт", "развитие", "отношения"]
     for i, t in enumerate(tasks):
         t["sphere"] = _spheres_cycle[i % len(_spheres_cycle)]
+    goals = _default_goals()
 
-    handler = make_handler(tasks, templates, projects)
+    handler = make_handler(tasks, templates, projects, goals)
     server = http.server.HTTPServer(("127.0.0.1", args.port), handler)
     print(f"Mini App dev-сервер: http://127.0.0.1:{args.port}/  (Ctrl+C — остановить)")
-    print(f"Задач в наборе: {len(tasks)}, шаблонов: {len(templates)}, проектов: {len(projects)}")
+    print(
+        f"Задач в наборе: {len(tasks)}, шаблонов: {len(templates)}, "
+        f"проектов: {len(projects)}, целей: {len(goals)}"
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

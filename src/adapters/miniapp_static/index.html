@@ -16,6 +16,31 @@
       --accent-text: var(--tg-theme-button-text-color, #ffffff);
       --pending-bg: rgba(36, 129, 204, 0.1);
     }
+    /* Явный выбор темы в настройках (Phase 26) — переопределяет то, что
+       даёт сама Telegram: тема Mini App должна уметь отличаться от темы
+       клиента Telegram, если пользователь так решил (см. #settings-sheet).
+       localStorage, не сервер — это чисто визуальное предпочтение
+       конкретного устройства. */
+    :root[data-theme="dark"] {
+      --bg: #17212b;
+      --card-bg: #202b36;
+      --text: #e7ecf0;
+      --text-muted: #7c8b99;
+      --hairline: rgba(255, 255, 255, 0.08);
+      --accent: #5eabf5;
+      --accent-text: #0b1620;
+      --pending-bg: rgba(94, 171, 245, 0.14);
+    }
+    :root[data-theme="light"] {
+      --bg: #ffffff;
+      --card-bg: #f2f3f5;
+      --text: #14181c;
+      --text-muted: #8a9099;
+      --hairline: rgba(0, 0, 0, 0.1);
+      --accent: #2481cc;
+      --accent-text: #ffffff;
+      --pending-bg: rgba(36, 129, 204, 0.1);
+    }
     * { box-sizing: border-box; }
     html, body {
       margin: 0;
@@ -147,7 +172,7 @@
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
-      color: #fff;
+      color: var(--accent-text);
     }
     .checkbox.done {
       background: var(--accent);
@@ -509,6 +534,194 @@
       color: var(--text);
       white-space: pre-wrap;
     }
+
+    /* Проекты/цели (Phase 26) — строки в стиле задач: кружок статуса +
+       заголовок + краткие данные справа, свайп-шторка со своими
+       действиями (та же механика, что renderSwipeableTaskRow). */
+    .entity-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .entity-color-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .entity-create-row { display: flex; gap: 10px; align-items: center; }
+    .entity-create-btn {
+      flex: 1;
+      border: none;
+      border-radius: 10px;
+      background: var(--card-bg);
+      color: var(--text);
+      font-size: 14px;
+      padding: 11px 0;
+    }
+
+    /* Месячный календарь (Phase 26) — только текущий месяц, только
+       события (та же выборка, что аналитика месяца не трогает — там
+       считаются выполненные, тут только priority=event). */
+    .month-cal-nav {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      margin-bottom: 8px;
+      font-size: 14px;
+      color: var(--text);
+    }
+    .month-cal-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 4px;
+    }
+    .month-cal-day {
+      aspect-ratio: 1;
+      border: none;
+      border-radius: 8px;
+      background: var(--card-bg);
+      color: var(--text);
+      font-size: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      position: relative;
+    }
+    .month-cal-day.today { box-shadow: inset 0 0 0 1.5px var(--accent); }
+    .month-cal-day.selected { background: var(--accent); color: var(--accent-text); }
+    .month-cal-day.other-month { opacity: 0.35; }
+    .month-cal-event-dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+    .month-cal-day.selected .month-cal-event-dot { background: var(--accent-text); }
+    #month-cal-day-info {
+      margin-top: 10px;
+      font-size: 13px;
+      color: var(--text);
+      background: var(--card-bg);
+      border-radius: 10px;
+      padding: 10px 12px;
+      display: none;
+    }
+    #month-cal-day-info.visible { display: block; }
+    #month-cal-day-info .day-info-title { color: var(--text-muted); font-size: 12px; margin: 0 0 6px; }
+    #month-cal-day-info .day-info-task { padding: 2px 0; }
+    #month-cal-day-info .day-info-ratings { display: flex; gap: 10px; margin-bottom: 6px; }
+    #month-cal-day-info .day-info-rating { color: var(--text-muted); }
+    #month-cal-day-info .day-info-rating b { color: var(--text); }
+
+    /* Форма создания проекта/цели — переиспользует .bottom-sheet. */
+    .entity-form-field {
+      width: 100%;
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      padding: 9px 11px;
+      background: transparent;
+      color: var(--text);
+      font-size: 14px;
+      margin-bottom: 10px;
+    }
+    .entity-form-dates { display: flex; gap: 8px; }
+    .entity-form-dates input { flex: 1; min-width: 0; }
+    .entity-form-toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0 10px;
+      font-size: 13px;
+      color: var(--text);
+    }
+    .entity-form-toggle {
+      width: 40px;
+      height: 24px;
+      border-radius: 12px;
+      background: var(--hairline);
+      border: none;
+      position: relative;
+      flex-shrink: 0;
+    }
+    .entity-form-toggle::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--bg);
+      transition: transform 0.15s ease;
+    }
+    .entity-form-toggle.on { background: var(--accent); }
+    .entity-form-toggle.on::after { transform: translateX(16px); }
+    .entity-form-submit {
+      width: 100%;
+      border: none;
+      border-radius: 9px;
+      background: var(--accent);
+      color: var(--accent-text);
+      font-size: 14px;
+      padding: 11px 0;
+      margin-top: 4px;
+    }
+    .entity-form-tier-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+
+    /* Палитра 20 цветов — выбор цвета проекта (форма создания + шторка
+       #color-picker-sheet). */
+    .palette-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+    }
+    .swatch {
+      aspect-ratio: 1;
+      border-radius: 9px;
+      cursor: pointer;
+      position: relative;
+      border: 2px solid transparent;
+    }
+    .swatch.selected { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg); }
+    .swatch.selected::after {
+      content: "✓";
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(0, 0, 0, 0.55);
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    /* Настройки — минимальная шторка, пока только тема. */
+    .settings-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 0;
+      font-size: 14px;
+      color: var(--text);
+      border-bottom: 0.5px solid var(--hairline);
+    }
+    .settings-row:last-child { border-bottom: none; }
+    .settings-theme-toggle { display: flex; gap: 6px; background: var(--card-bg); padding: 3px; border-radius: 8px; }
+    .settings-theme-toggle button {
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 13px;
+      padding: 6px 12px;
+      border-radius: 6px;
+    }
+    .settings-theme-toggle button.active { background: var(--accent); color: var(--accent-text); }
+
     button:disabled { opacity: 0.5; }
     /* Полоска недель — три панели (пред./тек./след. неделя), но, в отличие
        от внешней карусели вчера/сегодня/календарь, БЕЗ нативного
@@ -824,12 +1037,22 @@
 
   <div id="extended-screen" class="app-screen">
   <div class="section">
-    <p class="section-label section-header" id="projects-header">
-      <span id="projects-title">Проекты</span>
-      <span class="chevron" id="projects-chevron"></span>
-    </p>
-    <div id="projects-body" style="display: none;">
-      <div id="projects-list" class="list"></div>
+    <p class="section-label" id="pg-label">Проекты и цели</p>
+    <div class="analytics-carousel" id="pg-carousel">
+      <div class="analytics-page"><div id="pg-projects" class="list"></div></div>
+      <div class="analytics-page"><div id="pg-goals-weekly" class="list"></div></div>
+      <div class="analytics-page"><div id="pg-goals-monthly" class="list"></div></div>
+      <div class="analytics-page"><div id="pg-goals-quarterly" class="list"></div></div>
+      <div class="analytics-page"><div id="pg-goals-yearly" class="list"></div></div>
+      <div class="analytics-page"><div id="pg-goals-5year" class="list"></div></div>
+    </div>
+    <div class="analytics-dots" id="pg-dots">
+      <span class="analytics-dot active" data-index="0"></span>
+      <span class="analytics-dot" data-index="1"></span>
+      <span class="analytics-dot" data-index="2"></span>
+      <span class="analytics-dot" data-index="3"></span>
+      <span class="analytics-dot" data-index="4"></span>
+      <span class="analytics-dot" data-index="5"></span>
     </div>
   </div>
 
@@ -846,6 +1069,25 @@
       <span class="analytics-dot" data-index="1"></span>
       <span class="analytics-dot" data-index="2"></span>
       <span class="analytics-dot" data-index="3"></span>
+    </div>
+  </div>
+
+  <div class="section">
+    <p class="section-label">Календарь</p>
+    <div class="month-cal-nav">
+      <button class="small-btn" id="month-cal-prev" aria-label="Предыдущий месяц">‹</button>
+      <span id="month-cal-title"></span>
+      <button class="small-btn" id="month-cal-next" aria-label="Следующий месяц">›</button>
+    </div>
+    <div class="month-cal-grid" id="month-cal-grid"></div>
+    <div id="month-cal-day-info"></div>
+  </div>
+
+  <div class="section">
+    <div class="entity-create-row">
+      <button class="entity-create-btn" id="btn-create-project">+ Проект</button>
+      <button class="entity-create-btn" id="btn-create-goal">+ Цель</button>
+      <button class="small-btn" id="btn-open-settings" aria-label="Настройки">⚙</button>
     </div>
   </div>
 
@@ -870,12 +1112,69 @@
     <div id="project-picker-list" class="list"></div>
   </div>
 
+  <div id="color-picker-sheet" class="bottom-sheet">
+    <div class="bottom-sheet-handle"></div>
+    <p class="section-label">Цвет проекта</p>
+    <div id="color-picker-list" class="list"></div>
+  </div>
+
+  <div id="create-entity-sheet" class="bottom-sheet">
+    <div class="bottom-sheet-handle"></div>
+    <p class="section-label" id="create-entity-title">Новый проект</p>
+    <div id="create-entity-form" class="list"></div>
+  </div>
+
+  <div id="settings-sheet" class="bottom-sheet">
+    <div class="bottom-sheet-handle"></div>
+    <p class="section-label">Настройки</p>
+    <div class="list">
+      <div class="settings-row">
+        <span>Тема</span>
+        <div class="settings-theme-toggle" id="settings-theme-toggle">
+          <button data-theme="">Системная</button>
+          <button data-theme="light">Светлая</button>
+          <button data-theme="dark">Тёмная</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const tg = window.Telegram?.WebApp;
     tg?.ready();
     tg?.expand();
 
     const initData = tg?.initData || "";
+
+    // Тема (Phase 26) — сохранённое предпочтение переопределяет то, что
+    // даёт сама Telegram (см. :root[data-theme] в CSS). Per-device, не
+    // на сервере — localStorage может быть недоступен (приватный режим
+    // и т.п.), поэтому обёрнуто в try/catch, без сохранённого значения
+    // просто остаётся тема самого Telegram.
+    function getStoredTheme() {
+      try {
+        return localStorage.getItem("theme");
+      } catch (e) {
+        return null;
+      }
+    }
+    function applyTheme(theme) {
+      if (theme === "dark" || theme === "light") {
+        document.documentElement.setAttribute("data-theme", theme);
+      } else {
+        document.documentElement.removeAttribute("data-theme");
+      }
+    }
+    function setTheme(theme) {
+      applyTheme(theme);
+      try {
+        if (theme) localStorage.setItem("theme", theme);
+        else localStorage.removeItem("theme");
+      } catch (e) {
+        // приватный режим и т.п. — тема применится, просто не переживёт перезапуск
+      }
+    }
+    applyTheme(getStoredTheme());
 
     async function api(path, options = {}) {
       const res = await fetch(path, {
@@ -966,8 +1265,27 @@
     let projectsData = [];
     let projectPickerOpen = false;
     let projectPickerTask = null;
-    let projectFormOpen = false;
     const SPHERES = ["учёба", "работа", "спорт", "развитие", "отношения"];
+
+    // Цели (Phase 26) — отдельная коллекция, тиры фильтруются на
+    // фронтенде (см. GOAL_TIERS/renderGoalsPages).
+    let goalsData = [];
+
+    // Форма создания проекта/цели — один sheet, содержимое зависит от
+    // createEntityKind ("project" | "goal" | null).
+    let createEntityKind = null;
+    let createEntityDraft = {};
+
+    let settingsSheetOpen = false;
+
+    // Та же палитра, что уже показывали на макете-прототипе — 20 цветов,
+    // без внешних библиотек.
+    const PROJECT_COLORS = [
+      "#ef5b5b", "#ef7d5b", "#f0954a", "#f2b544", "#e8d24d",
+      "#c3d94e", "#8fd160", "#5fd192", "#4fcfc0", "#4fb8d9",
+      "#5b9ef0", "#6b8cf0", "#7d7ff0", "#9b6ff0", "#b869e0",
+      "#d768c9", "#ef6ba8", "#ef6b85", "#a8907a", "#98a3ad",
+    ];
 
     // Порядок — ручной (Phase 13), хранится в task.sort_order (float),
     // приходит с бэкенда и обновляется через /reorder при перетаскивании.
@@ -2035,74 +2353,6 @@
       render();
     }
 
-    // ---- Проекты (Phase 19) — своя коллекция (не часть boardState),
-    // карточка с прогресс-баром + инлайн-форма создания в том же списке.
-
-    function projectProgressPercent(p) {
-      if (!p.task_count) return 0;
-      return Math.round((p.done_count / p.task_count) * 100);
-    }
-
-    function formatProjectDates(p) {
-      const fmt = (iso) => {
-        const [, m, d] = iso.split("-");
-        return `${d}.${m}`;
-      };
-      if (p.start_date && p.end_date) return `${fmt(p.start_date)} – ${fmt(p.end_date)}`;
-      if (p.start_date) return `с ${fmt(p.start_date)}`;
-      if (p.end_date) return `до ${fmt(p.end_date)}`;
-      return "без срока";
-    }
-
-    function renderProjectCard(project) {
-      const row = document.createElement("div");
-      row.className = "row project-row";
-
-      const top = document.createElement("div");
-      top.className = "project-row-top";
-
-      const title = document.createElement("span");
-      title.className = "project-title";
-      title.textContent = project.title;
-      top.append(title);
-
-      if (project.sphere) {
-        const tag = document.createElement("span");
-        tag.className = "project-sphere-tag";
-        tag.textContent = project.sphere;
-        top.append(tag);
-      }
-
-      const archiveBtn = document.createElement("button");
-      archiveBtn.className = "small-btn archive-btn";
-      archiveBtn.setAttribute("aria-label", "Архивировать проект");
-      archiveBtn.innerHTML = archiveIcon();
-      archiveBtn.onclick = () => archiveProject(project);
-      top.append(archiveBtn);
-
-      row.append(top);
-
-      const dates = document.createElement("div");
-      dates.className = "project-dates";
-      dates.textContent = formatProjectDates(project);
-      row.append(dates);
-
-      const track = document.createElement("div");
-      track.className = "project-progress-track";
-      const fill = document.createElement("div");
-      fill.className = "project-progress-fill";
-      fill.style.width = projectProgressPercent(project) + "%";
-      track.append(fill);
-      row.append(track);
-
-      const label = document.createElement("div");
-      label.className = "project-progress-label";
-      label.textContent = `${project.done_count} / ${project.task_count} задач`;
-      row.append(label);
-
-      return row;
-    }
-
     function renderSphereChips(selected, onSelect) {
       const wrap = document.createElement("div");
       wrap.className = "sphere-chips";
@@ -2118,107 +2368,212 @@
       return wrap;
     }
 
-    let projectDraft = { title: "", description: "", sphere: "", start: "", end: "" };
+    // ---- Проекты/цели в стиле задач (Phase 26) — переключатель-свайп
+    // (тот же паттерн, что у аналитики), строки как у задач: кружок
+    // статуса + заголовок + краткие данные справа + свайп-шторка.
 
-    function renderProjectForm() {
-      const row = document.createElement("div");
-      row.className = "row project-form";
-
-      const title = document.createElement("input");
-      title.type = "text";
-      title.placeholder = "Название проекта";
-      title.value = projectDraft.title;
-      title.addEventListener("input", () => (projectDraft.title = title.value));
-      row.append(title);
-
-      const desc = document.createElement("input");
-      desc.type = "text";
-      desc.placeholder = "Описание (необязательно)";
-      desc.value = projectDraft.description;
-      desc.addEventListener("input", () => (projectDraft.description = desc.value));
-      row.append(desc);
-
-      row.append(
-        renderSphereChips(projectDraft.sphere, (value) => {
-          projectDraft.sphere = value;
-          render();
-        })
-      );
-
-      const datesWrap = document.createElement("div");
-      datesWrap.className = "project-form-dates";
-      const startInput = document.createElement("input");
-      startInput.type = "date";
-      startInput.value = projectDraft.start;
-      startInput.addEventListener("change", () => (projectDraft.start = startInput.value));
-      const endInput = document.createElement("input");
-      endInput.type = "date";
-      endInput.value = projectDraft.end;
-      endInput.addEventListener("change", () => (projectDraft.end = endInput.value));
-      datesWrap.append(startInput, endInput);
-      row.append(datesWrap);
-
-      const actionsWrap = document.createElement("div");
-      actionsWrap.className = "project-form-actions";
-      const cancelBtn = document.createElement("button");
-      cancelBtn.type = "button";
-      cancelBtn.className = "project-form-cancel";
-      cancelBtn.textContent = "Отмена";
-      cancelBtn.onclick = () => {
-        projectFormOpen = false;
-        projectDraft = { title: "", description: "", sphere: "", start: "", end: "" };
-        render();
-      };
-      const submitBtn = document.createElement("button");
-      submitBtn.type = "button";
-      submitBtn.className = "project-form-submit";
-      submitBtn.textContent = "Создать";
-      submitBtn.onclick = () => {
-        if (!projectDraft.title.trim()) return;
-        createProject({ ...projectDraft });
-        projectFormOpen = false;
-        projectDraft = { title: "", description: "", sphere: "", start: "", end: "" };
-      };
-      actionsWrap.append(cancelBtn, submitBtn);
-      row.append(actionsWrap);
-
-      return row;
+    function formatShortDate(iso) {
+      const [, m, d] = iso.split("-");
+      return `${d}.${m}`;
     }
 
-    function renderProjectAddRow() {
-      const row = document.createElement("div");
-      row.className = "row add-task-row";
-      const label = document.createElement("span");
-      label.className = "title";
-      label.style.color = "var(--text-muted)";
-      label.textContent = "Новый проект";
-      row.append(label);
-      const btn = document.createElement("button");
-      btn.className = "icon-btn add-task-submit";
-      btn.setAttribute("aria-label", "Новый проект");
-      btn.innerHTML = plusIcon();
-      btn.onclick = () => {
-        projectFormOpen = true;
-        render();
-      };
-      row.append(btn);
-      return row;
-    }
-
-    function renderProjectsList() {
-      const container = document.getElementById("projects-list");
-      container.innerHTML = "";
-      if (projectsData.length === 0 && !projectFormOpen) {
-        renderEmpty(container);
-      } else {
-        for (const p of projectsData) container.append(renderProjectCard(p));
+    function projectMeta(p) {
+      if (p.start_date && p.end_date) {
+        return `${formatShortDate(p.start_date)}–${formatShortDate(p.end_date)} · ${p.done_count}/${p.task_count}`;
       }
-      container.append(projectFormOpen ? renderProjectForm() : renderProjectAddRow());
+      return `${p.done_count}/${p.task_count}`;
     }
 
-    function renderProjectsHeader() {
-      const title = document.getElementById("projects-title");
-      title.textContent = projectsData.length ? `Проекты (${projectsData.length})` : "Проекты";
+    // Общая строка проекта/цели в стиле задачи: кружок статуса слева,
+    // заголовок, краткие данные справа, свайп открывает 1-2 действия
+    // (архивировать, для проекта ещё и цвет). taskId в setupSwipeDrag
+    // получает строковый префикс — id проекта/цели/задачи не должны
+    // путаться в общем openSwipeTaskId (см. комментарий у переменной).
+    function renderEntityRow(entity, kind) {
+      const wrap = document.createElement("div");
+      wrap.className = "swipe-wrap";
+
+      const actions = document.createElement("div");
+      actions.className = "swipe-actions";
+
+      if (kind === "project") {
+        const colorBtn = document.createElement("button");
+        colorBtn.className = "swipe-btn";
+        colorBtn.setAttribute("aria-label", "Цвет");
+        colorBtn.innerHTML = icon('<circle cx="12" cy="12" r="8"/>', 16);
+        colorBtn.style.color = entity.color || "var(--text-muted)";
+        colorBtn.onclick = () => {
+          swipeHandle.close();
+          openColorPicker(entity);
+        };
+        actions.append(colorBtn);
+      }
+
+      const archiveBtn = document.createElement("button");
+      archiveBtn.className = "swipe-btn swipe-btn-archive";
+      archiveBtn.setAttribute("aria-label", "Архивировать");
+      archiveBtn.innerHTML = archiveIcon();
+      archiveBtn.onclick = () => archiveEntity(entity, kind);
+      actions.append(archiveBtn);
+
+      const content = document.createElement("div");
+      content.className = "swipe-content";
+
+      const checkbox = document.createElement("button");
+      checkbox.className = "checkbox" + (entity.done ? " done" : "");
+      checkbox.setAttribute("aria-label", entity.done ? "Снять отметку" : "Отметить выполненным");
+      if (entity.done) checkbox.innerHTML = checkIcon();
+      checkbox.onclick = () => setEntityDone(entity, kind, !entity.done);
+      content.append(checkbox);
+
+      const title = document.createElement("span");
+      title.className = "title title-full" + (entity.done ? " done" : "");
+      title.textContent = kind === "project" ? entity.title : entity.text;
+      content.append(title);
+
+      if (kind === "project" && entity.color) {
+        const dot = document.createElement("span");
+        dot.className = "entity-color-dot";
+        dot.style.background = entity.color;
+        content.append(dot);
+      }
+
+      const meta = document.createElement("span");
+      meta.className = "entity-meta";
+      meta.textContent = kind === "project" ? projectMeta(entity) : entity.sphere;
+      content.append(meta);
+
+      const handle = document.createElement("span");
+      handle.className = "swipe-handle";
+      content.append(handle);
+      const zone = document.createElement("span");
+      zone.className = "swipe-zone";
+      content.append(zone);
+
+      wrap.append(actions, content);
+      const swipeHandle = setupSwipeDrag(zone, actions, (kind === "project" ? "project-" : "goal-") + entity.id);
+      return wrap;
+    }
+
+    function renderEntityList(containerId, items, kind) {
+      const container = document.getElementById(containerId);
+      container.innerHTML = "";
+      if (items.length === 0) {
+        renderEmpty(container);
+        return;
+      }
+      for (const item of items) container.append(renderEntityRow(item, kind));
+    }
+
+    const GOAL_TIERS = ["weekly", "monthly", "quarterly", "yearly", "5year"];
+
+    function renderProjectsPage() {
+      renderEntityList("pg-projects", projectsData, "project");
+    }
+
+    function renderGoalsPages() {
+      for (const tier of GOAL_TIERS) {
+        const items = goalsData.filter((g) => g.tier === tier);
+        renderEntityList("pg-goals-" + tier, items, "goal");
+      }
+    }
+
+    async function setEntityDone(entity, kind, done) {
+      const prev = entity.done;
+      entity.done = done;
+      renderProjectsPage();
+      renderGoalsPages();
+      try {
+        const path = kind === "project" ? `/miniapp/api/projects/${entity.id}/done` : `/miniapp/api/goals/${entity.id}/done`;
+        await api(path, { method: "POST", body: JSON.stringify({ done }) });
+      } catch (e) {
+        entity.done = prev;
+        renderProjectsPage();
+        renderGoalsPages();
+        alert("Не удалось обновить статус.");
+      }
+    }
+
+    async function archiveEntity(entity, kind) {
+      try {
+        const path = kind === "project" ? `/miniapp/api/projects/${entity.id}/archive` : `/miniapp/api/goals/${entity.id}/archive`;
+        await api(path, { method: "POST" });
+        if (kind === "project") {
+          projectsData = projectsData.filter((p) => p.id !== entity.id);
+          renderProjectsPage();
+        } else {
+          goalsData = goalsData.filter((g) => g.id !== entity.id);
+          renderGoalsPages();
+        }
+      } catch (e) {
+        alert("Не удалось архивировать.");
+      }
+    }
+
+    async function loadGoals() {
+      try {
+        goalsData = await api("/miniapp/api/goals");
+      } catch (e) {
+        goalsData = [];
+      }
+      renderGoalsPages();
+    }
+
+    // Sheet выбора цвета проекта — свой отдельный sheet (не переиспользуем
+    // project-picker-sheet: у того своя видимость через render()/
+    // projectPickerOpen, смешивать состояния рискованно), но по тому же
+    // паттерну (state-переменная + рендер внутри общего render()).
+    let colorPickerProject = null;
+
+    function openColorPicker(project) {
+      colorPickerProject = project;
+      render();
+    }
+
+    function closeColorPicker() {
+      colorPickerProject = null;
+      render();
+    }
+
+    function renderColorPickerList() {
+      const list = document.getElementById("color-picker-list");
+      list.innerHTML = "";
+      if (!colorPickerProject) return;
+
+      const noneRow = document.createElement("div");
+      noneRow.className = "row template-row";
+      noneRow.textContent = "Без цвета";
+      noneRow.onclick = () => setProjectColor(colorPickerProject, null);
+      list.append(noneRow);
+
+      const grid = document.createElement("div");
+      grid.className = "palette-grid";
+      grid.style.margin = "10px 0";
+      for (const hex of PROJECT_COLORS) {
+        const sw = document.createElement("div");
+        sw.className = "swatch" + (colorPickerProject.color === hex ? " selected" : "");
+        sw.style.background = hex;
+        sw.onclick = () => setProjectColor(colorPickerProject, hex);
+        grid.append(sw);
+      }
+      list.append(grid);
+    }
+
+    async function setProjectColor(project, color) {
+      closeColorPicker();
+      const prev = project.color;
+      project.color = color;
+      renderProjectsPage();
+      try {
+        await api(`/miniapp/api/projects/${project.id}/color`, {
+          method: "POST",
+          body: JSON.stringify({ color }),
+        });
+      } catch (e) {
+        project.color = prev;
+        renderProjectsPage();
+        alert("Не удалось изменить цвет.");
+      }
     }
 
     // ---- Sheet выбора проекта для задачи (5-я кнопка в свайп-шторке).
@@ -2787,19 +3142,31 @@
       renderWeekCarousel();
       renderWeekDetail();
       renderTemplatesList();
-      renderProjectsList();
-      renderProjectsHeader();
+      renderProjectsPage();
+      renderGoalsPages();
       renderProjectPickerList();
+      renderColorPickerList();
+      renderCreateEntityForm();
+      const anySheetOpen =
+        templatesPickerOpen ||
+        projectPickerOpen ||
+        colorPickerProject !== null ||
+        createEntityKind !== null ||
+        settingsSheetOpen;
       document
         .getElementById("reorder-scrim")
-        .classList.toggle(
-          "visible",
-          reorderActiveKey !== null || templatesPickerOpen || projectPickerOpen
-        );
+        .classList.toggle("visible", reorderActiveKey !== null || anySheetOpen);
       document.getElementById("templates-sheet").classList.toggle("visible", templatesPickerOpen);
       document
         .getElementById("project-picker-sheet")
         .classList.toggle("visible", projectPickerOpen);
+      document
+        .getElementById("color-picker-sheet")
+        .classList.toggle("visible", colorPickerProject !== null);
+      document
+        .getElementById("create-entity-sheet")
+        .classList.toggle("visible", createEntityKind !== null);
+      document.getElementById("settings-sheet").classList.toggle("visible", settingsSheetOpen);
     }
 
     function addDaysIso(iso, days) {
@@ -2823,6 +3190,11 @@
         // при первой загрузке — на каждой перерисовке (после отметки
         // задачи и т.д.) позицию свайпа трогать нельзя.
         if (firstLoad) recenterWeekCarousel();
+        // Подсветка "сегодня" в месячном календаре и лаконичная инфа дня
+        // читают boardState — обновляем на всякий случай при каждой
+        // перезагрузке доски, не только по навигации по месяцу.
+        renderMonthCalendar();
+        if (calSelectedDay) showDayInfo(calSelectedDay);
       } catch (e) {
         document.getElementById("today-list").innerHTML =
           '<div class="empty">Не удалось загрузить задачи.</div>';
@@ -3156,52 +3528,185 @@
     }
 
     async function createProject(draft) {
-      const tempId = "pending-" + Date.now();
-      const tempProject = {
-        id: tempId,
-        title: draft.title.trim(),
-        description: draft.description ? draft.description.trim() : null,
-        sphere: draft.sphere || null,
-        start_date: draft.start || null,
-        end_date: draft.end || null,
-        task_count: 0,
-        done_count: 0,
-      };
-      projectsData.push(tempProject);
-      render();
       try {
         const result = await api("/miniapp/api/projects", {
           method: "POST",
           body: JSON.stringify({
-            title: tempProject.title,
-            description: tempProject.description,
-            sphere: tempProject.sphere,
-            start_date: tempProject.start_date,
-            end_date: tempProject.end_date,
+            title: draft.title.trim(),
+            description: draft.description ? draft.description.trim() : null,
+            sphere: draft.sphere || null,
+            start_date: draft.start || null,
+            end_date: draft.end || null,
+            color: draft.color || null,
+            analyze: !!draft.analyze,
           }),
         });
-        Object.assign(tempProject, result);
+        projectsData.push(result);
       } catch (e) {
-        projectsData = projectsData.filter((p) => p.id !== tempId);
         alert("Не удалось создать проект.");
+      } finally {
+        render();
+        if (document.getElementById("analytics-gantt")) renderGanttChart();
+      }
+    }
+
+    async function createGoal(draft) {
+      try {
+        const result = await api("/miniapp/api/goals", {
+          method: "POST",
+          body: JSON.stringify({
+            sphere: draft.sphere,
+            tier: draft.tier,
+            text: draft.title.trim(),
+            analyze: !!draft.analyze,
+          }),
+        });
+        goalsData.push(result);
+      } catch (e) {
+        alert("Не удалось создать цель.");
       } finally {
         render();
       }
     }
 
-    async function archiveProject(project) {
-      const prev = projectsData;
-      projectsData = projectsData.filter((p) => p.id !== project.id);
+    // ---- Форма создания проекта/цели (Phase 26) — один sheet на обе
+    // сущности, содержимое зависит от createEntityKind.
+
+    const GOAL_TIER_LABELS = {
+      weekly: "неделя",
+      monthly: "месяц",
+      quarterly: "квартал",
+      yearly: "год",
+      "5year": "5 лет",
+    };
+
+    function openCreateEntitySheet(kind) {
+      createEntityKind = kind;
+      createEntityDraft =
+        kind === "project"
+          ? { title: "", description: "", sphere: "", start: "", end: "", color: "", analyze: false }
+          : { title: "", sphere: "", tier: "weekly", analyze: false };
       render();
-      try {
-        await api(`/miniapp/api/projects/${encodeURIComponent(project.id)}/archive`, {
-          method: "POST",
-        });
-      } catch (e) {
-        projectsData = prev;
-        alert("Не удалось архивировать проект.");
-        render();
+    }
+
+    function closeCreateEntitySheet() {
+      createEntityKind = null;
+      render();
+    }
+
+    function renderCreateEntityForm() {
+      const container = document.getElementById("create-entity-form");
+      const titleEl = document.getElementById("create-entity-title");
+      container.innerHTML = "";
+      if (!createEntityKind) return;
+
+      const isProject = createEntityKind === "project";
+      titleEl.textContent = isProject ? "Новый проект" : "Новая цель";
+
+      const titleInput = document.createElement("input");
+      titleInput.className = "entity-form-field";
+      titleInput.type = "text";
+      titleInput.placeholder = isProject ? "Название проекта" : "Формулировка цели";
+      titleInput.value = createEntityDraft.title;
+      titleInput.addEventListener("input", () => (createEntityDraft.title = titleInput.value));
+      container.append(titleInput);
+
+      if (isProject) {
+        const descInput = document.createElement("input");
+        descInput.className = "entity-form-field";
+        descInput.type = "text";
+        descInput.placeholder = "Описание (необязательно)";
+        descInput.value = createEntityDraft.description;
+        descInput.addEventListener("input", () => (createEntityDraft.description = descInput.value));
+        container.append(descInput);
       }
+
+      if (!isProject) {
+        const tierRow = document.createElement("div");
+        tierRow.className = "entity-form-tier-row";
+        for (const tier of GOAL_TIERS) {
+          const chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = "sphere-chip" + (createEntityDraft.tier === tier ? " selected" : "");
+          chip.textContent = GOAL_TIER_LABELS[tier];
+          chip.onclick = () => {
+            createEntityDraft.tier = tier;
+            render();
+          };
+          tierRow.append(chip);
+        }
+        container.append(tierRow);
+      }
+
+      container.append(
+        renderSphereChips(createEntityDraft.sphere, (value) => {
+          createEntityDraft.sphere = value;
+          render();
+        })
+      );
+
+      if (isProject) {
+        const datesWrap = document.createElement("div");
+        datesWrap.className = "entity-form-dates";
+        datesWrap.style.margin = "10px 0";
+        const startInput = document.createElement("input");
+        startInput.type = "date";
+        startInput.value = createEntityDraft.start;
+        startInput.addEventListener("change", () => (createEntityDraft.start = startInput.value));
+        const endInput = document.createElement("input");
+        endInput.type = "date";
+        endInput.value = createEntityDraft.end;
+        endInput.addEventListener("change", () => (createEntityDraft.end = endInput.value));
+        datesWrap.append(startInput, endInput);
+        container.append(datesWrap);
+
+        const colorGrid = document.createElement("div");
+        colorGrid.className = "palette-grid";
+        colorGrid.style.margin = "10px 0";
+        for (const hex of PROJECT_COLORS) {
+          const sw = document.createElement("div");
+          sw.className = "swatch" + (createEntityDraft.color === hex ? " selected" : "");
+          sw.style.background = hex;
+          sw.onclick = () => {
+            createEntityDraft.color = createEntityDraft.color === hex ? "" : hex;
+            render();
+          };
+          colorGrid.append(sw);
+        }
+        container.append(colorGrid);
+      }
+
+      const toggleRow = document.createElement("div");
+      toggleRow.className = "entity-form-toggle-row";
+      const toggleLabel = document.createElement("span");
+      toggleLabel.textContent = "Проанализировать задачи и добавить";
+      const toggleBtn = document.createElement("button");
+      toggleBtn.type = "button";
+      toggleBtn.className = "entity-form-toggle" + (createEntityDraft.analyze ? " on" : "");
+      toggleBtn.setAttribute("aria-label", "Проанализировать задачи и добавить");
+      toggleBtn.onclick = () => {
+        createEntityDraft.analyze = !createEntityDraft.analyze;
+        render();
+      };
+      toggleRow.append(toggleLabel, toggleBtn);
+      container.append(toggleRow);
+
+      const submitBtn = document.createElement("button");
+      submitBtn.type = "button";
+      submitBtn.className = "entity-form-submit";
+      submitBtn.textContent = "Создать";
+      submitBtn.onclick = () => {
+        const draft = createEntityDraft;
+        if (!draft.title.trim()) return;
+        if (!isProject && !draft.sphere) {
+          alert("У цели обязательно должна быть сфера.");
+          return;
+        }
+        closeCreateEntitySheet();
+        if (isProject) createProject(draft);
+        else createGoal(draft);
+      };
+      container.append(submitBtn);
     }
 
     // Привязка задачи к проекту — из picker'а (5-я кнопка свайп-шторки).
@@ -3422,6 +3927,188 @@
       });
     });
 
+    // Та же карусель-обвязка для переключателя Проекты/Цели.
+    const pgCarousel = document.getElementById("pg-carousel");
+    const pgDots = Array.from(document.querySelectorAll("#pg-dots .analytics-dot"));
+    let _pgTracking = false;
+    pgCarousel.addEventListener("scroll", () => {
+      if (_pgTracking) return;
+      _pgTracking = true;
+      requestAnimationFrame(() => {
+        const index = Math.round(pgCarousel.scrollLeft / pgCarousel.clientWidth);
+        pgDots.forEach((dot, i) => dot.classList.toggle("active", i === index));
+        _pgTracking = false;
+      });
+    });
+    pgDots.forEach((dot) => {
+      dot.addEventListener("click", () => {
+        pgCarousel.scrollTo({ left: pgCarousel.clientWidth * Number(dot.dataset.index), behavior: "smooth" });
+      });
+    });
+
+    // ---- Настройки (Phase 26) — пока только тема.
+
+    function openSettingsSheet() {
+      settingsSheetOpen = true;
+      render();
+    }
+    function closeSettingsSheet() {
+      settingsSheetOpen = false;
+      render();
+    }
+    function syncSettingsThemeButtons() {
+      const current = getStoredTheme() || "";
+      document.querySelectorAll("#settings-theme-toggle button").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.theme === current);
+      });
+    }
+    document.querySelectorAll("#settings-theme-toggle button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setTheme(btn.dataset.theme || null);
+        syncSettingsThemeButtons();
+      });
+    });
+    syncSettingsThemeButtons();
+
+    document.getElementById("btn-open-settings").onclick = () => openSettingsSheet();
+    document.getElementById("btn-create-project").onclick = () => openCreateEntitySheet("project");
+    document.getElementById("btn-create-goal").onclick = () => openCreateEntitySheet("goal");
+
+    // ---- Месячный календарь (Phase 26) — только текущий месяц, только
+    // события (не вся загрузка дня — для этого есть график в аналитике).
+
+    const MONTH_NAMES_FULL = [
+      "январь", "февраль", "март", "апрель", "май", "июнь",
+      "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
+    ];
+    const today0 = new Date();
+    let calYear = today0.getFullYear();
+    let calMonth = today0.getMonth() + 1; // 1-12
+    let calEvents = {};
+    let calSelectedDay = null;
+
+    function pad2(n) {
+      return String(n).padStart(2, "0");
+    }
+
+    async function loadMonthEvents() {
+      try {
+        calEvents = await api(`/miniapp/api/calendar/month?month=${calYear}-${pad2(calMonth)}`);
+      } catch (e) {
+        calEvents = {};
+      }
+      renderMonthCalendar();
+    }
+
+    function renderMonthCalendar() {
+      document.getElementById("month-cal-title").textContent = `${MONTH_NAMES_FULL[calMonth - 1]} ${calYear}`;
+      const grid = document.getElementById("month-cal-grid");
+      grid.innerHTML = "";
+
+      const firstOfMonth = new Date(Date.UTC(calYear, calMonth - 1, 1));
+      const firstWeekday = (firstOfMonth.getUTCDay() + 6) % 7; // Пн=0
+      const daysInMonth = new Date(Date.UTC(calYear, calMonth, 0)).getUTCDate();
+      const todayIso = boardState.days.today ? boardState.days.today.date : null;
+
+      const cells = [];
+      for (let i = 0; i < firstWeekday; i++) cells.push(null);
+      for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+      for (const d of cells) {
+        const btn = document.createElement("button");
+        btn.className = "month-cal-day";
+        if (d === null) {
+          btn.classList.add("other-month");
+          btn.disabled = true;
+          grid.append(btn);
+          continue;
+        }
+        const iso = `${calYear}-${pad2(calMonth)}-${pad2(d)}`;
+        if (iso === todayIso) btn.classList.add("today");
+        if (iso === calSelectedDay) btn.classList.add("selected");
+
+        const num = document.createElement("span");
+        num.textContent = String(d);
+        btn.append(num);
+        if (calEvents[iso]) {
+          const dot = document.createElement("span");
+          dot.className = "month-cal-event-dot";
+          btn.append(dot);
+        }
+        btn.onclick = () => {
+          calSelectedDay = calSelectedDay === iso ? null : iso;
+          renderMonthCalendar();
+          showDayInfo(calSelectedDay);
+        };
+        grid.append(btn);
+      }
+    }
+
+    document.getElementById("month-cal-prev").onclick = () => {
+      calMonth -= 1;
+      if (calMonth < 1) {
+        calMonth = 12;
+        calYear -= 1;
+      }
+      calSelectedDay = null;
+      loadMonthEvents();
+      document.getElementById("month-cal-day-info").classList.remove("visible");
+    };
+    document.getElementById("month-cal-next").onclick = () => {
+      calMonth += 1;
+      if (calMonth > 12) {
+        calMonth = 1;
+        calYear += 1;
+      }
+      calSelectedDay = null;
+      loadMonthEvents();
+      document.getElementById("month-cal-day-info").classList.remove("visible");
+    };
+
+    async function showDayInfo(iso) {
+      const el = document.getElementById("month-cal-day-info");
+      if (!iso) {
+        el.classList.remove("visible");
+        return;
+      }
+      el.classList.add("visible");
+      const todayIso = boardState.days.today ? boardState.days.today.date : null;
+      const [y, m, d] = iso.split("-");
+      const label = `${d}.${m}.${y}`;
+
+      if (todayIso !== null && iso >= todayIso) {
+        // Будущее/сегодня — лаконично, из уже загруженных данных, без похода в сеть.
+        const tasks = (boardState.dated_tasks || []).filter((t) => t.due_date === iso);
+        el.innerHTML = `<p class="day-info-title">${label}</p>`;
+        if (tasks.length === 0) {
+          el.innerHTML += '<div class="day-info-task" style="color:var(--text-muted)">Задач нет</div>';
+        } else {
+          el.innerHTML += tasks
+            .map((t) => `<div class="day-info-task">${t.done ? "✓ " : "— "}${t.title}</div>`)
+            .join("");
+        }
+        return;
+      }
+
+      // Прошлое — ревью дня из дневника (Notion), если заполнено.
+      el.innerHTML = `<p class="day-info-title">${label}</p><div style="color:var(--text-muted)">Загрузка…</div>`;
+      try {
+        const entry = await api(`/miniapp/api/diary/${iso}`);
+        if (!entry) {
+          el.innerHTML = `<p class="day-info-title">${label}</p><div style="color:var(--text-muted)">Дневник не заполнен</div>`;
+          return;
+        }
+        const ratingLine = (label2, value) =>
+          value != null ? `<span class="day-info-rating">${label2} <b>${value}</b></span>` : "";
+        el.innerHTML =
+          `<p class="day-info-title">${label} — ревью дня</p>` +
+          `<div class="day-info-ratings">${ratingLine("физ.", entry.physical)}${ratingLine("соц.", entry.social)}${ratingLine("продукт.", entry.productivity)}${ratingLine("счастье", entry.happiness)}</div>` +
+          (entry.highlight ? `<div>${entry.highlight}</div>` : "");
+      } catch (e) {
+        el.innerHTML = `<p class="day-info-title">${label}</p><div style="color:var(--text-muted)">Не удалось загрузить.</div>`;
+      }
+    }
+
     // Инбокс свёрнут по умолчанию — только заголовок со счётчиком, тап
     // разворачивает список и поле добавления.
     let inboxExpanded = false;
@@ -3430,15 +4117,6 @@
       inboxExpanded = !inboxExpanded;
       document.getElementById("inbox-body").style.display = inboxExpanded ? "" : "none";
       document.getElementById("inbox-chevron").classList.toggle("expanded", inboxExpanded);
-    };
-
-    // Проекты — тот же паттерн, что Инбокс: свёрнуто по умолчанию.
-    let projectsExpanded = false;
-    document.getElementById("projects-chevron").innerHTML = chevronIcon();
-    document.getElementById("projects-header").onclick = () => {
-      projectsExpanded = !projectsExpanded;
-      document.getElementById("projects-body").style.display = projectsExpanded ? "" : "none";
-      document.getElementById("projects-chevron").classList.toggle("expanded", projectsExpanded);
     };
 
     // Долгое нажатие включает режим переноса в каждом из статических
@@ -3463,6 +4141,21 @@
       document.getElementById("project-picker-list"),
       closeProjectPicker
     );
+    attachSheetOverswipeClose(
+      document.getElementById("color-picker-sheet"),
+      document.getElementById("color-picker-list"),
+      closeColorPicker
+    );
+    attachSheetOverswipeClose(
+      document.getElementById("create-entity-sheet"),
+      document.getElementById("create-entity-form"),
+      closeCreateEntitySheet
+    );
+    attachSheetOverswipeClose(
+      document.getElementById("settings-sheet"),
+      document.getElementById("settings-sheet").querySelector(".list"),
+      closeSettingsSheet
+    );
 
     attachScreenTransition();
 
@@ -3480,6 +4173,12 @@
         closeTemplatesPicker();
       } else if (projectPickerOpen) {
         closeProjectPicker();
+      } else if (colorPickerProject !== null) {
+        closeColorPicker();
+      } else if (createEntityKind !== null) {
+        closeCreateEntitySheet();
+      } else if (settingsSheetOpen) {
+        closeSettingsSheet();
       }
     });
 
@@ -3678,6 +4377,8 @@
     loadTemplates();
     loadProjects();
     loadAnalytics();
+    loadGoals();
+    loadMonthEvents();
   </script>
 </body>
 </html>

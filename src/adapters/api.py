@@ -11,6 +11,8 @@ from sqlalchemy import select, update
 
 from src.adapters.tasker_webhook import router as tasker_webhook_router
 from src.core import analytics as analytics_repo
+from src.core import calendar_view
+from src.core import goals as goals_repo
 from src.core import habits as habits_repo
 from src.core import projects as projects_repo
 from src.core import task_templates as templates_repo
@@ -20,7 +22,8 @@ from src.core.db import async_session
 from src.core.telegram_auth import verify_miniapp_init_data
 from src.handlers.f8_habits import check_habit
 from src.handlers.miniapp_tasks import build_task_board
-from src.integrations.claude_client import analyze_productivity
+from src.integrations.claude_client import analyze_productivity, find_tasks_for_entity
+from src.integrations.notion import list_diary_entries
 from src.integrations.weather import get_weather_summary
 from src.models.task import Task
 
@@ -111,6 +114,8 @@ class CreateProjectRequest(BaseModel):
     sphere: str | None = None
     start_date: str | None = None
     end_date: str | None = None
+    color: str | None = None
+    analyze: bool = False
 
 
 class SetTaskProjectRequest(BaseModel):
@@ -119,6 +124,33 @@ class SetTaskProjectRequest(BaseModel):
 
 class SetTaskSphereRequest(BaseModel):
     sphere: str | None = None
+
+
+class SetDoneRequest(BaseModel):
+    done: bool
+
+
+class SetColorRequest(BaseModel):
+    color: str | None = None
+
+
+class EditProjectRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    sphere: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+
+
+class CreateGoalRequest(BaseModel):
+    sphere: str
+    tier: str
+    text: str
+    analyze: bool = False
+
+
+class SetGoalTextRequest(BaseModel):
+    text: str
 
 
 @app.get("/miniapp/api/tasks")
@@ -405,9 +437,12 @@ async def create_project_endpoint(
 ) -> dict:
     start = date.fromisoformat(payload.start_date) if payload.start_date else None
     end = date.fromisoformat(payload.end_date) if payload.end_date else None
-    return await projects_repo.create_project(
-        payload.title, payload.description, payload.sphere, start, end
+    project = await projects_repo.create_project(
+        payload.title, payload.description, payload.sphere, start, end, payload.color
     )
+    if payload.analyze:
+        await _analyze_and_link_project(project["id"], project["title"], project["description"])
+    return project
 
 
 @app.post("/miniapp/api/projects/{project_id}/archive")
@@ -419,6 +454,203 @@ async def archive_project_endpoint(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="project not found") from exc
     return {"status": "ok"}
+
+
+@app.post("/miniapp/api/projects/{project_id}/done")
+async def set_project_done_endpoint(
+    project_id: int, payload: SetDoneRequest, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    try:
+        await projects_repo.set_project_done(project_id, payload.done)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="project not found") from exc
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/projects/{project_id}/color")
+async def set_project_color_endpoint(
+    project_id: int, payload: SetColorRequest, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    try:
+        await projects_repo.set_project_color(project_id, payload.color)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="project not found") from exc
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/projects/{project_id}/edit")
+async def edit_project_endpoint(
+    project_id: int, payload: EditProjectRequest, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    start = date.fromisoformat(payload.start_date) if payload.start_date else None
+    end = date.fromisoformat(payload.end_date) if payload.end_date else None
+    try:
+        await projects_repo.update_project(
+            project_id,
+            title=payload.title,
+            description=payload.description,
+            sphere=payload.sphere,
+            start_date=start,
+            end_date=end,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="project not found") from exc
+    return {"status": "ok"}
+
+
+async def _unlinked_candidate_tasks(field: str) -> list[dict]:
+    """Задачи без привязки (field — "project_id" или "sphere") из
+    инбокса и всех будущих дат — кандидаты для "проанализировать и
+    добавить" (Phase 26). Прошлые/просроченные не трогаем — это уже
+    история, а не то, что имеет смысл молча перекладывать в проект/цель."""
+    # due_date в БД — naive timestamp (см. models/task.py) — сравнение
+    # тоже должно быть naive, иначе asyncpg ругается на offset-aware
+    # datetime (тот же приём, что в scheduler/jobs.py::_suggest_templates_job).
+    today_start = datetime.combine(
+        datetime.now(ZoneInfo(settings.timezone)).date(), datetime.min.time()
+    )
+    column = Task.project_id if field == "project_id" else Task.sphere
+    async with async_session() as session:
+        result = await session.execute(
+            select(Task.id, Task.title).where(
+                Task.archived.is_(False),
+                Task.done.is_(False),
+                column.is_(None),
+                (Task.due_date.is_(None) | (Task.due_date >= today_start)),
+            )
+        )
+        return [{"id": row[0], "title": row[1]} for row in result.all()]
+
+
+async def _analyze_and_link_project(project_id: int, title: str, description: str | None) -> int:
+    candidates = await _unlinked_candidate_tasks("project_id")
+    matched_ids = await find_tasks_for_entity(title, description, candidates)
+    if not matched_ids:
+        return 0
+    async with async_session() as session:
+        await session.execute(
+            update(Task).where(Task.id.in_(matched_ids)).values(project_id=project_id)
+        )
+        await session.commit()
+    return len(matched_ids)
+
+
+@app.post("/miniapp/api/projects/{project_id}/analyze")
+async def analyze_project_endpoint(project_id: int, _: dict = Depends(get_authorized_user)) -> dict:
+    projects = await projects_repo.list_projects()
+    project = next((p for p in projects if p["id"] == project_id), None)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    linked = await _analyze_and_link_project(project_id, project["title"], project["description"])
+    return {"linked": linked}
+
+
+# Цели (Phase 20 — бэкенд/Telegram; Phase 26 — Mini App). Период
+# считается сервером по тиру и сегодняшней дате (см. core/goals.py::
+# create_goal_now) — фронтенд его не присылает.
+@app.get("/miniapp/api/goals")
+async def list_goals_endpoint(_: dict = Depends(get_authorized_user)) -> list[dict]:
+    return await goals_repo.list_active_goals()
+
+
+@app.post("/miniapp/api/goals")
+async def create_goal_endpoint(
+    payload: CreateGoalRequest, _: dict = Depends(get_authorized_user)
+) -> dict:
+    today = datetime.now(ZoneInfo(settings.timezone)).date()
+    goal = await goals_repo.create_goal_now(payload.sphere, payload.tier, payload.text, today)
+    if payload.analyze:
+        candidates = await _unlinked_candidate_tasks("sphere")
+        matched_ids = await find_tasks_for_entity(goal["text"], None, candidates)
+        if matched_ids:
+            async with async_session() as session:
+                await session.execute(
+                    update(Task).where(Task.id.in_(matched_ids)).values(sphere=payload.sphere)
+                )
+                await session.commit()
+    return goal
+
+
+@app.post("/miniapp/api/goals/{goal_id}/done")
+async def set_goal_done_endpoint(
+    goal_id: int, payload: SetDoneRequest, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    try:
+        await goals_repo.set_goal_done(goal_id, payload.done)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="goal not found") from exc
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/goals/{goal_id}/archive")
+async def archive_goal_endpoint(
+    goal_id: int, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    try:
+        await goals_repo.archive_goal(goal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="goal not found") from exc
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/goals/{goal_id}/text")
+async def set_goal_text_endpoint(
+    goal_id: int, payload: SetGoalTextRequest, _: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    try:
+        await goals_repo.set_goal_text(goal_id, payload.text)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="goal not found") from exc
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/goals/{goal_id}/analyze")
+async def analyze_goal_endpoint(goal_id: int, _: dict = Depends(get_authorized_user)) -> dict:
+    goals = await goals_repo.list_active_goals()
+    goal = next((g for g in goals if g["id"] == goal_id), None)
+    if goal is None:
+        raise HTTPException(status_code=404, detail="goal not found")
+    candidates = await _unlinked_candidate_tasks("sphere")
+    matched_ids = await find_tasks_for_entity(goal["text"], None, candidates)
+    if matched_ids:
+        async with async_session() as session:
+            await session.execute(
+                update(Task).where(Task.id.in_(matched_ids)).values(sphere=goal["sphere"])
+            )
+            await session.commit()
+    return {"linked": len(matched_ids)}
+
+
+# Месячный календарь (Phase 26) — только события (priority="event"), не
+# вся загрузка дня (для этого есть график месяца в аналитике).
+@app.get("/miniapp/api/calendar/month")
+async def calendar_month_endpoint(
+    month: str, _: dict = Depends(get_authorized_user)
+) -> dict[str, bool]:
+    year_str, month_str = month.split("-")
+    return await calendar_view.month_events(int(year_str), int(month_str))
+
+
+# Дневник (Phase 26) — ревью прошедшего дня в расширенном экране; сам
+# дневник по-прежнему только в Notion (Diary), тут просто читаем и
+# фильтруем по дате на своей стороне (list_diary_entries — маленький
+# датасет, без серверной фильтрации).
+@app.get("/miniapp/api/diary/{entry_date}")
+async def diary_day_endpoint(
+    entry_date: str, _: dict = Depends(get_authorized_user)
+) -> dict | None:
+    target = date.fromisoformat(entry_date)
+    entries = await list_diary_entries()
+    entry = next((e for e in entries if e["entry_date"] == target), None)
+    if entry is None:
+        return None
+    return {
+        "physical": entry["physical"],
+        "social": entry["social"],
+        "productivity": entry["productivity"],
+        "happiness": entry["happiness"],
+        "highlight": entry["highlight"],
+    }
 
 
 # Аналитика (Phase 24) — гант по проектам переиспользует уже готовый
