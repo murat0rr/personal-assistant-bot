@@ -175,6 +175,14 @@ async def _finish_tier(
         )
         return
 
+    # Месячные проекты — СНАЧАЛА, до генерации задач: если по этой же
+    # цели предложится новый проект, задачи, сгенерированные следующим
+    # шагом, должны иметь шанс сразу привязаться к нему (иначе
+    # find_project_by_title никогда не найдёт проект, которого на
+    # момент генерации задач ещё не существовало в БД).
+    if tier == "monthly":
+        await _propose_projects_for_month(bot, goals)
+
     async with async_session() as session:
         existing_titles = [
             row[0]
@@ -218,9 +226,6 @@ async def _finish_tier(
             chat_id=settings.telegram_user_id,
             text=f"Цели на {_TIER_LABELS[tier]} сохранены.",
         )
-
-    if tier == "monthly":
-        await _propose_projects_for_month(bot, goals)
 
 
 async def _propose_projects_for_month(bot: Bot, goals: list[dict]) -> None:
