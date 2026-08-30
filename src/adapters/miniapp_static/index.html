@@ -460,6 +460,13 @@
       scrollbar-width: none;
     }
     .analytics-carousel::-webkit-scrollbar { display: none; }
+    /* Пока идёт тихий "телепорт" с теневой страницы на настоящую (item
+       12, круговая карусель) — снимаем scroll-snap на пару кадров
+       (item 4, Phase 32, БАГ): нативный snap-движок иногда ещё
+       доигрывал свою анимацию в момент программной установки
+       scrollLeft и "спорил" с ней — заметная на глаз вспышка/мигание
+       контента на долю секунды. */
+    .analytics-carousel.no-snap { scroll-snap-type: none; }
     .analytics-page {
       flex: 0 0 100%;
       min-width: 100%;
@@ -890,13 +897,22 @@
     #week-day-detail { margin-top: 8px; }
     /* Режим переноса (Phase 14) — вместо кружка статуса слева ручка,
        текст показывается полностью (см. .title-full выше), справа —
-       отложенное удаление (архивируется пачкой при выходе из режима). */
+       отложенное удаление (архивируется пачкой при выходе из режима).
+       Чувствительная зона зажатия (item 2, Phase 32) — заметно шире
+       видимой иконки: ручка растянута на всю высоту строки и заезжает
+       в левый padding строки (margin-left отрицательный, до самого
+       края), а сама иконка прижата вправо (justify-content: flex-end),
+       поэтому визуально ничего не сдвинулось — просто у пальца больше
+       места, чтобы попасть по ней. */
     .grip {
-      width: 22px;
-      height: 22px;
+      width: 40px;
+      align-self: stretch;
+      margin: -12px 0 -12px -14px;
+      padding-right: 4px;
+      box-sizing: border-box;
       display: flex;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-end;
       color: var(--text-muted);
       flex-shrink: 0;
       touch-action: none;
@@ -935,6 +951,25 @@
       position: relative;
       z-index: 26;
       box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+    }
+    /* "Окно" режима переноса (item 2, Phase 32) — плавающая карточка по
+       центру экрана вместо фиксации на исходных координатах: максимум
+       80vh, скроллится сама, если задач больше, чем помещается.
+       .list.reorder-window — двойной класс ради специфичности выше
+       .list{overflow:hidden}, порядок правил в файле тут ни при чём. */
+    .list.reorder-window {
+      position: fixed;
+      left: 16px;
+      right: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: auto;
+      max-height: 80vh;
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+      border-radius: 16px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
     }
 
     /* Глобальное меню (Phase 30) — гамбургер справа сверху, вне
@@ -2343,12 +2378,15 @@
     // телефон (нативная ручка-капелька под курсором есть у любого
     // сфокусированного текстового поля на iOS/Android).
     function startReorderInlineEdit(row, title, task, clickX, renameFn = renameTask) {
-      const input = document.createElement("input");
-      input.type = "text";
-      input.className = "title-edit title-full";
-      input.value = task.title;
-      row.replaceChild(input, title);
-      input.focus();
+      // Курсор считаем ДО подмены span на input (item 2, Phase 32, БАГ):
+      // caretRangeFromPoint надёжно бьёт по обычному тексту (title —
+      // span с текстовым узлом), но не по <input> — там за offset
+      // возвращается DOM-индекс дочернего узла, а не позиция символа в
+      // значении поля. Раньше это считалось уже ПОСЛЕ row.replaceChild,
+      // то есть всегда против уже вставленного input — первый тап
+      // промахивался (курсор уезжал к 1-му символу), только второй тап
+      // (когда caretRangeFromPoint для той же позиции экрана иначе не
+      // пересчитывался, input уже был там) случайно совпадал.
       let idx = task.title.length;
       try {
         const rect = row.getBoundingClientRect();
@@ -2359,6 +2397,13 @@
       } catch (err) {
         // Не критично — просто останется курсор в конце.
       }
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "title-edit title-full";
+      input.value = task.title;
+      row.replaceChild(input, title);
+      input.focus();
       input.setSelectionRange(idx, idx);
 
       function finish(commit) {
@@ -3060,25 +3105,28 @@
     // выходе. templates-list эта проблема не касается — он живёт в
     // #templates-sheet, который сам уже верхнеуровневый position:fixed
     // сосед .reorder-scrim, а не потомок #screen-stack.
+    // "Окно" режима переноса (item 2, Phase 32) — раньше элевация просто
+    // фиксировала список на его исходных координатах без ограничения
+    // высоты: если задач было больше, чем помещалось на экран, конец
+    // списка был физически недостижим (не скроллился). Теперь при входе
+    // список превращается в плавающее окно по центру экрана, максимум
+    // 80vh, скроллится сам (.reorder-window в CSS) — перетаскивание
+    // строк (setupDragReorder) на это не влияет: оно двигает саму
+    // строку через translateY и сравнивает getBoundingClientRect (уже
+    // viewport-relative, скролл контейнера учтён автоматически).
     function applyReorderElevation(container, active) {
       if (active && !container._reorderPlaceholder) {
-        const rect = container.getBoundingClientRect();
         const placeholder = document.createComment("reorder-anchor");
         container.parentNode.insertBefore(placeholder, container);
         container._reorderPlaceholder = placeholder;
         document.body.appendChild(container);
-        container.style.position = "fixed";
-        container.style.left = rect.left + "px";
-        container.style.top = rect.top + "px";
-        container.style.width = rect.width + "px";
+        container.classList.add("reorder-window");
       } else if (!active && container._reorderPlaceholder) {
         container._reorderPlaceholder.parentNode.insertBefore(container, container._reorderPlaceholder);
         container._reorderPlaceholder.remove();
         container._reorderPlaceholder = null;
-        container.style.position = "";
-        container.style.left = "";
-        container.style.top = "";
-        container.style.width = "";
+        container.classList.remove("reorder-window");
+        container.scrollTop = 0;
       }
     }
 
@@ -3113,7 +3161,13 @@
     // жеста — чекбокс/кнопки/свайп-зона/шторка/поля ввода — иначе долгий
     // палец на них тоже включил бы перенос, отбирая жест у их обычного
     // тапа/свайпа.
+    // listKey — строка либо функция-геттер (для недельного дня, у
+    // которого выбранная дата может смениться, см. renderWeekDetail):
+    // резолвим на каждое использование, а не один раз при вызове, иначе
+    // долгое нажатие, начатое на одной дате, могло бы отработать по
+    // уже неактуальному ключу.
     function attachReorderEntry(container, listKey) {
+      const resolveKey = () => (typeof listKey === "function" ? listKey() : listKey);
       let timer = null;
       let startX = 0;
       let startY = 0;
@@ -3124,13 +3178,13 @@
         pointerId = null;
       }
       container.addEventListener("pointerdown", (e) => {
-        if (isReorderActive(listKey)) return;
+        if (isReorderActive(resolveKey())) return;
         if (e.target.closest(".checkbox, .small-btn, .icon-btn, .swipe-zone, .swipe-actions, input")) return;
         startX = e.clientX;
         startY = e.clientY;
         pointerId = e.pointerId;
         clearTimeout(timer);
-        timer = setTimeout(() => enterReorderMode(listKey), REORDER_HOLD_MS);
+        timer = setTimeout(() => enterReorderMode(resolveKey()), REORDER_HOLD_MS);
       });
       // pointermove/up/cancel — на document, а не на container: тот же
       // приём, что и у остальных жестов переноса в приложении (см.
@@ -3431,6 +3485,20 @@
 
     const WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
     let selectedWeekDate = null;
+    // Персистентный элемент списка дня недели (Phase 32, БАГ) —
+    // renderWeekDetail раньше создавал новый <div> на КАЖДЫЙ вызов
+    // render() (не только при смене дня), а applyReorderElevation
+    // (Phase 29) при активном режиме переноса физически переносит
+    // такой узел в <body> с comment-маркером на его месте — если узел
+    // пересоздаётся, маркер уничтожается вместе со старым el.innerHTML,
+    // а перенесённый в body клон осиротевает: следующий вызов
+    // applyReorderElevation на НОВОМ узле не находит на месте то, что
+    // ожидает, кидает исключение и рвёт остаток render() (в т.ч. так и
+    // не доходит до включения .reorder-scrim — "размытие не работает").
+    // Теперь список для дня недели — один и тот же элемент, живёт, пока
+    // выбран хоть какой-то день; при смене дня просто перерисовываются
+    // его дети через renderList, как у yesterday/today/inbox.
+    let weekDetailListEl = null;
     let weekStart = null; // ISO понедельника недели, которая сейчас показана
 
     function computeWeekStart(iso) {
@@ -3504,21 +3572,38 @@
 
     function renderWeekDetail() {
       const el = document.getElementById("week-day-detail");
-      el.innerHTML = "";
-      if (!selectedWeekDate) return;
+      if (!selectedWeekDate) {
+        // Ничего не выбрано (в т.ч. после смены недели, см.
+        // settleWeekCarousel) — прячем список и роняем ссылку, чтобы
+        // при следующем выборе дня создать чистый узел заново, а не
+        // держать закрытый предположениями про его текущее состояние.
+        // Не может случиться, пока активен режим переноса для него
+        // (см. weekDetailListEl выше) — переключение недели физически
+        // недостижимо, пока открыт .reorder-scrim.
+        el.innerHTML = "";
+        weekDetailListEl = null;
+        return;
+      }
 
       const listKey = "cal:" + selectedWeekDate;
-      const listEl = document.createElement("div");
-      listEl.className = "list";
-      attachReorderEntry(listEl, listKey);
-      renderList(listEl, tasksForDate(selectedWeekDate), {
+      if (!weekDetailListEl || !el.contains(weekDetailListEl)) {
+        weekDetailListEl = document.createElement("div");
+        weekDetailListEl.className = "list";
+        // Геттер, не фиксированная строка — selectedWeekDate может
+        // смениться позже, а attachReorderEntry вызывается только один
+        // раз для этого персистентного узла (см. объявление
+        // weekDetailListEl выше).
+        attachReorderEntry(weekDetailListEl, () => "cal:" + selectedWeekDate);
+        el.innerHTML = "";
+        el.append(weekDetailListEl);
+      }
+      renderList(weekDetailListEl, tasksForDate(selectedWeekDate), {
         listKey,
         style: "swipe",
         showMoveToToday: false,
         showTemplatesPicker: true,
         dateFor: () => selectedWeekDate,
       });
-      el.append(listEl);
     }
 
     function renderInboxHeader() {
@@ -4623,6 +4708,21 @@
 
     analyticsCarousel.scrollLeft = analyticsCarousel.clientWidth * 1; // страница 1 = настоящая первая (spheres)
 
+    // Тихий "телепорт" с теневой страницы на настоящую — снимаем
+    // scroll-snap на время самого прыжка и ещё пару кадров после (см.
+    // .no-snap в CSS), иначе нативный snap-движок мог всё ещё доигрывать
+    // свою анимацию и "спорить" с программной установкой scrollLeft —
+    // заметная на глаз вспышка/мигание контента (item 4, Phase 32, БАГ).
+    function silentJump(left) {
+      analyticsCarousel.classList.add("no-snap");
+      analyticsCarousel.scrollLeft = left;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          analyticsCarousel.classList.remove("no-snap");
+        });
+      });
+    }
+
     analyticsCarousel.addEventListener("scroll", () => {
       if (_analyticsTracking) return;
       _analyticsTracking = true;
@@ -4633,10 +4733,10 @@
         let dotIndex = rawIndex - 1;
         if (rawIndex === 0) {
           dotIndex = ANALYTICS_REAL_COUNT - 1;
-          analyticsCarousel.scrollLeft = w * ANALYTICS_REAL_COUNT;
+          silentJump(w * ANALYTICS_REAL_COUNT);
         } else if (rawIndex === ANALYTICS_REAL_COUNT + 1) {
           dotIndex = 0;
-          analyticsCarousel.scrollLeft = w * 1;
+          silentJump(w * 1);
         }
         analyticsDots.forEach((dot, i) => dot.classList.toggle("active", i === dotIndex));
       });
