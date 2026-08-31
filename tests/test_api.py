@@ -26,10 +26,11 @@ def test_miniapp_response_disables_caching():
     assert response.headers["expires"] == "0"
 
 
-# ---- Вход в веб-версию вне Telegram (Phase 45) — /app и /auth/login без
-# похода в БД (короткое замыкание на "нет куки"/"не настроено" не требует
-# запроса к authorized_users, см. api.py::web_app_entry и
-# web_auth.py::login_page).
+# ---- Вход в веб-версию вне Telegram (Phase 45) — /app, /auth/* без
+# похода в БД/Bot API там, где это возможно (см. api.py::web_app_entry,
+# web_auth.py). Код в чате с ботом (не Telegram Login Widget — тот
+# упёрся в недоставку кода подтверждения силами самого Telegram, вне
+# нашего контроля, см. SPEC.md Phase 45).
 
 
 def test_app_route_redirects_to_login_without_session_cookie():
@@ -45,11 +46,35 @@ def test_app_route_also_no_caches():
     assert response.headers["cache-control"] == "no-store, must-revalidate"
 
 
-def test_login_page_degrades_when_not_configured():
-    # session_secret/telegram_bot_username пустые по умолчанию (не заданы
-    # в .env этой тестовой среды) — /auth/login должен объяснить, что не
-    # так, а не 500 или пустая страница.
+def test_login_page_renders_username_form():
     client = TestClient(app)
     response = client.get("/auth/login")
-    assert response.status_code == 503
-    assert "не настроен" in response.text.lower()
+    assert response.status_code == 200
+    assert "username" in response.text.lower()
+
+
+def test_request_code_rejects_invalid_username_format_without_bot_call():
+    # Формат неверный (пробелы/спецсимволы) — отсекается регуляркой ДО
+    # похода в Bot API/БД, значит тестируется без реального бота/сети.
+    client = TestClient(app)
+    response = client.post("/auth/request-code", data={"username": "!! not a username !!"})
+    assert response.status_code == 200
+    assert "код уже в пути" in response.text.lower()
+
+
+def test_verify_page_redirects_on_invalid_username():
+    client = TestClient(app, follow_redirects=False)
+    response = client.get("/auth/verify", params={"u": "!!invalid!!"})
+    assert response.status_code in (302, 307)
+    assert response.headers["location"] == "/auth/login"
+
+
+def test_verify_code_rejects_unknown_username_without_db():
+    # verify_code — чистый dict-lookup (src/core/login_codes.py), без
+    # похода в БД, поэтому проверяемо без реального authorized_users.
+    client = TestClient(app)
+    response = client.post(
+        "/auth/verify-code", data={"username": "nosuchuser12345", "code": "0000"}
+    )
+    assert response.status_code == 200
+    assert "неверный" in response.text.lower()

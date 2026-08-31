@@ -17,6 +17,10 @@ dependencies = [
     "apscheduler>=3.10",
     "redis>=5.0",
     "httpx>=0.27",
+    # request.form() (Phase 45, вход в веб-версию через код в чате с
+    # ботом — обычные HTML-формы) — Starlette требует эту библиотеку
+    # отдельно, сама её не тащит.
+    "python-multipart>=0.0.12",
 ]
 
 [dependency-groups]
