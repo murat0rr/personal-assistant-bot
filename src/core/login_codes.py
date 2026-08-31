@@ -1,68 +1,91 @@
-"""Вход в веб-версию через код в чате с ботом (Phase 45, переделано —
-исходный вариант через Telegram Login Widget упёрся в недоставку кода
-подтверждения самим Telegram, вне нашего контроля). Идея: раз человек
-уже писал боту (иначе он не в authorized_users), бот может просто
-прислать код сам, своим обычным sendMessage — та же доставка, что
-работает для дайджестов/напоминаний весь проект.
+"""Вход в веб-версию через код в чате с ботом (Phase 45, вторая переделка).
 
-Хранилище — простой in-memory dict, без Redis: код живёт 5 минут, один
-процесс api (без --workers), рестарт при деплое означает лишь "запросите
-код заново" — не критично для одноразового короткого кода. Если станет
-проблемой (несколько воркеров api) — переезд на Redis тривиален, он уже
-в стеке."""
+Первая версия резолвила Telegram-username через Bot API (`getChat`) —
+живая проверка показала, что `getChat("@username")` для обычного
+приватного пользователя ненадёжен и часто отвечает "chat not found",
+даже если бот с этим человеком уже переписывался (ограничение самого
+Bot API, не наша ошибка). Исправлено разворотом инициативы: не сайт
+ищет пользователя по имени, а пользователь сам пишет боту команду
+/webcode (src/handlers/f_web_login.py) — тогда user_id известен без
+всякого резолвинга, напрямую из входящего сообщения. Сайт после этого
+спрашивает только сам код, без username вообще.
+
+Хранилище — тот же простой in-memory dict, что и в первой версии (см.
+её обоснование: один процесс api, короткоживущий одноразовый код, при
+рестарте — просто "запросите код заново")."""
 
 import secrets
 import time
 
 _CODE_TTL_SECONDS = 5 * 60
 _REQUEST_COOLDOWN_SECONDS = 60
-_MAX_VERIFY_ATTEMPTS = 5
+# Раз проверка теперь — прямой lookup по самому коду (см. verify_code),
+# а не сравнение "код для этого username" (у которого была своя защита
+# от перебора на конкретную запись), у 4 цифр всего 10000 вариантов —
+# 5 минут теоретически хватает на подбор скриптом (10000/300с ≈ 33
+# попытки/с). Ограничиваем не попытки на код, а попытки С ОДНОГО IP —
+# кто угодно может перебирать код собственного запроса сколько угодно
+# раз, но не устраивать перебор всего пространства кодов.
+_MAX_VERIFY_ATTEMPTS_PER_IP = 20
+_VERIFY_WINDOW_SECONDS = 5 * 60
 
-# username (нормализован — без "@", в нижнем регистре) -> запись.
+# 4-значный код -> запись. Ключ — сам код (не username/user_id), потому
+# что верификация на сайте знает только код.
 _PENDING: dict[str, dict] = {}
+# user_id -> когда последний раз генерировали код — кулдаун между
+# запросами, отдельный индекс, раз основной теперь ключуется кодом.
+_LAST_REQUESTED: dict[int, float] = {}
+# ip -> список таймстампов попыток верификации за последнее окно.
+_VERIFY_ATTEMPTS_BY_IP: dict[str, list[float]] = {}
 
 
-def normalize_username(username: str) -> str:
-    return username.strip().lstrip("@").lower()
+def can_attempt_verify(ip: str) -> bool:
+    now = time.time()
+    attempts = [t for t in _VERIFY_ATTEMPTS_BY_IP.get(ip, []) if now - t < _VERIFY_WINDOW_SECONDS]
+    _VERIFY_ATTEMPTS_BY_IP[ip] = attempts
+    return len(attempts) < _MAX_VERIFY_ATTEMPTS_PER_IP
 
 
-def can_request_code(username: str) -> bool:
-    """Кулдаун между запросами кода на один и тот же username — не даёт
-    засыпать чужой чат с ботом кодами при повторных кликах/атаке."""
-    entry = _PENDING.get(username)
-    if entry is None:
+def record_verify_attempt(ip: str) -> None:
+    _VERIFY_ATTEMPTS_BY_IP.setdefault(ip, []).append(time.time())
+
+
+def can_request_code(user_id: int) -> bool:
+    last = _LAST_REQUESTED.get(user_id)
+    if last is None:
         return True
-    return time.time() - entry["requested_at"] >= _REQUEST_COOLDOWN_SECONDS
+    return time.time() - last >= _REQUEST_COOLDOWN_SECONDS
 
 
-def generate_code(username: str, user_id: int) -> str:
+def generate_code(user_id: int) -> str:
     code = f"{secrets.randbelow(10000):04d}"
-    _PENDING[username] = {
+    # Практически невозможно на личном проекте с несколькими
+    # пользователями, но раз ключ теперь — сам код, дублирующийся ключ
+    # молча стёр бы чужую ожидающую запись — перегенерируем при
+    # коллизии, а не полагаемся на "не случится".
+    while code in _PENDING:
+        code = f"{secrets.randbelow(10000):04d}"
+    _PENDING[code] = {
         "user_id": user_id,
-        "code": code,
         "expires_at": time.time() + _CODE_TTL_SECONDS,
-        "requested_at": time.time(),
-        "attempts": 0,
     }
+    _LAST_REQUESTED[user_id] = time.time()
     return code
 
 
-def verify_code(username: str, code: str) -> int | None:
+def verify_code(code: str) -> int | None:
     """Возвращает user_id при совпадении кода — иначе None. Код
-    одноразовый (удаляется сразу после успеха) и protected от перебора
-    (_MAX_VERIFY_ATTEMPTS неверных попыток — запись сгорает, нужен новый
-    код)."""
-    entry = _PENDING.get(username)
+    одноразовый (удаляется сразу после успеха ИЛИ по истечении TTL —
+    в обоих случаях запись больше не годится). Защита от перебора всего
+    пространства кодов — не здесь, а по IP на уровне вызывающего кода
+    (can_attempt_verify/record_verify_attempt выше), поскольку прямой
+    lookup по коду не даёт естественного места для "попыток на одну
+    запись", как было в первой версии (там ключом был username)."""
+    entry = _PENDING.get(code)
     if entry is None:
         return None
     if time.time() > entry["expires_at"]:
-        del _PENDING[username]
+        del _PENDING[code]
         return None
-    if entry["attempts"] >= _MAX_VERIFY_ATTEMPTS:
-        del _PENDING[username]
-        return None
-    if not secrets.compare_digest(entry["code"], code.strip()):
-        entry["attempts"] += 1
-        return None
-    del _PENDING[username]
+    del _PENDING[code]
     return entry["user_id"]

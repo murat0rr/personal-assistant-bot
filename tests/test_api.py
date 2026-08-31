@@ -46,35 +46,30 @@ def test_app_route_also_no_caches():
     assert response.headers["cache-control"] == "no-store, must-revalidate"
 
 
-def test_login_page_renders_username_form():
+def test_login_page_renders_code_form():
     client = TestClient(app)
     response = client.get("/auth/login")
     assert response.status_code == 200
-    assert "username" in response.text.lower()
+    assert "/webcode" in response.text
+    assert 'name="code"' in response.text
 
 
-def test_request_code_rejects_invalid_username_format_without_bot_call():
-    # Формат неверный (пробелы/спецсимволы) — отсекается регуляркой ДО
-    # похода в Bot API/БД, значит тестируется без реального бота/сети.
-    client = TestClient(app)
-    response = client.post("/auth/request-code", data={"username": "!! not a username !!"})
-    assert response.status_code == 200
-    assert "код уже в пути" in response.text.lower()
-
-
-def test_verify_page_redirects_on_invalid_username():
-    client = TestClient(app, follow_redirects=False)
-    response = client.get("/auth/verify", params={"u": "!!invalid!!"})
-    assert response.status_code in (302, 307)
-    assert response.headers["location"] == "/auth/login"
-
-
-def test_verify_code_rejects_unknown_username_without_db():
+def test_verify_code_rejects_unknown_code_without_db():
     # verify_code — чистый dict-lookup (src/core/login_codes.py), без
     # похода в БД, поэтому проверяемо без реального authorized_users.
     client = TestClient(app)
-    response = client.post(
-        "/auth/verify-code", data={"username": "nosuchuser12345", "code": "0000"}
-    )
+    response = client.post("/auth/verify-code", data={"code": "0000"})
     assert response.status_code == 200
     assert "неверный" in response.text.lower()
+
+
+def test_verify_code_rate_limited_after_too_many_attempts():
+    from src.core import login_codes
+
+    login_codes._VERIFY_ATTEMPTS_BY_IP.clear()
+    client = TestClient(app)
+    for _ in range(login_codes._MAX_VERIFY_ATTEMPTS_PER_IP):
+        client.post("/auth/verify-code", data={"code": "0000"})
+    response = client.post("/auth/verify-code", data={"code": "0000"})
+    assert "слишком много попыток" in response.text.lower()
+    login_codes._VERIFY_ATTEMPTS_BY_IP.clear()

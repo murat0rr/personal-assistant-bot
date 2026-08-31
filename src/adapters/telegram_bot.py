@@ -28,6 +28,7 @@ from src.handlers.f_goals import router as goals_router
 from src.handlers.f_morning_advice import router as morning_advice_router
 from src.handlers.f_reminders import router as reminders_router
 from src.handlers.f_timezone import router as timezone_router
+from src.handlers.f_web_login import router as web_login_router
 from src.handlers.mode_buttons import MAIN_KEYBOARD
 from src.handlers.mode_buttons import router as mode_buttons_router
 from src.scheduler.jobs import setup_scheduler
@@ -51,6 +52,7 @@ dp.include_router(mode_buttons_router)
 dp.include_router(reminders_router)
 dp.include_router(finance_router)
 dp.include_router(timezone_router)
+dp.include_router(web_login_router)
 dp.include_router(orchestrator_router)
 
 
