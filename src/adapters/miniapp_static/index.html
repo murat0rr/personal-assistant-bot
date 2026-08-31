@@ -94,7 +94,18 @@
       left: 0;
       right: 0;
       top: 0;
+      /* vh — фоллбэк для браузеров без dvh; dvh (Phase 45) — реальная
+         видимая высота вне Telegram WebView. Внутри Telegram tg.expand()
+         плюс собственная подгонка вьюпорта клиента маскировали разницу,
+         но в обычном мобильном браузере статичный vh считается по
+         МАКСИМАЛЬНО возможной высоте (адресная строка скрыта), а не по
+         тому, что видно при первой отрисовке (адресная строка на
+         экране) — оттого и "экран кажется больше, чем есть на самом
+         деле": весь #screen-stack и нижняя панель вкладок расширенного
+         экрана уезжали за пределы реально видимой области. dvh
+         отслеживает актуальный вьюпорт сам, без JS. */
       height: 200vh;
+      height: 200dvh;
       transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
     }
     #screen-stack.dragging { transition: none; }
@@ -103,13 +114,14 @@
       left: 0;
       right: 0;
       height: 100vh;
+      height: 100dvh;
       overflow: hidden; /* сам экран не скроллит — скроллит только .screen-content */
       background: var(--bg);
       display: flex;
       flex-direction: column;
     }
     #main-screen { top: 0; }
-    #extended-screen { top: 100vh; }
+    #extended-screen { top: 100vh; top: 100dvh; }
     .screen-content {
       flex: 1 1 auto;
       overflow-y: auto;
@@ -1045,6 +1057,7 @@
       transform: translateY(-50%);
       width: auto;
       max-height: 80vh;
+      max-height: 80dvh;
       overflow-y: auto;
       overflow-x: hidden;
       -webkit-overflow-scrolling: touch;
@@ -1101,7 +1114,9 @@
       right: 12px;
       width: 66vw;
       min-height: 25vh;
+      min-height: 25dvh;
       max-height: calc(100vh - 68px);
+      max-height: calc(100dvh - 68px);
       z-index: 28;
       background: var(--card-bg);
       border-radius: 16px;
@@ -1161,6 +1176,7 @@
       right: 0;
       bottom: 0;
       top: 44vh;
+      top: 44dvh;
       z-index: 26;
       background: var(--bg);
       border-radius: 16px 16px 0 0;
@@ -1213,6 +1229,7 @@
       z-index: 26;
       width: 88vw;
       max-height: 80vh;
+      max-height: 80dvh;
       background: var(--bg);
       border-radius: 20px;
       box-shadow: 0 16px 50px rgba(0, 0, 0, 0.4);
