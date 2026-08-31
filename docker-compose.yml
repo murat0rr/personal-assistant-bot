@@ -35,7 +35,16 @@ services:
   api:
     build: .
     restart: unless-stopped
-    command: uv run uvicorn src.adapters.api:app --host 0.0.0.0 --port 8000
+    # --proxy-headers/--forwarded-allow-ips (Phase 45) — без них uvicorn
+    # видит только внутреннюю схему за Caddy (Caddy терминирует TLS и
+    # проксирует внутрь по обычному HTTP), поэтому request.base_url/
+    # request.url всегда отдавали "http://", даже когда снаружи всё по
+    # https — сломало data-auth-url для Telegram Login Widget (виджет не
+    # рендерился с "http://" в callback-URL). "*" безопасен здесь: api
+    # достижим только из docker-сети, единственный внешний вход — сам
+    # Caddy на 80/443, подделать заголовок X-Forwarded-Proto снаружи
+    # напрямую нельзя.
+    command: uv run uvicorn src.adapters.api:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips="*"
     env_file: .env
     volumes:
       # Лёгкий staging для Mini App (см. SPEC.md §5) — bind mount, а не
