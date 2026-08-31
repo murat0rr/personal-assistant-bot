@@ -1554,6 +1554,107 @@ Tasker шлёт итог "за сегодня" без явной даты) — �
 требование", чтобы будущая правка тапа по плитке явно видела, что
 именно нельзя тихо сломать в третий раз.
 
+## Phase 45 — вход в веб-версию через Telegram Login Widget
+
+До этой фазы приложение открывалось ТОЛЬКО внутри Telegram: единственный
+источник личности — подписанный `initData` (`window.Telegram.WebApp.
+initData`), а вне Telegram-клиента он пустая строка, и каждый запрос к
+`/miniapp/api/*` падал 401 (живьём проверено на `https://shitinez.shop/
+miniapp/` в обычном браузере). Обсудили с пользователем несколько
+вариантов входа (Telegram Login Widget / свой пароль-логин / email) —
+выбран **Telegram Login Widget**: тот же `telegram_user_id`, что и
+сейчас, вся мультитенантность Phase 40 работает без единой правки, и
+не нужно вводить самостоятельную регистрацию — входить может только
+тот, кто уже есть в `authorized_users` (тот же пароль-гейт F14).
+
+Scope явно ограничен пользователем: только телефоны, десктоп-раскладку
+не делаем; PWA (`manifest.json`, иконки, service worker), автотёмная
+тема (`prefers-color-scheme`) и пересмотр кэш-стратегии — отдельные
+более мелкие шаги позже, не блокируют вход.
+
+### Механизм — сессионная кука рядом с `initData`, не вместо неё
+
+`/miniapp/` (Mini App внутри Telegram) не тронут вообще. Новый путь
+`/app/` отдаёт **тот же файл** `index.html` (не копию), но с
+серверным гейтом ДО отдачи файла: `GET /app`/`/app/`
+(`src/adapters/api.py::web_app_entry`) читает куку `session`, проверяет
+её `verify_session_token` — невалидна → редирект на `/auth/login`,
+валидна → `FileResponse` того же `index.html`, что и `/miniapp/`. Это
+не `app.mount` (`StaticFiles` не умеет условной логики) — обычный явный
+маршрут, зарегистрированный раньше mount'ов в конце файла (тот же
+принцип порядка регистрации, что уже описан в комментарии над
+существующими mount'ами).
+
+`get_authorized_user` (та же зависимость, что обслуживает весь
+`/miniapp/api/*`) получила второй, равноправный путь проверки: сперва
+`initData` (как раньше), пусто/не прошло — пробует куку `session` из
+`request.cookies`. Дальше по коду разницы нет — оба пути сходятся к
+одному `user_id`/`authorized_users`.
+
+### Новые модули
+
+- **`src/core/telegram_auth.py::verify_telegram_login_widget_data`** —
+  алгоритм Login Widget ОТЛИЧАЕТСЯ от алгоритма Mini App `initData`
+  (`verify_miniapp_init_data`, та же функция, соседняя): secret_key —
+  прямой `SHA-256(bot_token)`, а не `HMAC-SHA256("WebAppData",
+  bot_token)`. Легко перепутать при реализации — оба используют
+  `hmac.compare_digest`, оба проверяют `auth_date` (общий
+  `_MAX_AUTH_AGE_SECONDS`), но с разным ключом.
+- **`src/core/web_session.py`** (новый) — подписанная сессионная кука,
+  без новой зависимости (`itsdangerous`/`pyjwt`): payload
+  `{"uid", "exp"}` в base64url + HMAC-SHA256-подпись через
+  `settings.session_secret`, `compare_digest` при проверке, срок жизни
+  30 дней. Тот же hand-rolled HMAC-стиль, что уже everywhere в проекте
+  (`telegram_auth.py`, `tasker_webhook.py::_verify_secret`).
+- **`src/adapters/web_auth.py`** (новый роутер, `prefix="/auth"`,
+  паттерн — `tasker_webhook.py`):
+  - `GET /auth/login` — страница с виджетом Telegram Login
+    (`data-auth-url` берётся из `request.base_url`, не отдельная
+    настройка — не расходится с доменом, на котором реально открыли
+    страницу, работает одинаково для прода и любого другого домена).
+    Без `SESSION_SECRET`/`TELEGRAM_BOT_USERNAME` в `.env` — не 500, а
+    понятная страница "вход не настроен" (503), тот же паттерн
+    деградации, что у `/staging` без `STAGING_MINIAPP_URL`.
+  - `GET /auth/telegram/callback` — проверяет данные виджета; если
+    `user_id` не в `authorized_users` — понятная страница "нет
+    доступа" (403) **без** выставления куки (самостоятельная
+    регистрация закрыта architecturally, не просто UI-подсказкой);
+    иначе — `set_cookie(httponly=True, secure=True, samesite="lax")` +
+    редирект на `/app/`.
+  - `POST /auth/logout` — чистит куку, редирект на `/auth/login`.
+- **Логаут-кнопка** в `#side-drawer` (глобальное меню, Phase 30) —
+  видна только вне Telegram. **Баг, пойманный на живой проверке**
+  (не гипотетический): условие видимости изначально было `if (!tg)`
+  (`tg = window.Telegram?.WebApp`), но живая проверка на проде
+  показала — `telegram-web-app.js` определяет `window.Telegram.WebApp`
+  как объект ВСЕГДА, даже вне настоящего Telegram-клиента, просто с
+  пустыми полями (`hasWebApp: true`, `initData: ""`) — `!tg` было бы
+  вечно `false`, кнопка никогда бы не появилась на реальном веб-сайте.
+  Исправлено на `if (!initData)` — уже вычисленная переменная, точно
+  отражающая "мы не внутри Telegram".
+
+### Конфигурация
+
+`.env`/`config.py`: `SESSION_SECRET` (генерируется `openssl rand -hex
+32`, независим от `tasker_webhook_secret`/`bot_token`),
+`TELEGRAM_BOT_USERNAME` (без `@`, для `data-telegram-login` виджета —
+получен live-запросом `bot.get_me()` на проде: `chitinecassistantbot`).
+Оба пусты по умолчанию = `/auth/login` отвечает "не настроено", ничего
+не ломает для тех, кто ещё не задал.
+
+### Живая проверка
+
+`pytest` (новые тесты: `verify_telegram_login_widget_data` — 5 кейсов
+зеркально `verify_miniapp_init_data`; `create_session_token`/
+`verify_session_token` — валиден/протух/подделана подпись/мусорный
+ввод; `test_api.py` — `/app/` редиректит на `/auth/login` без куки и
+тоже без кэша, `/auth/login` деградирует корректно без конфигурации).
+`ruff check`/`ruff format` — чисто. Живой прогон полного цикла входа
+(виджет → `/auth/telegram/callback` → кука → `/app/` с реальными
+данными; выход → повторный `/app/` снова требует логин; чужой
+Telegram-аккаунт вне `authorized_users` → отказ без куки) — после
+деплоя, отдельно от этой сессии редактирования кода.
+
 ## 3. Нефункциональные требования
 
 ### 3.1 Безопасность

@@ -7,11 +7,13 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import AfterValidator, BaseModel
 from sqlalchemy import select, update
 
 from src.adapters.tasker_webhook import router as tasker_webhook_router
+from src.adapters.web_auth import router as web_auth_router
 from src.core import analytics as analytics_repo
 from src.core import calendar_view
 from src.core import goals as goals_repo
@@ -23,6 +25,7 @@ from src.core.config import settings
 from src.core.db import async_session
 from src.core.telegram_auth import verify_miniapp_init_data
 from src.core.user_location import apply_stored_timezone, user_today
+from src.core.web_session import SESSION_COOKIE_NAME, verify_session_token
 from src.handlers.f8_habits import check_habit
 from src.handlers.miniapp_tasks import build_task_board
 from src.integrations.claude_client import analyze_productivity, find_tasks_for_entity
@@ -84,6 +87,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Личный ассистент API", lifespan=_lifespan)
 app.include_router(tasker_webhook_router)
+app.include_router(web_auth_router)
 
 
 @app.middleware("http")
@@ -96,9 +100,12 @@ async def _no_cache_miniapp(request: Request, call_next):
     приложения. StaticFiles по умолчанию шлёт только ETag/Last-Modified
     (условный GET), но не Cache-Control — WebView вправе не перепроверять
     вообще. Правило — на весь /miniapp: там ровно один самодостаточный
-    index.html без отдельных версионируемых ассетов, экономить нечего."""
+    index.html без отдельных версионируемых ассетов, экономить нечего.
+    /app — тот же index.html, поданный вне Telegram (Phase 45), той же
+    причине подвержен, хоть и не WebView — та же осторожность, пока не
+    появится повод разбираться с кэшем предметно (см. SPEC.md §5)."""
     response = await call_next(request)
-    if request.url.path.startswith("/miniapp"):
+    if request.url.path.startswith("/miniapp") or request.url.path.startswith("/app"):
         response.headers["Cache-Control"] = "no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -110,9 +117,21 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-async def get_authorized_user(x_telegram_init_data: str = Header(...)) -> dict:
+async def get_authorized_user(request: Request, x_telegram_init_data: str = Header(...)) -> dict:
+    # Два независимых источника личности (Phase 45): initData подписан
+    # Telegram'ом на каждый запрос (Mini App внутри Telegram) — пробуем
+    # первым, это уже отлаженный путь; пусто/не прошло (снаружи Telegram
+    # initData всегда пустая строка) — пробуем сессионную куку,
+    # выставленную /auth/telegram/callback после входа через веб (см.
+    # web_auth.py). Оба пути сходятся к одному и тому же user_id и одной
+    # и той же authorized_users — дальше по коду разницы нет.
     user = verify_miniapp_init_data(x_telegram_init_data, settings.telegram_bot_token)
     user_id = user.get("id") if user else None
+    if user_id is None:
+        session_token = request.cookies.get(SESSION_COOKIE_NAME)
+        if session_token:
+            user_id = verify_session_token(session_token)
+            user = {"id": user_id} if user_id is not None else None
     if user_id is None or not await is_authorized(user_id):
         raise HTTPException(status_code=401, detail="unauthorized")
     return user
@@ -814,6 +833,27 @@ async def analytics_summary_endpoint(user: dict = Depends(get_authorized_user)) 
     return {"text": text}
 
 
+# Веб-версия вне Telegram-клиента (Phase 45) — /app и /app/ отдают ТОТ ЖЕ
+# файл index.html, что и /miniapp/ (не копию — один и тот же путь на диске,
+# см. _STATIC_DIR ниже), но за отдельным серверным гейтом: кука проверяется
+# ДО отдачи файла, а не постфактум внутри уже загруженного JS — иначе
+# пользователь на секунду увидел бы пустой/сломанный интерфейс, пока фронтенд
+# сам не поймёт, что не авторизован. Не app.mount (StaticFiles не умеет
+# условной логики) — обычные явные маршруты, поэтому регистрируются раньше
+# mount'ов ниже, без риска, что префикс перехватит их первым.
+_STATIC_DIR = Path(__file__).parent / "miniapp_static"
+
+
+@app.get("/app", response_model=None)
+@app.get("/app/", response_model=None)
+async def web_app_entry(request: Request) -> FileResponse | RedirectResponse:
+    session_token = request.cookies.get(SESSION_COOKIE_NAME)
+    user_id = verify_session_token(session_token) if session_token else None
+    if user_id is None or not await is_authorized(user_id):
+        return RedirectResponse(url="/auth/login")
+    return FileResponse(_STATIC_DIR / "index.html")
+
+
 # Лёгкий staging для Mini App (SPEC.md §5) — второй, полностью отдельный от
 # прод-роута static mount на том же бэкенде. index.html здесь кладётся вручную
 # через scp на bind-mounted /app/staging_static (см. docker-compose.yml,
@@ -831,6 +871,6 @@ app.mount(
 
 # Mount регистрируем последним: Starlette матчит маршруты по порядку
 # регистрации, и mount-префикс перехватил бы /miniapp/api/... раньше,
-# чем до них дойдёт очередь, если объявить его выше.
-_STATIC_DIR = Path(__file__).parent / "miniapp_static"
+# чем до них дойдёт очередь, если объявить его выше. _STATIC_DIR уже
+# объявлен выше, у /app/-маршрутов (Phase 45) — тот же самый путь.
 app.mount("/miniapp", StaticFiles(directory=_STATIC_DIR, html=True), name="miniapp")

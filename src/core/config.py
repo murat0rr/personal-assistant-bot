@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     # Mini App прямо из строки чата в списке чатов, в один тап, без
     # /start и лишних кнопок. Пусто = кнопку меню не трогаем.
     miniapp_url: str = ""
+    # Вход в веб-версию вне Telegram-клиента (Phase 45) — независимый
+    # секрет для подписи сессионной куки (src/core/web_session.py),
+    # генерировать `openssl rand -hex 32`, не переиспользовать
+    # tasker_webhook_secret/bot_token. Username бота (без @) — для
+    # data-telegram-login атрибута виджета входа; пусто = /auth/login
+    # отвечает понятной "не настроено", как staging_miniapp_url выше.
+    session_secret: str = ""
+    telegram_bot_username: str = ""
 
 
 settings = Settings()

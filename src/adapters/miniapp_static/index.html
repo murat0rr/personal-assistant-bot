@@ -1580,6 +1580,15 @@
       <span>Помощь</span>
       <span class="drawer-link-chevron">›</span>
     </button>
+    <!-- Вход в веб-версию вне Telegram (Phase 45) — сессионная кука, у
+         неё есть смысл выходить; внутри Telegram эта кнопка не нужна
+         (initData свежий на каждый запуск, "выход" ничего не значит) —
+         скрыта через display:none по умолчанию, показывается только
+         когда !tg (см. attachScreenTransition/инициализация ниже). -->
+    <button type="button" class="drawer-link" id="btn-logout" style="display:none">
+      <span>Выйти</span>
+      <span class="drawer-link-chevron">›</span>
+    </button>
   </div>
 
   <!-- Экран помощи (Phase 37) — тот же .entity-window, что и окно
@@ -5347,6 +5356,25 @@
       openHelpSheet();
     };
     document.getElementById("help-close").addEventListener("click", closeHelpSheet);
+
+    // Выход из веб-версии (Phase 45) — только вне Telegram, там это
+    // единственное место, где вообще есть смысл "выходить" (см. разметку
+    // #btn-logout — внутри Telegram кнопка скрыта). credentials не нужен
+    // явно: fetch на тот же origin сам прикладывает httpOnly-куку.
+    //
+    // !tg тут был бы неверной проверкой — telegram-web-app.js определяет
+    // window.Telegram.WebApp как объект ВСЕГДА, даже вне настоящего
+    // Telegram-клиента (проверено живьём на проде: hasWebApp=true,
+    // initData=""), просто с пустыми полями. Настоящий признак "мы не
+    // внутри Telegram" — именно пустой initData, а не отсутствие tg.
+    if (!initData) {
+      const logoutBtn = document.getElementById("btn-logout");
+      logoutBtn.style.display = "";
+      logoutBtn.onclick = async () => {
+        await fetch("/auth/logout", { method: "POST" });
+        location.href = "/auth/login";
+      };
+    }
 
     // ---- Месячный календарь (Phase 26) — только текущий месяц, только
     // события (не вся загрузка дня — для этого есть график в аналитике).
