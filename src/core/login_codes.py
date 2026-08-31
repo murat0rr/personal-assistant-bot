@@ -1,91 +1,80 @@
-"""Вход в веб-версию через код в чате с ботом (Phase 45, вторая переделка).
-
-Первая версия резолвила Telegram-username через Bot API (`getChat`) —
-живая проверка показала, что `getChat("@username")` для обычного
-приватного пользователя ненадёжен и часто отвечает "chat not found",
-даже если бот с этим человеком уже переписывался (ограничение самого
-Bot API, не наша ошибка). Исправлено разворотом инициативы: не сайт
-ищет пользователя по имени, а пользователь сам пишет боту команду
-/webcode (src/handlers/f_web_login.py) — тогда user_id известен без
-всякого резолвинга, напрямую из входящего сообщения. Сайт после этого
-спрашивает только сам код, без username вообще.
-
-Хранилище — тот же простой in-memory dict, что и в первой версии (см.
-её обоснование: один процесс api, короткоживущий одноразовый код, при
-рестарте — просто "запросите код заново")."""
+"""Вход в веб-версию через код в чате с ботом (Phase 45, третья
+переделка). Код рождается в процессе `bot` (/webcode,
+src/handlers/f_web_login.py), а проверяется в процессе `api`
+(src/adapters/web_auth.py) — это ДВА РАЗНЫХ контейнера/процесса, у
+каждого своя память. Первая реализация этого модуля держала код в
+обычном Python-словаре — работала бы, будь это один процесс, но между
+`bot` и `api` общей памяти нет вообще: код, сгенерированный в `bot`,
+был просто невидим для `api`, "неверный код" даже при мгновенном вводе.
+Найдено сразу на живой проверке. Правильное общее хранилище между
+процессами в этом стеке уже есть — Redis (settings.redis_url), им и
+пользуемся вместо словаря."""
 
 import secrets
-import time
+
+import redis.asyncio as redis
+
+from src.core.config import settings
 
 _CODE_TTL_SECONDS = 5 * 60
 _REQUEST_COOLDOWN_SECONDS = 60
-# Раз проверка теперь — прямой lookup по самому коду (см. verify_code),
-# а не сравнение "код для этого username" (у которого была своя защита
-# от перебора на конкретную запись), у 4 цифр всего 10000 вариантов —
-# 5 минут теоретически хватает на подбор скриптом (10000/300с ≈ 33
-# попытки/с). Ограничиваем не попытки на код, а попытки С ОДНОГО IP —
-# кто угодно может перебирать код собственного запроса сколько угодно
-# раз, но не устраивать перебор всего пространства кодов.
+# См. docstring верхнего уровня прошлых версий: раз проверка — прямой
+# lookup по самому коду, а не сравнение "код для этого X", у 4 цифр
+# всего 10000 вариантов — ограничиваем попытки верификации по IP,
+# не по конкретному коду.
 _MAX_VERIFY_ATTEMPTS_PER_IP = 20
 _VERIFY_WINDOW_SECONDS = 5 * 60
 
-# 4-значный код -> запись. Ключ — сам код (не username/user_id), потому
-# что верификация на сайте знает только код.
-_PENDING: dict[str, dict] = {}
-# user_id -> когда последний раз генерировали код — кулдаун между
-# запросами, отдельный индекс, раз основной теперь ключуется кодом.
-_LAST_REQUESTED: dict[int, float] = {}
-# ip -> список таймстампов попыток верификации за последнее окно.
-_VERIFY_ATTEMPTS_BY_IP: dict[str, list[float]] = {}
+_redis: redis.Redis | None = None
 
 
-def can_attempt_verify(ip: str) -> bool:
-    now = time.time()
-    attempts = [t for t in _VERIFY_ATTEMPTS_BY_IP.get(ip, []) if now - t < _VERIFY_WINDOW_SECONDS]
-    _VERIFY_ATTEMPTS_BY_IP[ip] = attempts
-    return len(attempts) < _MAX_VERIFY_ATTEMPTS_PER_IP
+def _get_redis() -> redis.Redis:
+    global _redis
+    if _redis is None:
+        _redis = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    return _redis
 
 
-def record_verify_attempt(ip: str) -> None:
-    _VERIFY_ATTEMPTS_BY_IP.setdefault(ip, []).append(time.time())
+async def can_request_code(user_id: int) -> bool:
+    exists = await _get_redis().exists(f"webcode:cooldown:{user_id}")
+    return not exists
 
 
-def can_request_code(user_id: int) -> bool:
-    last = _LAST_REQUESTED.get(user_id)
-    if last is None:
-        return True
-    return time.time() - last >= _REQUEST_COOLDOWN_SECONDS
-
-
-def generate_code(user_id: int) -> str:
+async def generate_code(user_id: int) -> str:
+    r = _get_redis()
     code = f"{secrets.randbelow(10000):04d}"
     # Практически невозможно на личном проекте с несколькими
-    # пользователями, но раз ключ теперь — сам код, дублирующийся ключ
-    # молча стёр бы чужую ожидающую запись — перегенерируем при
-    # коллизии, а не полагаемся на "не случится".
-    while code in _PENDING:
+    # пользователями, но раз ключ — сам код, коллизия молча стёрла бы
+    # чужую ожидающую запись — перегенерируем, а не полагаемся на "не
+    # случится".
+    while await r.exists(f"webcode:code:{code}"):
         code = f"{secrets.randbelow(10000):04d}"
-    _PENDING[code] = {
-        "user_id": user_id,
-        "expires_at": time.time() + _CODE_TTL_SECONDS,
-    }
-    _LAST_REQUESTED[user_id] = time.time()
+    await r.set(f"webcode:code:{code}", str(user_id), ex=_CODE_TTL_SECONDS)
+    await r.set(f"webcode:cooldown:{user_id}", "1", ex=_REQUEST_COOLDOWN_SECONDS)
     return code
 
 
-def verify_code(code: str) -> int | None:
+async def verify_code(code: str) -> int | None:
     """Возвращает user_id при совпадении кода — иначе None. Код
-    одноразовый (удаляется сразу после успеха ИЛИ по истечении TTL —
-    в обоих случаях запись больше не годится). Защита от перебора всего
-    пространства кодов — не здесь, а по IP на уровне вызывающего кода
-    (can_attempt_verify/record_verify_attempt выше), поскольку прямой
-    lookup по коду не даёт естественного места для "попыток на одну
-    запись", как было в первой версии (там ключом был username)."""
-    entry = _PENDING.get(code)
-    if entry is None:
+    одноразовый: удаляется сразу после успешного чтения (TTL в Redis
+    сам убирает протухшие записи, отдельная проверка не нужна)."""
+    r = _get_redis()
+    key = f"webcode:code:{code}"
+    value = await r.get(key)
+    if value is None:
         return None
-    if time.time() > entry["expires_at"]:
-        del _PENDING[code]
-        return None
-    del _PENDING[code]
-    return entry["user_id"]
+    await r.delete(key)
+    return int(value)
+
+
+async def can_attempt_verify(ip: str) -> bool:
+    count = await _get_redis().get(f"webcode:verify_attempts:{ip}")
+    return count is None or int(count) < _MAX_VERIFY_ATTEMPTS_PER_IP
+
+
+async def record_verify_attempt(ip: str) -> None:
+    r = _get_redis()
+    key = f"webcode:verify_attempts:{ip}"
+    new_count = await r.incr(key)
+    if new_count == 1:
+        await r.expire(key, _VERIFY_WINDOW_SECONDS)

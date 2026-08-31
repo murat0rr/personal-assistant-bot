@@ -66,18 +66,18 @@ async def login_page() -> HTMLResponse:
 @router.post("/verify-code", response_model=None)
 async def verify_code_endpoint(request: Request) -> HTMLResponse | RedirectResponse:
     client_ip = request.client.host if request.client else "unknown"
-    if not can_attempt_verify(client_ip):
+    if not await can_attempt_verify(client_ip):
         return _page("""
         <div class="card"><h1>Слишком много попыток</h1>
         <p>Подождите немного и запросите новый код через /webcode.</p>
         <p><a href="/auth/login">← Назад</a></p></div>
         """)
-    record_verify_attempt(client_ip)
+    await record_verify_attempt(client_ip)
 
     form = await request.form()
     code = str(form.get("code", "")).strip()
 
-    user_id = verify_code(code)
+    user_id = await verify_code(code)
     # Дополнительно к самому существованию кода — тот же контур
     # авторизации, что и у Mini App: код мог быть выписан пользователю,
     # которого затем убрали из authorized_users (маловероятно, но

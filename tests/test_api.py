@@ -66,10 +66,8 @@ def test_verify_code_rejects_unknown_code_without_db():
 def test_verify_code_rate_limited_after_too_many_attempts():
     from src.core import login_codes
 
-    login_codes._VERIFY_ATTEMPTS_BY_IP.clear()
     client = TestClient(app)
     for _ in range(login_codes._MAX_VERIFY_ATTEMPTS_PER_IP):
         client.post("/auth/verify-code", data={"code": "0000"})
     response = client.post("/auth/verify-code", data={"code": "0000"})
     assert "слишком много попыток" in response.text.lower()
-    login_codes._VERIFY_ATTEMPTS_BY_IP.clear()
