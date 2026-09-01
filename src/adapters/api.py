@@ -29,7 +29,7 @@ from src.core.user_location import apply_stored_timezone, user_today
 from src.core.web_session import SESSION_COOKIE_NAME, verify_session_token
 from src.handlers.f8_habits import check_habit
 from src.handlers.miniapp_tasks import build_task_board
-from src.integrations.claude_client import find_tasks_for_entity, suggest_entity_spheres
+from src.integrations.claude_client import suggest_entity_spheres, suggest_tasks_for_entity
 from src.integrations.notion import list_diary_entries
 from src.integrations.weather import get_weather_summary
 from src.models.task import Task
@@ -565,10 +565,10 @@ async def create_project_endpoint(
     project = await projects_repo.create_project(
         uid, payload.title, payload.description, payload.spheres, start, end, payload.color
     )
-    if payload.analyze:
-        await _analyze_and_link_project(
-            uid, project["id"], project["title"], project["description"]
-        )
+    # payload.analyze больше не запускает ничего на бэкенде (Phase 52) —
+    # это чисто фронтендный триггер: после успешного сохранения он сам
+    # дёргает /suggest-tasks и показывает экран ревью, откуда пользователь
+    # решает, что реально создавать (см. index.html).
     return project
 
 
@@ -626,59 +626,60 @@ async def edit_project_endpoint(
     return {"status": "ok"}
 
 
-async def _unlinked_candidate_tasks(user_id: int, field: str) -> list[dict]:
-    """Задачи без привязки (field — "project_id" или "sphere") из
-    инбокса и всех будущих дат — кандидаты для "проанализировать и
-    добавить" (Phase 26). Прошлые/просроченные не трогаем — это уже
-    история, а не то, что имеет смысл молча перекладывать в проект/цель."""
-    # due_date в БД — naive timestamp (см. models/task.py) — сравнение
-    # тоже должно быть naive, иначе asyncpg ругается на offset-aware
-    # datetime (тот же приём, что в scheduler/jobs.py::_suggest_templates_job).
-    today_start = datetime.combine(await user_today(user_id), datetime.min.time())
-    column = Task.project_id if field == "project_id" else Task.sphere
-    async with async_session() as session:
-        result = await session.execute(
-            select(Task.id, Task.title).where(
-                Task.archived.is_(False),
-                Task.done.is_(False),
-                column.is_(None),
-                (Task.due_date.is_(None) | (Task.due_date >= today_start)),
-                Task.user_id == user_id,
-            )
-        )
-        return [{"id": row[0], "title": row[1]} for row in result.all()]
+class CreateSuggestedTasksRequest(BaseModel):
+    titles: list[str]
 
 
-async def _analyze_and_link_project(
-    user_id: int, project_id: int, title: str, description: str | None
-) -> int:
-    candidates = await _unlinked_candidate_tasks(user_id, "project_id")
-    matched_ids = await find_tasks_for_entity(title, description, candidates)
-    if not matched_ids:
-        return 0
-    async with async_session() as session:
-        await session.execute(
-            update(Task)
-            .where(Task.id.in_(matched_ids), Task.user_id == user_id)
-            .values(project_id=project_id)
-        )
-        await session.commit()
-    return len(matched_ids)
-
-
-@app.post("/miniapp/api/projects/{project_id}/analyze")
-async def analyze_project_endpoint(
+# "Проанализировать задачи и добавить" (Phase 52) — раньше молча линковал
+# уже существующие задачи по совпадению заголовка (find_tasks_for_entity);
+# теперь два отдельных шага: suggest-tasks придумывает НОВЫЕ задачи и
+# только возвращает их (ничего не пишет в БД) — фронтенд показывает
+# ревью-экран с чекбоксами; create-tasks создаёт только то, что
+# пользователь реально отметил. project_id — та же привязка, что раньше
+# делала линковка.
+@app.post("/miniapp/api/projects/{project_id}/suggest-tasks")
+async def suggest_project_tasks_endpoint(
     project_id: int, user: dict = Depends(get_authorized_user)
-) -> dict:
+) -> dict[str, list[str]]:
     uid = user["id"]
     projects = await projects_repo.list_projects(uid)
     project = next((p for p in projects if p["id"] == project_id), None)
     if project is None:
         raise HTTPException(status_code=404, detail="project not found")
-    linked = await _analyze_and_link_project(
-        uid, project_id, project["title"], project["description"]
+    start = date.fromisoformat(project["start_date"]) if project["start_date"] else None
+    end = date.fromisoformat(project["end_date"]) if project["end_date"] else None
+    titles = await suggest_tasks_for_entity(
+        project["title"], project["description"], project["spheres"], start, end
     )
-    return {"linked": linked}
+    return {"tasks": titles}
+
+
+@app.post("/miniapp/api/projects/{project_id}/create-tasks")
+async def create_project_suggested_tasks_endpoint(
+    project_id: int,
+    payload: CreateSuggestedTasksRequest,
+    user: dict = Depends(get_authorized_user),
+) -> dict[str, int]:
+    uid = user["id"]
+    projects = await projects_repo.list_projects(uid)
+    project = next((p for p in projects if p["id"] == project_id), None)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    titles = [t.strip() for t in payload.titles if t.strip()]
+    async with async_session() as session:
+        for title in titles:
+            session.add(
+                Task(
+                    user_id=uid,
+                    title=title,
+                    priority=_DEFAULT_PRIORITY,
+                    source="suggest",
+                    sort_order=time.time(),
+                    project_id=project_id,
+                )
+            )
+        await session.commit()
+    return {"created": len(titles)}
 
 
 # Цели (Phase 20 — бэкенд/Telegram; Phase 26 — Mini App). Период
@@ -699,19 +700,8 @@ async def create_goal_endpoint(
     goal = await goals_repo.create_goal_now(
         uid, payload.spheres, payload.tier, payload.text, today, reference_date
     )
-    if payload.analyze:
-        candidates = await _unlinked_candidate_tasks(uid, "sphere")
-        matched_ids = await find_tasks_for_entity(goal["text"], None, candidates)
-        if matched_ids:
-            # Задача остаётся с одной сферой (Task.sphere не входит в
-            # Phase 48) — берём первую из списка сфер цели.
-            async with async_session() as session:
-                await session.execute(
-                    update(Task)
-                    .where(Task.id.in_(matched_ids), Task.user_id == uid)
-                    .values(sphere=payload.spheres[0])
-                )
-                await session.commit()
+    # payload.analyze больше не запускает ничего на бэкенде (Phase 52) —
+    # см. тот же комментарий в create_project_endpoint выше.
     return goal
 
 
@@ -769,26 +759,49 @@ async def edit_goal_endpoint(
     return {"status": "ok"}
 
 
-@app.post("/miniapp/api/goals/{goal_id}/analyze")
-async def analyze_goal_endpoint(goal_id: int, user: dict = Depends(get_authorized_user)) -> dict:
+@app.post("/miniapp/api/goals/{goal_id}/suggest-tasks")
+async def suggest_goal_tasks_endpoint(
+    goal_id: int, user: dict = Depends(get_authorized_user)
+) -> dict[str, list[str]]:
     uid = user["id"]
     goals = await goals_repo.list_active_goals(uid)
     goal = next((g for g in goals if g["id"] == goal_id), None)
     if goal is None:
         raise HTTPException(status_code=404, detail="goal not found")
-    candidates = await _unlinked_candidate_tasks(uid, "sphere")
-    matched_ids = await find_tasks_for_entity(goal["text"], None, candidates)
-    if matched_ids:
-        # Та же логика, что в create_goal_endpoint выше — задача берёт
-        # первую сферу из списка сфер цели.
-        async with async_session() as session:
-            await session.execute(
-                update(Task)
-                .where(Task.id.in_(matched_ids), Task.user_id == uid)
-                .values(sphere=goal["spheres"][0])
+    titles = await suggest_tasks_for_entity(goal["text"], None, goal["spheres"], None, None)
+    return {"tasks": titles}
+
+
+@app.post("/miniapp/api/goals/{goal_id}/create-tasks")
+async def create_goal_suggested_tasks_endpoint(
+    goal_id: int,
+    payload: CreateSuggestedTasksRequest,
+    user: dict = Depends(get_authorized_user),
+) -> dict[str, int]:
+    uid = user["id"]
+    goals = await goals_repo.list_active_goals(uid)
+    goal = next((g for g in goals if g["id"] == goal_id), None)
+    if goal is None:
+        raise HTTPException(status_code=404, detail="goal not found")
+    titles = [t.strip() for t in payload.titles if t.strip()]
+    # Задача остаётся с одной сферой (Task.sphere не входит в Phase 48) —
+    # берёт первую из списка сфер цели, та же привязка, что раньше
+    # делала линковка.
+    sphere = goal["spheres"][0] if goal["spheres"] else None
+    async with async_session() as session:
+        for title in titles:
+            session.add(
+                Task(
+                    user_id=uid,
+                    title=title,
+                    priority=_DEFAULT_PRIORITY,
+                    source="suggest",
+                    sort_order=time.time(),
+                    sphere=sphere,
+                )
             )
-            await session.commit()
-    return {"linked": len(matched_ids)}
+        await session.commit()
+    return {"created": len(titles)}
 
 
 def _is_owner(user_id: int) -> bool:

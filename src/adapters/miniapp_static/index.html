@@ -1276,6 +1276,59 @@
       -webkit-overflow-scrolling: touch;
       padding: 4px 16px calc(16px + env(safe-area-inset-bottom, 0px));
     }
+    /* Плашка "Генерируем задачи…" (Phase 52) — левый верхний угол, тот
+       же safe-area-приём, что и .entity-window-body выше, но сверху. */
+    .task-suggest-pill {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      position: fixed;
+      top: calc(12px + env(safe-area-inset-top, 0px));
+      left: 12px;
+      z-index: 30;
+      background: var(--card-bg);
+      border-radius: 999px;
+      padding: 8px 14px 8px 10px;
+      font-size: 13px;
+      color: var(--text-muted);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+    }
+    .task-suggest-pill.visible { display: flex; }
+    .task-suggest-spinner {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid var(--hairline);
+      border-top-color: var(--accent);
+      animation: task-suggest-spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes task-suggest-spin {
+      to { transform: rotate(360deg); }
+    }
+    /* Квадратный чекбокс "добавить" в ревью-экране предложенных задач
+       (Phase 52) — тот же базовый вид, что круглый .checkbox статуса
+       задачи, но квадратный: намеренно другая форма, чтобы не читалось
+       как "отметить выполненной" (тут это выбор "создавать или нет"). */
+    .checkbox-square {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      border: 1.5px solid var(--text-muted);
+      background: transparent;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      color: var(--accent-text);
+    }
+    .checkbox-square.selected {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    .checkbox-square svg { display: none; width: 12px; height: 12px; }
+    .checkbox-square.selected svg { display: block; }
     /* Содержимое экрана помощи (Phase 37) — текстовые разделы по областям
        приложения, у жестов (тап/долгое нажатие/свайп/перетаскивание) —
        маленькая иконка слева для узнаваемости, у обычных кнопок/полей —
@@ -1706,6 +1759,29 @@
       <button type="button" class="entity-window-close" id="create-entity-close" aria-label="Закрыть">✕</button>
     </div>
     <div id="create-entity-form" class="entity-window-body"></div>
+  </div>
+
+  <!-- "Проанализировать задачи и добавить" (Phase 52) — плашка-лоадер,
+       пока ИИ придумывает задачи для только что сохранённого проекта/
+       цели (см. maybeSuggestEntityTasks). -->
+  <div id="task-suggest-pill" class="task-suggest-pill">
+    <span class="task-suggest-spinner"></span>
+    <span>Генерируем задачи…</span>
+  </div>
+
+  <!-- Ревью-экран предложенных задач (Phase 52) — тот же .entity-window,
+       что форма проекта/цели/помощь, список строк — свой рендер
+       (renderTaskReviewList), не renderList: слева квадратный чекбокс
+       "добавить" вместо кружка статуса, тап не зачёркивает текст. -->
+  <div id="task-review-sheet" class="entity-window">
+    <div class="entity-window-head">
+      <span class="entity-window-title">Предложенные задачи</span>
+      <button type="button" class="entity-window-close" id="task-review-close" aria-label="Закрыть">✕</button>
+    </div>
+    <div class="entity-window-body">
+      <div id="task-review-list" class="list"></div>
+      <button type="button" class="entity-form-submit" id="task-review-submit">Готово</button>
+    </div>
   </div>
 
   <div id="date-picker-sheet">
@@ -4146,7 +4222,8 @@
         sideDrawerOpen ||
         helpSheetOpen ||
         widgetSettingsOpen ||
-        dayViewSettingsOpen;
+        dayViewSettingsOpen ||
+        taskReviewOpen;
       document
         .getElementById("reorder-scrim")
         .classList.toggle("visible", reorderActiveKey !== null || anySheetOpen);
@@ -4169,6 +4246,7 @@
       document
         .getElementById("day-view-settings-sheet")
         .classList.toggle("visible", dayViewSettingsOpen);
+      document.getElementById("task-review-sheet").classList.toggle("visible", taskReviewOpen);
     }
 
     function addDaysIso(iso, days) {
@@ -4551,6 +4629,11 @@
           }),
         });
         projectsData.push(result);
+        // "Проанализировать задачи и добавить" (Phase 52) — уже не
+        // серверный флаг (см. api.py), а чисто фронтендный триггер:
+        // проект уже сохранён, теперь просим ИИ предложить под него
+        // задачи и показываем ревью-экран (см. maybeSuggestEntityTasks).
+        if (draft.analyze) maybeSuggestEntityTasks("project", result.id);
       } catch (e) {
         alert("Не удалось создать проект.");
       } finally {
@@ -4583,6 +4666,7 @@
           }),
         });
         await loadProjects();
+        if (draft.analyze) maybeSuggestEntityTasks("project", id);
       } catch (e) {
         alert("Не удалось сохранить проект.");
       }
@@ -4601,6 +4685,7 @@
           }),
         });
         goalsData.push(result);
+        if (draft.analyze) maybeSuggestEntityTasks("goal", result.id);
       } catch (e) {
         alert("Не удалось создать цель.");
       } finally {
@@ -4624,6 +4709,7 @@
           }),
         });
         await loadGoals();
+        if (draft.analyze) maybeSuggestEntityTasks("goal", id);
       } catch (e) {
         alert("Не удалось сохранить цель.");
       }
@@ -4746,6 +4832,191 @@
       } catch (e) {
         // Тихо — форма и так рабочая без предложенной сферы (см. NFR3
         // в плане фазы), пользователь просто выбирает вручную как раньше.
+      }
+    }
+
+    // ---- Ревью-экран предложенных задач (Phase 52) — заменяет старую
+    // тихую линковку существующих задач ("Проанализировать и
+    // добавить" раньше молча привязывал уже существующие задачи по
+    // совпадению заголовка, см. историю в SPEC.md). Теперь: тумблер на
+    // форме проекта/цели только запускает ИИ-предложение НОВЫХ задач,
+    // пользователь сам решает чекбоксами, что реально создавать.
+    let taskReviewOpen = false;
+    let taskReviewKind = null; // "project" | "goal"
+    let taskReviewEntityId = null;
+    let taskReviewItems = []; // [{ title, selected, sortOrder }]
+    // Свой, урезанный аналог reorder-режима задач: перенос порядка и
+    // правка текста работают (те же низкоуровневые утилиты, что и у
+    // настоящих задач — setupDragReorder/startReorderInlineEdit), но
+    // без архивации/переноса в проект — этих действий тут нет,
+    // сущностей ещё нет в БД, только черновики в памяти этого окна.
+    let taskReviewEditMode = false;
+
+    function showTaskSuggestPill() {
+      document.getElementById("task-suggest-pill").classList.add("visible");
+    }
+    function hideTaskSuggestPill() {
+      document.getElementById("task-suggest-pill").classList.remove("visible");
+    }
+
+    async function maybeSuggestEntityTasks(kind, entityId) {
+      showTaskSuggestPill();
+      try {
+        const path =
+          kind === "project"
+            ? `/miniapp/api/projects/${entityId}/suggest-tasks`
+            : `/miniapp/api/goals/${entityId}/suggest-tasks`;
+        const result = await api(path, { method: "POST" });
+        const titles = result.tasks || [];
+        // Ничего не предложено — по плану фазы всплывающее окно вообще
+        // не открывается (не показываем пустой список).
+        if (!titles.length) return;
+        taskReviewKind = kind;
+        taskReviewEntityId = entityId;
+        taskReviewItems = titles.map((title, i) => ({ title, selected: true, sortOrder: i }));
+        taskReviewEditMode = false;
+        taskReviewOpen = true;
+        renderTaskReviewList();
+        render();
+      } catch (e) {
+        alert("Не удалось получить предложения по задачам.");
+      } finally {
+        hideTaskSuggestPill();
+      }
+    }
+
+    function closeTaskReviewSheet() {
+      taskReviewOpen = false;
+      taskReviewEditMode = false;
+      taskReviewItems = [];
+      render();
+    }
+
+    // Долгое нажатие где угодно в списке (кроме самого чекбокса —
+    // у него уже есть тап) включает режим правки. Тот же приём таймер +
+    // отмена по сдвигу пальца, что и attachReorderEntry/
+    // attachEntityLongPress, но не переиспользует их напрямую: те
+    // завязаны на общий reorderActiveKey/isReorderActive, рассчитанный
+    // на настоящие персистентные списки задач, а не на этот
+    // одноразовый черновик в памяти.
+    function attachTaskReviewLongPress(container) {
+      const HOLD_MS = 500;
+      const MOVE_THRESHOLD = 8;
+      let timer = null;
+      let startX = 0;
+      let startY = 0;
+      let pointerId = null;
+      function clear() {
+        clearTimeout(timer);
+        timer = null;
+      }
+      container.addEventListener("pointerdown", (e) => {
+        if (taskReviewEditMode || e.target.closest(".checkbox-square")) return;
+        startX = e.clientX;
+        startY = e.clientY;
+        pointerId = e.pointerId;
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          timer = null;
+          taskReviewEditMode = true;
+          renderTaskReviewList();
+        }, HOLD_MS);
+      });
+      document.addEventListener("pointermove", (e) => {
+        if (!timer || e.pointerId !== pointerId) return;
+        if (Math.abs(e.clientX - startX) > MOVE_THRESHOLD || Math.abs(e.clientY - startY) > MOVE_THRESHOLD) {
+          clear();
+        }
+      });
+      document.addEventListener("pointerup", (e) => {
+        if (e.pointerId === pointerId) clear();
+      });
+      document.addEventListener("pointercancel", (e) => {
+        if (e.pointerId === pointerId) clear();
+      });
+    }
+
+    function renderTaskReviewList() {
+      const listEl = document.getElementById("task-review-list");
+      if (!listEl) return;
+      listEl.innerHTML = "";
+      const sorted = [...taskReviewItems].sort((a, b) => a.sortOrder - b.sortOrder);
+      sorted.forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "row task-review-row";
+        row.dataset.sortOrder = String(item.sortOrder);
+
+        if (taskReviewEditMode) {
+          // Тот же вид, что renderReorderRow у настоящих задач — ручка
+          // слева, текст целиком, тап по тексту правит; без кнопки
+          // архивации/переноса.
+          const grip = document.createElement("span");
+          grip.className = "grip";
+          grip.setAttribute("aria-label", "Перетащить");
+          grip.innerHTML = gripIcon();
+          row.append(grip);
+
+          const title = document.createElement("span");
+          title.className = "title title-full";
+          title.textContent = item.title;
+          row.append(title);
+
+          const dragCtl = setupDragReorder({
+            row,
+            trigger: grip,
+            rowSelector: ".task-review-row",
+            getSortOrder: (el) => parseFloat(el.dataset.sortOrder),
+            persist: (newOrder) => {
+              item.sortOrder = newOrder;
+            },
+          });
+
+          title.onclick = (e) => {
+            if (dragCtl.wasDragged()) return;
+            startReorderInlineEdit(row, title, { title: item.title }, e.clientX, (_fakeTask, newTitle) => {
+              item.title = newTitle;
+            });
+          };
+        } else {
+          const checkbox = document.createElement("button");
+          checkbox.type = "button";
+          checkbox.className = "checkbox-square" + (item.selected ? " selected" : "");
+          checkbox.setAttribute("aria-label", item.selected ? "Не добавлять" : "Добавить");
+          checkbox.innerHTML = checkIcon();
+          checkbox.onclick = () => {
+            item.selected = !item.selected;
+            renderTaskReviewList();
+          };
+          row.append(checkbox);
+
+          const title = document.createElement("span");
+          title.className = "title";
+          title.textContent = item.title;
+          row.append(title);
+        }
+
+        listEl.append(row);
+      });
+    }
+
+    async function commitTaskReview() {
+      const titles = taskReviewItems.filter((i) => i.selected).map((i) => i.title.trim()).filter(Boolean);
+      const kind = taskReviewKind;
+      const entityId = taskReviewEntityId;
+      closeTaskReviewSheet();
+      if (!titles.length) return;
+      try {
+        const path =
+          kind === "project"
+            ? `/miniapp/api/projects/${entityId}/create-tasks`
+            : `/miniapp/api/goals/${entityId}/create-tasks`;
+        await api(path, { method: "POST", body: JSON.stringify({ titles }) });
+        // Предложенные задачи уходят в инбокс без даты (см.
+        // suggest_tasks_for_entity) — перечитываем доску целиком, не
+        // проект/цель (та не поменялась).
+        await loadBoard();
+      } catch (e) {
+        alert("Не удалось создать задачи.");
       }
     }
 
@@ -5258,6 +5529,10 @@
         helpRow(swipeGestureIcon(), "Свайп открывает архив (и цвет — у проектов).") +
         helpRow(longPressGestureIcon(), "Долгое нажатие открывает окно редактирования — название, сфера, даты, цвет.") +
         helpRow(null, "Цели разбиты по срокам — недельные, месячные, годовые, каждый список отдельно.") +
+        helpRow(
+          null,
+          "«Проанализировать задачи и добавить» в форме — ИИ предложит задачи под этот проект/цель, отметь чекбоксами, что реально создавать."
+        ) +
         "</div>" +
         '<div class="help-section"><h4>Общее</h4>' +
         helpRow(
@@ -5857,6 +6132,13 @@
     // свайпа (см. .entity-window в CSS и комментарий там же).
     document.getElementById("create-entity-close").addEventListener("click", closeCreateEntitySheet);
 
+    // Ревью-экран предложенных задач (Phase 52) — тот же паттерн, что
+    // create-entity-sheet: крестик/тап по фону закрывают без сохранения
+    // (discard), отдельная кнопка "Готово" внутри — commitTaskReview.
+    document.getElementById("task-review-close").addEventListener("click", closeTaskReviewSheet);
+    document.getElementById("task-review-submit").addEventListener("click", commitTaskReview);
+    attachTaskReviewLongPress(document.getElementById("task-review-list"));
+
     attachScreenTransition();
 
     // Тап по затемнению — единственный выход из режима переноса (кнопки
@@ -5888,6 +6170,14 @@
         closeWidgetSettingsSheet();
       } else if (dayViewSettingsOpen) {
         closeDayViewSettingsSheet();
+      } else if (taskReviewOpen && taskReviewEditMode) {
+        // Тап по фону в режиме правки — только выход из правки обратно
+        // к выбору чекбоксами, как и у настоящего reorder-режима (не
+        // закрывает всё окно и не теряет уже собранный список).
+        taskReviewEditMode = false;
+        renderTaskReviewList();
+      } else if (taskReviewOpen) {
+        closeTaskReviewSheet();
       } else if (sideDrawerOpen) {
         closeSideDrawer();
       }

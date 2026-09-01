@@ -103,6 +103,18 @@ function _serializeGoal(g) {
   };
 }
 
+// Мок "Проанализировать задачи и добавить" (Phase 52) — реального
+// Claude тут нет, просто несколько канонических предложений с
+// подставленным названием, этого достаточно, чтобы проверить сам
+// экран ревью (чекбоксы, режим правки, "Готово"), не качество текста.
+function _mockSuggestedTasks(title) {
+  return [
+    `Составить план: ${title}`,
+    `Первый шаг по «${title}»`,
+    `Проверить прогресс по «${title}»`,
+  ];
+}
+
 function _serializeTemplate(t) {
   return {
     id: t.id,
@@ -260,23 +272,14 @@ window.fetch = async (path, options = {}) => {
       archived: false,
     };
     _projects.push(p);
-    if (body.analyze) {
-      // упрощённая имитация "проанализировать и добавить": линкуем
-      // задачи без проекта, чьё название содержит слово из названия
-      // проекта — этого достаточно для проверки самого механизма кнопки.
-      const needle = p.title.toLowerCase().split(" ")[0];
-      for (const t of _tasks) {
-        if (!t.project_id && t.title.toLowerCase().includes(needle)) t.project_id = id;
-      }
-    }
     result = _serializeProject(p);
   } else if (path.match(/\\/projects\\/(\\d+)\\/archive/)) {
     const m = path.match(/\\/projects\\/(\\d+)\\/archive/);
     const p = _projects.find((x) => x.id === Number(m[1]));
     if (!p) return { ok: false, status: 404, json: async () => ({}) };
     p.archived = true;
-  } else if (path.match(/\\/projects\\/(\\d+)\\/(done|color|edit|analyze)/)) {
-    const m = path.match(/\\/projects\\/(\\d+)\\/(done|color|edit|analyze)/);
+  } else if (path.match(/\\/projects\\/(\\d+)\\/(done|color|edit)/)) {
+    const m = path.match(/\\/projects\\/(\\d+)\\/(done|color|edit)/);
     const id = Number(m[1]);
     const action = m[2];
     const p = _projects.find((x) => x.id === id);
@@ -284,7 +287,27 @@ window.fetch = async (path, options = {}) => {
     if (action === "done") p.done = body.done;
     else if (action === "color") p.color = body.color;
     else if (action === "edit") Object.assign(p, body);
-    else if (action === "analyze") result = { linked: 0 };
+  } else if (path.match(/\\/projects\\/(\\d+)\\/suggest-tasks/)) {
+    const m = path.match(/\\/projects\\/(\\d+)\\/suggest-tasks/);
+    const p = _projects.find((x) => x.id === Number(m[1]));
+    if (!p) return { ok: false, status: 404, json: async () => ({}) };
+    result = { tasks: _mockSuggestedTasks(p.title) };
+  } else if (path.match(/\\/projects\\/(\\d+)\\/create-tasks/)) {
+    const m = path.match(/\\/projects\\/(\\d+)\\/create-tasks/);
+    const projectId = Number(m[1]);
+    for (const title of body.titles || []) {
+      _tasks.push({
+        id: _nextId++,
+        title,
+        due: null,
+        time: null,
+        priority: "средний",
+        done: false,
+        sort_order: Date.now(),
+        project_id: projectId,
+      });
+    }
+    result = { created: (body.titles || []).length };
   } else if (path === "/miniapp/api/goals" && method === "GET") {
     result = _goals.filter((g) => !g.archived).map((g) => _serializeGoal(g));
   } else if (path === "/miniapp/api/goals" && method === "POST") {
@@ -301,8 +324,8 @@ window.fetch = async (path, options = {}) => {
     };
     _goals.push(g);
     result = _serializeGoal(g);
-  } else if (path.match(/\\/goals\\/(\\d+)\\/(done|archive|text|edit|analyze)/)) {
-    const m = path.match(/\\/goals\\/(\\d+)\\/(done|archive|text|edit|analyze)/);
+  } else if (path.match(/\\/goals\\/(\\d+)\\/(done|archive|text|edit)/)) {
+    const m = path.match(/\\/goals\\/(\\d+)\\/(done|archive|text|edit)/);
     const id = Number(m[1]);
     const action = m[2];
     const g = _goals.find((x) => x.id === id);
@@ -314,7 +337,29 @@ window.fetch = async (path, options = {}) => {
       if (body.text != null) g.text = body.text;
       if (body.spheres != null) g.spheres = body.spheres;
       if (body.tier != null) g.tier = body.tier;
-    } else if (action === "analyze") result = { linked: 0 };
+    }
+  } else if (path.match(/\\/goals\\/(\\d+)\\/suggest-tasks/)) {
+    const m = path.match(/\\/goals\\/(\\d+)\\/suggest-tasks/);
+    const g = _goals.find((x) => x.id === Number(m[1]));
+    if (!g) return { ok: false, status: 404, json: async () => ({}) };
+    result = { tasks: _mockSuggestedTasks(g.text) };
+  } else if (path.match(/\\/goals\\/(\\d+)\\/create-tasks/)) {
+    const m = path.match(/\\/goals\\/(\\d+)\\/create-tasks/);
+    const goal = _goals.find((x) => x.id === Number(m[1]));
+    const sphere = goal && goal.spheres && goal.spheres.length ? goal.spheres[0] : null;
+    for (const title of body.titles || []) {
+      _tasks.push({
+        id: _nextId++,
+        title,
+        due: null,
+        time: null,
+        priority: "средний",
+        done: false,
+        sort_order: Date.now(),
+        sphere,
+      });
+    }
+    result = { created: (body.titles || []).length };
   } else if (path.match(/\\/calendar\\/month\\?month=(\\d{4})-(\\d{2})/)) {
     const m = path.match(/\\/calendar\\/month\\?month=(\\d{4})-(\\d{2})/);
     const year = Number(m[1]);

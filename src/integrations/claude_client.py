@@ -18,8 +18,8 @@ _SPHERES = ("учёба", "работа", "спорт", "развитие", "о�
 # использует _GENERATE_TASKS_FROM_GOALS_TOOL. sphere — необязательное
 # поле (Phase 49, item 2): заполняется только если модель уверена, иначе
 # null — тот же практический приём "не выдумывай ради галочки", что и в
-# остальных мягких ИИ-решениях этого файла (см. PROPOSE_PROJECTS_TOOL,
-# _FIND_TASKS_TOOL).
+# остальных мягких ИИ-решениях этого файла (см. _PROPOSE_PROJECTS_TOOL,
+# _SUGGEST_SPHERES_TOOL, _SUGGEST_ENTITY_TASKS_TOOL).
 _EXTRACT_TASKS_TOOL = {
     "name": "extract_tasks",
     "description": (
@@ -875,60 +875,83 @@ async def analyze_productivity(spheres: list[dict], month: dict, projects: list[
     return lines
 
 
-_LINK_TASKS_TOOL = {
-    "name": "link_tasks",
-    "description": "Выбрать, какие из присланных задач реально относятся к проекту/цели.",
+_SUGGEST_ENTITY_TASKS_TOOL = {
+    "name": "suggest_tasks",
+    "description": "Предложить конкретные выполнимые задачи для проекта или цели.",
     "input_schema": {
         "type": "object",
         "properties": {
-            "task_ids": {
+            "tasks": {
                 "type": "array",
-                "items": {"type": "integer"},
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Краткая, конкретная задача"},
+                    },
+                    "required": ["title"],
+                },
                 "description": (
-                    "id задач, которые реально относятся к проекту/цели по смыслу. "
-                    "Пустой список, если ни одна не подходит — не привязывай "
-                    "задачи только ради галочки."
+                    "0-7 конкретных выполнимых задач, которые реально продвигают "
+                    "этот проект/цель. Пустой список, если ничего конкретного не "
+                    "придумывается — не выдумывай задачи ради количества."
                 ),
             },
         },
-        "required": ["task_ids"],
+        "required": ["tasks"],
     },
 }
 
 
-class LinkedTasks(BaseModel):
-    task_ids: list[int]
+class SuggestedEntityTask(BaseModel):
+    title: str
 
 
-async def find_tasks_for_entity(
-    entity_title: str, entity_description: str | None, candidate_tasks: list[dict]
-) -> list[int]:
-    """ "Проанализировать задачи и добавить в проект/цель" (Phase 26,
-    форма создания в Mini App) — среди уже существующих задач без
-    привязки (инбокс + будущие) выбирает те, что реально относятся к
-    этому проекту/цели по смыслу заголовка. Не создаёт новых задач —
-    только привязывает существующие, в отличие от generate_tasks_from_goals."""
-    if not candidate_tasks:
-        return []
-    tasks_text = "\n".join(f"{t['id']}: {t['title']}" for t in candidate_tasks)
+class SuggestedEntityTasks(BaseModel):
+    tasks: list[SuggestedEntityTask]
+
+
+async def suggest_tasks_for_entity(
+    title: str,
+    description: str | None,
+    spheres: list[str],
+    start_date: date | None,
+    end_date: date | None,
+) -> list[str]:
+    """ "Проанализировать задачи и добавить" (Phase 52, форма проекта/
+    цели в Mini App) — придумывает конкретные НОВЫЕ задачи под этот
+    проект/цель (в отличие от прежнего find_tasks_for_entity — та
+    только линковала уже существующие задачи по совпадению заголовка,
+    молча, без ревью пользователем; теперь результат всегда идёт через
+    экран ревью на фронтенде — см. index.html, ничего не создаётся
+    напрямую отсюда). Без дат — как и у generate_tasks_from_goals,
+    предложенные задачи уходят в инбокс, пользователь сам расставляет
+    их по дням."""
+    period = ""
+    if start_date or end_date:
+        start_str = start_date.isoformat() if start_date else "?"
+        end_str = end_date.isoformat() if end_date else "?"
+        period = f" Срок: {start_str} — {end_str}."
+    spheres_text = ", ".join(spheres) if spheres else "не указана"
     response = await client.messages.create(
-        model=settings.claude_model_haiku,
-        max_tokens=500,
+        model=settings.claude_model_sonnet,
+        max_tokens=1000,
         system=(
-            "Вот название и описание проекта/цели, и список задач пользователя "
-            "без привязки (id: заголовок). Выбери id тех задач, что по смыслу "
-            "реально относятся к этому проекту/цели. Не выдумывай натянутые "
-            "связи — пустой список, если ничего явно не подходит."
+            "Пользователь заводит проект или цель в личном планировщике. "
+            "Придумай несколько конкретных, выполнимых задач, которые реально "
+            "продвигают именно ЭТУ цель/проект — не общие советы, а то, что "
+            "можно взять и сделать. Даты не проставляй. Если по названию "
+            "непонятно, с чего начать — верни пустой список, не выдумывай "
+            "задачи ради количества."
         ),
-        tools=[_LINK_TASKS_TOOL],
-        tool_choice={"type": "tool", "name": "link_tasks"},
+        tools=[_SUGGEST_ENTITY_TASKS_TOOL],
+        tool_choice={"type": "tool", "name": "suggest_tasks"},
         messages=[
             {
                 "role": "user",
                 "content": (
-                    f"Проект/цель: {entity_title}\n"
-                    f"Описание: {entity_description or '(нет)'}\n\n"
-                    f"Задачи:\n{tasks_text}"
+                    f"Название: {title}\n"
+                    f"Описание: {description or '(нет)'}\n"
+                    f"Сфера(ы): {spheres_text}.{period}"
                 ),
             }
         ],
@@ -936,5 +959,4 @@ async def find_tasks_for_entity(
     tool_use = next((block for block in response.content if block.type == "tool_use"), None)
     if tool_use is None:
         return []
-    valid_ids = {t["id"] for t in candidate_tasks}
-    return [i for i in LinkedTasks.model_validate(tool_use.input).task_ids if i in valid_ids]
+    return [t.title for t in SuggestedEntityTasks.model_validate(tool_use.input).tasks]
