@@ -430,6 +430,7 @@ window.__gestures = {
 def _default_tasks(count: int) -> list[dict]:
     today = date.today().isoformat()
     yesterday = (date.today() - timedelta(days=1)).isoformat()
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
     tasks = []
     for i in range(1, count + 1):
         tasks.append(
@@ -494,6 +495,20 @@ def _default_tasks(count: int) -> list[dict]:
             "id": 904,
             "title": "Инбокс без даты",
             "due": None,
+            "time": None,
+            "priority": "средний",
+            "done": False,
+            "sort_order": 100,
+        }
+    )
+    # Завтрашняя (Phase 50) — dated_tasks уже содержит все задачи с
+    # датой независимо от дня, страница "Завтра" читает отсюда же
+    # (tasksForDate), не отдельным полем с бэкенда.
+    tasks.append(
+        {
+            "id": 905,
+            "title": "Завтрашняя задача",
+            "due": tomorrow,
             "time": None,
             "priority": "средний",
             "done": False,

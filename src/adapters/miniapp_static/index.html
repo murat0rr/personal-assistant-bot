@@ -530,6 +530,10 @@
     }
     .day-dot.active { opacity: 1; }
     .digest { padding: 12px 14px; font-size: 14px; color: var(--text-muted); }
+    /* "Сегодня" в настройке отображений (Phase 50) — заблокированный
+       ряд: серый текст сигнализирует "неактивно", замок справа — почему. */
+    .day-view-locked { color: var(--text-muted); }
+    .day-view-lock-icon { margin-left: auto; display: flex; color: var(--text-muted); }
 
     .chart-card {
       background: var(--card-bg);
@@ -1451,14 +1455,27 @@
   <div class="screen-content">
   <div class="section">
     <p class="section-label" id="day-label">Сегодня</p>
-    <div class="day-carousel" id="day-carousel">
+    <!-- Карусель и точки-индикаторы больше не статичны (Phase 50) — их
+         содержимое собирает rebuildDayCarousel() из DAY_VIEWS/настройки
+         "Отображения задач". Сами страницы ("day-page") лежат в скрытом
+         пуле ниже и физически ПЕРЕНОСЯТСЯ (appendChild, не пересоздаются)
+         в #day-carousel в нужном порядке — тот же приём, что уже
+         используется для reorder-режима (см. applyReorderElevation),
+         поэтому все внутренние id (#week-carousel и т.п.) остаются
+         рабочими независимо от того, где физически сейчас лежит страница. -->
+    <div class="day-carousel" id="day-carousel"></div>
+    <div class="day-dots" id="day-dots"></div>
+    <div id="day-page-pool" style="display:none">
       <div class="day-page" data-day="yesterday">
         <div class="list" id="yesterday-list"></div>
       </div>
       <div class="day-page" data-day="today">
         <div class="list" id="today-list"></div>
       </div>
-      <div class="day-page" data-day="calendar">
+      <div class="day-page" data-day="tomorrow">
+        <div class="list" id="tomorrow-list"></div>
+      </div>
+      <div class="day-page" data-day="week">
         <div class="week-carousel" id="week-carousel">
           <div class="week-track" id="week-track">
             <div class="week-page"><div class="week-grid" data-slot="prev"></div></div>
@@ -1468,11 +1485,6 @@
         </div>
         <div id="week-day-detail"></div>
       </div>
-    </div>
-    <div class="day-dots">
-      <span class="day-dot" data-index="0"></span>
-      <span class="day-dot active" data-index="1"></span>
-      <span class="day-dot" data-index="2"></span>
     </div>
   </div>
 
@@ -1619,6 +1631,13 @@
       <span>Графики аналитики</span>
       <span class="drawer-link-chevron">›</span>
     </button>
+    <!-- Отображения задач на главном экране (Phase 50) — какие страницы
+         карусели (Вчера/Сегодня/Завтра/Неделя) показывать; тот же
+         паттерн, что графики аналитики выше. -->
+    <button type="button" class="drawer-link" id="btn-open-day-view-settings">
+      <span>Отображения задач</span>
+      <span class="drawer-link-chevron">›</span>
+    </button>
     <!-- Вход в веб-версию вне Telegram (Phase 45) — сессионная кука, у
          неё есть смысл выходить; внутри Telegram эта кнопка не нужна
          (initData свежий на каждый запуск, "выход" ничего не значит) —
@@ -1661,6 +1680,15 @@
     <div class="bottom-sheet-handle"></div>
     <p class="section-label">Графики аналитики</p>
     <div id="widget-settings-list" class="list"></div>
+  </div>
+
+  <!-- Настройка отображений задач (Phase 50) — список из DAY_VIEWS,
+       чекбокс на каждый; "Сегодня" рисуется отдельным disabled-рядом с
+       замком, не через обычный чекбокс — см. renderDayViewSettingsList. -->
+  <div id="day-view-settings-sheet" class="bottom-sheet">
+    <div class="bottom-sheet-handle"></div>
+    <p class="section-label">Отображения задач</p>
+    <div id="day-view-settings-list" class="list"></div>
   </div>
 
   <div id="color-picker-sheet" class="bottom-sheet">
@@ -1804,6 +1832,14 @@
         18
       );
     }
+    // Замок у "Сегодня" в настройке отображений (Phase 50) — эту строку
+    // нельзя выключить, значок рядом с чекбоксом сигнализирует почему.
+    function lockIcon() {
+      return icon(
+        '<rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/>',
+        14
+      );
+    }
     // Шаблонные задачи (Phase 18) — контур звезды, "избранное/быстрый
     // выбор", слева от кнопки подтверждения в строке добавления.
     function starIcon() {
@@ -1890,6 +1926,7 @@
     let sideDrawerOpen = false;
     let helpSheetOpen = false;
     let widgetSettingsOpen = false; // Phase 46 — настройка включённых виджетов аналитики
+    let dayViewSettingsOpen = false; // Phase 50 — настройка отображений главной карусели
 
     // Та же палитра, что уже показывали на макете-прототипе — 20 цветов,
     // без внешних библиотек.
@@ -3918,6 +3955,18 @@
         showTemplatesPicker: true,
         dateFor: () => boardState.days.today?.date,
       },
+      // "Завтра" (Phase 50) — в отличие от вчера/сегодня, не приходит
+      // отдельным полем с бэкенда: boardState.dated_tasks уже содержит
+      // все задачи с датой (тот же источник, что уже использует
+      // tasksForDate для дней месячного календаря), отдельный запрос не
+      // нужен.
+      tomorrow: {
+        listKey: "tomorrow",
+        style: "swipe",
+        showMoveToToday: false,
+        showTemplatesPicker: true,
+        dateFor: () => (boardState.days.today ? addDaysIso(boardState.days.today.date, 1) : null),
+      },
     };
 
     const WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -4063,6 +4112,13 @@
         const el = document.getElementById(`${key}-list`);
         if (boardState.days[key]) renderList(el, boardState.days[key].tasks, _dayOpts[key]);
       }
+      // "Завтра" рендерится всегда, даже если страница сейчас выключена
+      // настройкой отображений (лежит в #day-page-pool) — данные готовы
+      // заранее, включение обратно не требует отдельной перезагрузки.
+      if (boardState.days.today) {
+        const tomorrowIso = addDaysIso(boardState.days.today.date, 1);
+        renderList(document.getElementById("tomorrow-list"), tasksForDate(tomorrowIso), _dayOpts.tomorrow);
+      }
       renderList(document.getElementById("inbox-list"), boardState.inbox, {
         listKey: "inbox",
         style: "plain",
@@ -4089,7 +4145,8 @@
         datePickerOpen ||
         sideDrawerOpen ||
         helpSheetOpen ||
-        widgetSettingsOpen;
+        widgetSettingsOpen ||
+        dayViewSettingsOpen;
       document
         .getElementById("reorder-scrim")
         .classList.toggle("visible", reorderActiveKey !== null || anySheetOpen);
@@ -4109,6 +4166,9 @@
       document
         .getElementById("widget-settings-sheet")
         .classList.toggle("visible", widgetSettingsOpen);
+      document
+        .getElementById("day-view-settings-sheet")
+        .classList.toggle("visible", dayViewSettingsOpen);
     }
 
     function addDaysIso(iso, days) {
@@ -5000,6 +5060,55 @@
       });
     }
 
+    // Настройка отображений главной карусели (Phase 50) — тот же
+    // паттерн, что настройка виджетов аналитики выше, только без
+    // асинхронного модуля-бутстрапа (DAY_VIEWS/rebuildDayCarousel — тот
+    // же классический скрипт, готовы сразу). "Сегодня" — заблокированный
+    // ряд: чекбокс всегда отмечен, disabled, с иконкой замка вместо
+    // обычного вида — единственная страница, которую нельзя выключить.
+    function openDayViewSettingsSheet() {
+      dayViewSettingsOpen = true;
+      renderDayViewSettingsList();
+      render();
+    }
+    function closeDayViewSettingsSheet() {
+      dayViewSettingsOpen = false;
+      render();
+    }
+    function renderDayViewSettingsList() {
+      const listEl = document.getElementById("day-view-settings-list");
+      const enabled = new Set(getEnabledDayViewIds());
+      listEl.innerHTML = "";
+      DAY_VIEWS.forEach((view) => {
+        const label = document.createElement("label");
+        label.className = "row" + (view.locked ? " day-view-locked" : "");
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = enabled.has(view.id);
+        if (view.locked) {
+          checkbox.disabled = true;
+        } else {
+          checkbox.onchange = () => {
+            const next = new Set(getEnabledDayViewIds());
+            if (checkbox.checked) next.add(view.id);
+            else next.delete(view.id);
+            setEnabledDayViewIds([...next]);
+            rebuildDayCarousel();
+          };
+        }
+        const span = document.createElement("span");
+        span.textContent = view.label;
+        label.append(checkbox, span);
+        if (view.locked) {
+          const lock = document.createElement("span");
+          lock.className = "day-view-lock-icon";
+          lock.innerHTML = lockIcon();
+          label.append(lock);
+        }
+        listEl.append(label);
+      });
+    }
+
     // Вкладки расширенного экрана (Phase 35) — заменили обе горизонтальные
     // карусели (аналитика, проекты/цели) простым show/hide между тремя
     // панелями; переключает нижняя панель кнопок .ext-tabbar. "Основной
@@ -5113,7 +5222,7 @@
         '<div class="help-section"><h4>Общее</h4>' +
         helpRow(
           null,
-          "☰ в углу расширенного экрана — тема оформления (системная/светлая/тёмная), включение/выключение графиков аналитики и этот экран."
+          "☰ в углу расширенного экрана — тема оформления (системная/светлая/тёмная), включение/выключение графиков аналитики, отображений на главном экране (Вчера/Сегодня/Завтра/Неделя) и этот экран."
         ) +
         helpRow(
           swipeGestureIcon(),
@@ -5148,6 +5257,12 @@
     document.getElementById("btn-open-widget-settings-drawer").onclick = () => {
       closeSideDrawer();
       openWidgetSettingsSheet();
+    };
+
+    // Настройка отображений главной карусели (Phase 50) — тот же паттерн.
+    document.getElementById("btn-open-day-view-settings").onclick = () => {
+      closeSideDrawer();
+      openDayViewSettingsSheet();
     };
 
     // Выход из веб-версии (Phase 45) — только вне Telegram, там это
@@ -5667,6 +5782,7 @@
     // прямо в renderWeekDetail().
     attachReorderEntry(document.getElementById("yesterday-list"), "yesterday");
     attachReorderEntry(document.getElementById("today-list"), "today");
+    attachReorderEntry(document.getElementById("tomorrow-list"), "tomorrow");
     attachReorderEntry(document.getElementById("inbox-list"), "inbox");
     attachReorderEntry(document.getElementById("templates-list"), "templates");
 
@@ -5690,6 +5806,11 @@
       document.getElementById("widget-settings-sheet"),
       document.getElementById("widget-settings-list"),
       closeWidgetSettingsSheet
+    );
+    attachSheetOverswipeClose(
+      document.getElementById("day-view-settings-sheet"),
+      document.getElementById("day-view-settings-list"),
+      closeDayViewSettingsSheet
     );
     // create-entity-sheet больше не .bottom-sheet (Phase 33) — окно по
     // центру, закрывается крестиком/тапом по фону/кнопкой "Готово", без
@@ -5725,6 +5846,8 @@
         closeHelpSheet();
       } else if (widgetSettingsOpen) {
         closeWidgetSettingsSheet();
+      } else if (dayViewSettingsOpen) {
+        closeDayViewSettingsSheet();
       } else if (sideDrawerOpen) {
         closeSideDrawer();
       }
@@ -5857,22 +5980,110 @@
       return `${MONTH_NAMES[startMonth]} — ${MONTH_NAMES[endMonth]}`;
     }
 
-    const _dayLabels = ["Вчера", "Сегодня", "Неделя"];
+    // Реестр отображений главной карусели (Phase 50) — единственный
+    // источник правды для того, какие страницы существуют, их подписей
+    // и порядка. "Сегодня" нельзя выключить (locked) — весь смысл
+    // главного экрана держится на нём; настройка "Отображения задач" в
+    // ☰-меню (см. renderDayViewSettingsList) не даёт снять с неё галочку.
+    const DAY_VIEWS = [
+      { id: "yesterday", label: "Вчера", locked: false },
+      { id: "today", label: "Сегодня", locked: true },
+      { id: "tomorrow", label: "Завтра", locked: false },
+      { id: "week", label: "Неделя", locked: false },
+    ];
+    const DAY_VIEW_LABELS = Object.fromEntries(DAY_VIEWS.map((v) => [v.id, v.label]));
+    const DAY_VIEWS_STORAGE_KEY = "dayViews";
+
+    // Тот же паттерн, что getStoredTheme/analyticsWidgets — per-device
+    // предпочтение в localStorage, try/catch на случай приватного режима
+    // или испорченного значения. По умолчанию (ничего не сохранено) —
+    // все страницы включены, как было раньше единственно возможное
+    // поведение.
+    function getEnabledDayViewIds() {
+      let stored = null;
+      try {
+        const raw = localStorage.getItem(DAY_VIEWS_STORAGE_KEY);
+        if (raw) stored = JSON.parse(raw);
+      } catch (e) {
+        stored = null;
+      }
+      const source = Array.isArray(stored) ? DAY_VIEWS.filter((v) => v.locked || stored.includes(v.id)) : DAY_VIEWS;
+      // "Сегодня" обязателен независимо от содержимого хранилища —
+      // locked уже гарантирует его включение при валидном stored, но
+      // подстрахуемся и на случай полностью пустого/битого значения.
+      return source.some((v) => v.id === "today") ? source.map((v) => v.id) : ["today"];
+    }
+
+    function setEnabledDayViewIds(ids) {
+      try {
+        localStorage.setItem(DAY_VIEWS_STORAGE_KEY, JSON.stringify(ids));
+      } catch (e) {
+        // приватный режим и т.п. — просто не сохранится, не критично
+      }
+    }
+
     const carousel = document.getElementById("day-carousel");
     const dayLabel = document.getElementById("day-label");
-    const dayDots = Array.from(document.querySelectorAll(".day-dot"));
-    const dayPages = Array.from(document.querySelectorAll(".day-page[data-day]"));
+    const dayPagePool = document.getElementById("day-page-pool");
+    // Заполняются заново при каждой пересборке (rebuildDayCarousel) —
+    // не const: количество и состав страниц теперь переменные.
+    let currentDayViewIds = [];
+    let dayDots = [];
+    let dayPages = [];
 
     function scrollToDay(index) {
       carousel.scrollTo({ left: carousel.clientWidth * index, behavior: "smooth" });
     }
 
+    // Физически переносит .day-page узлы между пулом и каруселью
+    // (appendChild перемещает существующий узел, не пересоздаёт — тот
+    // же приём, что applyReorderElevation уже использует для
+    // reorder-режима) — все внутренние id страниц (#week-carousel и
+    // т.п.) остаются рабочими независимо от того, куда физически сейчас
+    // подвешен узел. Точки-индикаторы, в отличие от страниц, ничего не
+    // хранят и не помнят — их проще каждый раз пересоздавать целиком.
+    function rebuildDayCarousel() {
+      currentDayViewIds = getEnabledDayViewIds();
+      const enabledSet = new Set(currentDayViewIds);
+      // Каждая страница ищется через document, не через пул: после
+      // первой пересборки часть страниц уже физически лежит в карусели,
+      // не в пуле — querySelector внутри самого пула нашёл бы только те,
+      // что там ещё остались. Сначала выключенные (в т.ч. уже
+      // отрисованные ранее) — обратно в пул, чтобы не залипали в
+      // карусели молча; потом включённые — в карусель по порядку
+      // реестра. reorder-режим на это не влияет (см. applyReorderElevation
+      // выше — она двигает только сам .list-узел, а не .day-page-обёртку,
+      // comment-плейсхолдер просто едет вместе с обёрткой).
+      DAY_VIEWS.forEach((v) => {
+        if (enabledSet.has(v.id)) return;
+        const page = document.querySelector(`.day-page[data-day="${v.id}"]`);
+        if (page) dayPagePool.append(page);
+      });
+      dayPages = currentDayViewIds.map((id) => document.querySelector(`.day-page[data-day="${id}"]`));
+      dayPages.forEach((page) => carousel.append(page));
+
+      const dotsEl = document.getElementById("day-dots");
+      dotsEl.innerHTML = currentDayViewIds.map((_id, i) => `<span class="day-dot" data-index="${i}"></span>`).join("");
+      dayDots = Array.from(dotsEl.querySelectorAll(".day-dot"));
+      dayDots.forEach((dot) => {
+        dot.addEventListener("click", () => scrollToDay(Number(dot.dataset.index)));
+      });
+
+      // Мгновенно, без анимации — на "сегодня" (или на первую страницу,
+      // если "сегодня" почему-то не нашлось — не должно случиться, см.
+      // getEnabledDayViewIds).
+      const todayIndex = Math.max(0, currentDayViewIds.indexOf("today"));
+      carousel.scrollLeft = carousel.clientWidth * todayIndex;
+      updateDayLabel();
+    }
+
     function updateDayLabel() {
       const index = Math.round(carousel.scrollLeft / carousel.clientWidth);
-      if (index === 2 && weekStart) {
+      const viewId = currentDayViewIds[index];
+      if (viewId === "week" && weekStart) {
         dayLabel.textContent = `Неделя, ${monthLabelForWeek(weekStart)}`;
       } else {
-        dayLabel.textContent = _dayLabels[index] ?? "Сегодня";
+        dayLabel.textContent = DAY_VIEW_LABELS[viewId] ?? "Сегодня";
       }
       dayDots.forEach((dot, i) => dot.classList.toggle("active", i === index));
 
@@ -5904,11 +6115,7 @@
         _tracking = false;
       });
     });
-    dayDots.forEach((dot) => {
-      dot.addEventListener("click", () => scrollToDay(Number(dot.dataset.index)));
-    });
-    // Стартуем сразу на "сегодня" (страница 1), без анимации.
-    carousel.scrollLeft = carousel.clientWidth;
+    rebuildDayCarousel();
 
     async function loadDigest() {
       const el = document.getElementById("digest");
