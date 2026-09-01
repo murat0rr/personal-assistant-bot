@@ -1611,6 +1611,14 @@
       <span>Помощь</span>
       <span class="drawer-link-chevron">›</span>
     </button>
+    <!-- Включение/выключение графиков аналитики (Phase 47) — тот же
+         #widget-settings-sheet, что и шестерёнка на вкладке "Аналитика"
+         (см. btn-open-widget-settings); здесь — второй, более заметный
+         вход в ту же настройку через общее меню. -->
+    <button type="button" class="drawer-link" id="btn-open-widget-settings-drawer">
+      <span>Графики аналитики</span>
+      <span class="drawer-link-chevron">›</span>
+    </button>
     <!-- Вход в веб-версию вне Telegram (Phase 45) — сессионная кука, у
          неё есть смысл выходить; внутри Telegram эта кнопка не нужна
          (initData свежий на каждый запуск, "выход" ничего не значит) —
@@ -5061,7 +5069,10 @@
         helpRow(null, "Цели разбиты по срокам — недельные, месячные, годовые, каждый список отдельно.") +
         "</div>" +
         '<div class="help-section"><h4>Общее</h4>' +
-        helpRow(null, "☰ в углу расширенного экрана — тема оформления (системная/светлая/тёмная) и этот экран.") +
+        helpRow(
+          null,
+          "☰ в углу расширенного экрана — тема оформления (системная/светлая/тёмная), включение/выключение графиков аналитики и этот экран."
+        ) +
         helpRow(
           swipeGestureIcon(),
           "Плашка внизу главного экрана — свайп вверх или тап переключает на расширенный экран (аналитика/календарь/проекты); кнопка «Основной экран» там же возвращает обратно."
@@ -5088,6 +5099,14 @@
     const widgetSettingsBtn = document.getElementById("btn-open-widget-settings");
     widgetSettingsBtn.innerHTML = settingsGearIcon();
     widgetSettingsBtn.onclick = openWidgetSettingsSheet;
+
+    // Тот же widget-settings-sheet, но вход через общее меню (Phase 47) —
+    // тем же паттерном, что btn-open-help: закрыть шторку меню, открыть
+    // целевую шторку.
+    document.getElementById("btn-open-widget-settings-drawer").onclick = () => {
+      closeSideDrawer();
+      openWidgetSettingsSheet();
+    };
 
     // Выход из веб-версии (Phase 45) — только вне Telegram, там это
     // единственное место, где вообще есть смысл "выходить" (см. разметку
