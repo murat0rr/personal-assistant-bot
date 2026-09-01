@@ -91,16 +91,40 @@ function _serializeProject(p) {
   };
 }
 
+// Проекты и цели — одна сущность (Phase 54) — та же форма ответа, что
+// у _serializeProject (title/description/color/start_date/end_date/
+// task_count/done_count), плюс tier — единственное поле, которого нет у
+// проекта. Те же имена ключей, что у проекта (не period_start/
+// period_end) — так фронтенд обрабатывает обе сущности одними и теми же
+// projectMeta/isEntityIncomplete, без ветвления по kind (core/goals.py
+// на бэкенде делает то же самое переименование на границе).
 function _serializeGoal(g) {
+  const linked = _tasks.filter((t) => t.project_id === g.id && !t.archived);
   return {
     id: g.id,
+    title: g.title,
+    description: g.description || null,
     spheres: g.spheres || [],
     tier: g.tier,
-    period_start: g.period_start || null,
-    period_end: g.period_end || null,
-    text: g.text,
+    start_date: g.start_date || null,
+    end_date: g.end_date || null,
+    color: g.color || null,
     done: !!g.done,
+    task_count: linked.length,
+    done_count: linked.filter((t) => t.done).length,
   };
+}
+
+// Упрощённый мок GOAL_TIER_BOUNDS (Phase 54) — не воспроизводит точную
+// границу недели/месяца/года с бэкенда, только "от сегодня на
+// разумное число дней вперёд", этого достаточно, чтобы в dev-харнессе
+// увидеть, что даты вообще проставились автоматически, когда не заданы.
+function _mockTierBounds(tier) {
+  const today = new Date();
+  const days = tier === "weekly" ? 7 : tier === "monthly" ? 30 : tier === "yearly" ? 365 : 0;
+  const end = new Date(today.getTime() + days * 86400000);
+  const iso = (d) => d.toISOString().slice(0, 10);
+  return [iso(today), iso(end)];
 }
 
 // Мок "Проанализировать задачи и добавить" (Phase 52) — реального
@@ -312,41 +336,54 @@ window.fetch = async (path, options = {}) => {
     result = _goals.filter((g) => !g.archived).map((g) => _serializeGoal(g));
   } else if (path === "/miniapp/api/goals" && method === "POST") {
     const id = _nextGoalId++;
+    // Если даты не переданы явно — считаем из тира, тот же принцип
+    // ("если не указывать даты, то проставятся"), что и на бэкенде
+    // (core/goals.py::GOAL_TIER_BOUNDS), упрощённая версия для мока.
+    let start = body.start_date || null;
+    let end = body.end_date || null;
+    if (!start && !end) [start, end] = _mockTierBounds(body.tier);
     const g = {
       id,
+      title: body.title,
+      description: body.description || null,
       spheres: body.spheres || [],
       tier: body.tier,
-      text: body.text,
-      period_start: null,
-      period_end: null,
+      start_date: start,
+      end_date: end,
+      color: body.color || null,
       done: false,
       archived: false,
     };
     _goals.push(g);
     result = _serializeGoal(g);
-  } else if (path.match(/\\/goals\\/(\\d+)\\/(done|archive|text|edit)/)) {
-    const m = path.match(/\\/goals\\/(\\d+)\\/(done|archive|text|edit)/);
+  } else if (path.match(/\\/goals\\/(\\d+)\\/(done|archive|color|edit)/)) {
+    const m = path.match(/\\/goals\\/(\\d+)\\/(done|archive|color|edit)/);
     const id = Number(m[1]);
     const action = m[2];
     const g = _goals.find((x) => x.id === id);
     if (!g) return { ok: false, status: 404, json: async () => ({}) };
     if (action === "done") g.done = body.done;
     else if (action === "archive") g.archived = true;
-    else if (action === "text") g.text = body.text;
+    else if (action === "color") g.color = body.color;
     else if (action === "edit") {
-      if (body.text != null) g.text = body.text;
+      if (body.title != null) g.title = body.title;
+      if (body.description != null) g.description = body.description;
       if (body.spheres != null) g.spheres = body.spheres;
       if (body.tier != null) g.tier = body.tier;
+      if (body.color != null) g.color = body.color;
+      if (body.start_date != null) g.start_date = body.start_date;
+      if (body.end_date != null) g.end_date = body.end_date;
     }
   } else if (path.match(/\\/goals\\/(\\d+)\\/suggest-tasks/)) {
     const m = path.match(/\\/goals\\/(\\d+)\\/suggest-tasks/);
     const g = _goals.find((x) => x.id === Number(m[1]));
     if (!g) return { ok: false, status: 404, json: async () => ({}) };
-    result = { tasks: _mockSuggestedTasks(g.text) };
+    result = { tasks: _mockSuggestedTasks(g.title) };
   } else if (path.match(/\\/goals\\/(\\d+)\\/create-tasks/)) {
     const m = path.match(/\\/goals\\/(\\d+)\\/create-tasks/);
-    const goal = _goals.find((x) => x.id === Number(m[1]));
-    const sphere = goal && goal.spheres && goal.spheres.length ? goal.spheres[0] : null;
+    const goalId = Number(m[1]);
+    // Настоящая связь через project_id (Phase 54) — то же поле, что у
+    // проекта, не sphere.
     for (const title of body.titles || []) {
       _tasks.push({
         id: _nextId++,
@@ -356,7 +393,7 @@ window.fetch = async (path, options = {}) => {
         priority: "средний",
         done: false,
         sort_order: Date.now(),
-        sphere,
+        project_id: goalId,
       });
     }
     result = { created: (body.titles || []).length };
@@ -684,34 +721,49 @@ def _default_projects() -> list[dict]:
 
 
 def _default_goals() -> list[dict]:
+    # Проекты и цели — одна сущность (Phase 54): title/description/
+    # color/start_date/end_date, те же ключи, что у проекта (не
+    # period_start/period_end — фронтенд обрабатывает обе сущности одними
+    # и теми же projectMeta/isEntityIncomplete). Даты заполнены (не None)
+    # — под новой моделью цель без дат не бывает, они либо проставлены
+    # вручную, либо посчитаны из тира при создании; пустых "ещё не
+    # заведённых" дат тут специально не показываем, для проверки этого
+    # сценария есть отдельный путь — создание цели без дат в форме.
+    today = date.today()
     return [
         {
             "id": 1,
+            "title": "Пробежать 15км за неделю",
+            "description": None,
             "spheres": ["спорт"],
             "tier": "weekly",
-            "text": "Пробежать 15км за неделю",
-            "period_start": None,
-            "period_end": None,
+            "start_date": today.isoformat(),
+            "end_date": (today + timedelta(days=6)).isoformat(),
+            "color": None,
             "done": False,
             "archived": False,
         },
         {
             "id": 2,
+            "title": "Закрыть квартальный отчёт",
+            "description": "Свести цифры по всем отделам",
             "spheres": ["работа"],
             "tier": "monthly",
-            "text": "Закрыть квартальный отчёт",
-            "period_start": None,
-            "period_end": None,
+            "start_date": today.replace(day=1).isoformat(),
+            "end_date": (today + timedelta(days=20)).isoformat(),
+            "color": "#e0a52c",
             "done": True,
             "archived": False,
         },
         {
             "id": 3,
+            "title": "Выучить испанский до разговорного уровня",
+            "description": None,
             "spheres": ["развитие", "учёба"],
             "tier": "yearly",
-            "text": "Выучить испанский до разговорного уровня",
-            "period_start": None,
-            "period_end": None,
+            "start_date": today.replace(month=1, day=1).isoformat(),
+            "end_date": today.replace(month=12, day=31).isoformat(),
+            "color": None,
             "done": False,
             "archived": False,
         },

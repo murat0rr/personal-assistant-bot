@@ -2,7 +2,6 @@ from src.models.ai_analytics_cache import AiAnalyticsCache
 from src.models.authorized_user import AuthorizedUser
 from src.models.chat_message import ChatMessage
 from src.models.day_review import DayReview
-from src.models.goal import Goal
 from src.models.habit import Habit
 from src.models.project import Project
 from src.models.recurring_task_rule import RecurringTaskRule
@@ -20,8 +19,10 @@ __all__ = [
     "ScreenTime",
     "AuthorizedUser",
     "TaskTemplate",
+    # Project и Goal — одна сущность (Phase 54): Project.tier=None —
+    # обычный проект, иначе — бывшая цель. Отдельной модели Goal больше
+    # нет (см. src/core/goals.py — тонкий адаптер над projects.py).
     "Project",
-    "Goal",
     "RecurringTaskRule",
     "DayReview",
     "AiAnalyticsCache",

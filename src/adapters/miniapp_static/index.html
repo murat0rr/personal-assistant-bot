@@ -1746,7 +1746,9 @@
 
   <div id="color-picker-sheet" class="bottom-sheet">
     <div class="bottom-sheet-handle"></div>
-    <p class="section-label">Цвет проекта</p>
+    <!-- Общий заголовок для обеих сущностей (Phase 54) — раньше был
+         "Цвет проекта", но пикер теперь открывается и для целей. -->
+    <p class="section-label">Цвет</p>
     <div id="color-picker-list" class="list"></div>
   </div>
 
@@ -3168,15 +3170,15 @@
       return `${p.done_count}/${p.task_count}`;
     }
 
-    // "Не дозаполнено" (Phase 28) — только у проектов: у них реально
-    // много необязательных полей (описание/сфера/даты). У целей сфера
-    // обязательна уже на создании (см. commitEntityForm), остальное либо
-    // не редактируется отдельно, либо всегда имеет разумное значение по
-    // умолчанию — подсвечивать там нечего. Цвет проекта — сознательно не
-    // в списке: при отсутствии выбора он назначается случайно, не
-    // остаётся "пустым" полем.
-    function isEntityIncomplete(entity, kind) {
-      if (kind !== "project") return false;
+    // "Не дозаполнено" (Phase 28; проекты и цели — одна сущность с
+    // Phase 54, проверка больше не различает kind — раньше у целей были
+    // не те же поля, что у проектов, теперь ровно те же). Сфера
+    // обязательна уже на создании (см. commitEntityForm) у целей — у
+    // них этот пункт проверки формально всегда пройден, но общая
+    // функция от этого не сложнее. Цвет — сознательно не в списке: при
+    // отсутствии выбора он назначается случайно (только у проектов, см.
+    // commitEntityForm), не остаётся "пустым" полем.
+    function isEntityIncomplete(entity) {
       return (
         !entity.description || !entity.spheres.length || !entity.start_date || !entity.end_date
       );
@@ -3233,23 +3235,23 @@
     // путаться в общем openSwipeTaskId (см. комментарий у переменной).
     function renderEntityRow(entity, kind) {
       const wrap = document.createElement("div");
-      wrap.className = "swipe-wrap" + (isEntityIncomplete(entity, kind) ? " entity-incomplete" : "");
+      wrap.className = "swipe-wrap" + (isEntityIncomplete(entity) ? " entity-incomplete" : "");
 
       const actions = document.createElement("div");
       actions.className = "swipe-actions";
 
-      if (kind === "project") {
-        const colorBtn = document.createElement("button");
-        colorBtn.className = "swipe-btn";
-        colorBtn.setAttribute("aria-label", "Цвет");
-        colorBtn.innerHTML = icon('<circle cx="12" cy="12" r="8"/>', 16);
-        colorBtn.style.color = entity.color || "var(--text-muted)";
-        colorBtn.onclick = () => {
-          swipeHandle.close();
-          openColorPicker(entity);
-        };
-        actions.append(colorBtn);
-      }
+      // Цвет — теперь и у целей (Phase 54: проекты и цели одна
+      // сущность, то же поле у обеих), кнопка больше не различает kind.
+      const colorBtn = document.createElement("button");
+      colorBtn.className = "swipe-btn";
+      colorBtn.setAttribute("aria-label", "Цвет");
+      colorBtn.innerHTML = icon('<circle cx="12" cy="12" r="8"/>', 16);
+      colorBtn.style.color = entity.color || "var(--text-muted)";
+      colorBtn.onclick = () => {
+        swipeHandle.close();
+        openColorPicker(entity, kind);
+      };
+      actions.append(colorBtn);
 
       const archiveBtn = document.createElement("button");
       archiveBtn.className = "swipe-btn swipe-btn-archive";
@@ -3270,19 +3272,23 @@
 
       const title = document.createElement("span");
       title.className = "title title-full" + (entity.done ? " done" : "");
-      title.textContent = kind === "project" ? entity.title : entity.text;
+      title.textContent = entity.title;
       content.append(title);
 
-      if (kind === "project" && entity.color) {
+      if (entity.color) {
         const dot = document.createElement("span");
         dot.className = "entity-color-dot";
         dot.style.background = entity.color;
         content.append(dot);
       }
 
+      // Сферы больше не показываются на строке (Phase 54 — пункт
+      // "убираем отображение сфер") — meta теперь всегда даты+прогресс,
+      // тот же формат, что раньше был только у проектов (у целей
+      // раньше не было ни того, ни другого).
       const meta = document.createElement("span");
       meta.className = "entity-meta";
-      meta.textContent = kind === "project" ? projectMeta(entity) : entity.spheres.join(", ");
+      meta.textContent = projectMeta(entity);
       content.append(meta);
 
       const handle = document.createElement("span");
@@ -3413,14 +3419,18 @@
       renderGoalsPages();
     }
 
-    // Sheet выбора цвета проекта — свой отдельный sheet (не переиспользуем
+    // Sheet выбора цвета — свой отдельный sheet (не переиспользуем
     // project-picker-sheet: у того своя видимость через render()/
     // projectPickerOpen, смешивать состояния рискованно), но по тому же
-    // паттерну (state-переменная + рендер внутри общего render()).
+    // паттерну (state-переменная + рендер внутри общего render()). У
+    // цели цвет тоже есть (Phase 54 — проекты и цели одна сущность),
+    // отсюда colorPickerKind рядом с самой сущностью.
     let colorPickerProject = null;
+    let colorPickerKind = "project";
 
-    function openColorPicker(project) {
-      colorPickerProject = project;
+    function openColorPicker(entity, kind) {
+      colorPickerProject = entity;
+      colorPickerKind = kind;
       render();
     }
 
@@ -3437,7 +3447,7 @@
       const noneRow = document.createElement("div");
       noneRow.className = "row template-row";
       noneRow.textContent = "Без цвета";
-      noneRow.onclick = () => setProjectColor(colorPickerProject, null);
+      noneRow.onclick = () => setEntityColor(colorPickerProject, colorPickerKind, null);
       list.append(noneRow);
 
       const grid = document.createElement("div");
@@ -3447,25 +3457,28 @@
         const sw = document.createElement("div");
         sw.className = "swatch" + (colorPickerProject.color === hex ? " selected" : "");
         sw.style.background = hex;
-        sw.onclick = () => setProjectColor(colorPickerProject, hex);
+        sw.onclick = () => setEntityColor(colorPickerProject, colorPickerKind, hex);
         grid.append(sw);
       }
       list.append(grid);
     }
 
-    async function setProjectColor(project, color) {
+    async function setEntityColor(entity, kind, color) {
       closeColorPicker();
-      const prev = project.color;
-      project.color = color;
+      const prev = entity.color;
+      entity.color = color;
       renderProjectsPage();
+      renderGoalsPages();
       try {
-        await api(`/miniapp/api/projects/${project.id}/color`, {
-          method: "POST",
-          body: JSON.stringify({ color }),
-        });
+        const path =
+          kind === "project"
+            ? `/miniapp/api/projects/${entity.id}/color`
+            : `/miniapp/api/goals/${entity.id}/color`;
+        await api(path, { method: "POST", body: JSON.stringify({ color }) });
       } catch (e) {
-        project.color = prev;
+        entity.color = prev;
         renderProjectsPage();
+        renderGoalsPages();
         alert("Не удалось изменить цвет.");
       }
     }
@@ -4672,16 +4685,23 @@
       }
     }
 
+    // Проекты и цели — одна сущность (Phase 54): тело запроса теперь
+    // той же формы, что у createProject, плюс обязательный tier. Даты
+    // — опциональны: не заданы явно — сервер проставит их из тира (см.
+    // core/goals.py::create_goal_now).
     async function createGoal(draft) {
       try {
         const result = await api("/miniapp/api/goals", {
           method: "POST",
           body: JSON.stringify({
+            title: draft.title.trim(),
+            description: draft.description ? draft.description.trim() : null,
             spheres: draft.spheres,
             tier: draft.tier,
-            text: draft.title.trim(),
+            start_date: draft.start || null,
+            end_date: draft.end || null,
+            color: draft.color || null,
             analyze: !!draft.analyze,
-            reference_date: draft.referenceDate || null,
           }),
         });
         goalsData.push(result);
@@ -4693,19 +4713,23 @@
       }
     }
 
-    // Правка цели (Phase 28) — та же логика, что editProject: период
-    // пересчитывается сервером из тира+опорной даты, локально не трогаем
-    // ничего вручную, просто перечитываем список. Задачи, уже привязанные
-    // по sphere, эта операция не трогает.
+    // Правка цели (Phase 28; даты/описание/цвет — Phase 54) — та же
+    // логика, что editProject: не дописывает локальный кэш вручную, а
+    // перечитывает список целиком. Если start_date/end_date не заданы
+    // явно, но тир поменялся — сервер пересчитывает период из тира (тот
+    // же фолбэк, что при создании).
     async function editGoal(id, draft) {
       try {
         await api(`/miniapp/api/goals/${id}/edit`, {
           method: "POST",
           body: JSON.stringify({
-            text: draft.title.trim(),
+            title: draft.title.trim(),
+            description: draft.description ? draft.description.trim() : null,
             spheres: draft.spheres,
             tier: draft.tier,
-            reference_date: draft.referenceDate || null,
+            start_date: draft.start || null,
+            end_date: draft.end || null,
+            color: draft.color || null,
           }),
         });
         await loadGoals();
@@ -4725,10 +4749,20 @@
       yearly: "год",
     };
 
+    // Проекты и цели — одна сущность (Phase 54): черновик одной и той
+    // же формы, разница — только необязательный tier у цели (проект
+    // его не использует и не отправляет).
     function emptyEntityDraft(kind, prefillTitle) {
-      return kind === "project"
-        ? { title: prefillTitle || "", description: "", spheres: [], start: "", end: "", color: "", analyze: false }
-        : { title: prefillTitle || "", spheres: [], tier: "weekly", analyze: false, referenceDate: "" };
+      return {
+        title: prefillTitle || "",
+        description: "",
+        spheres: [],
+        start: "",
+        end: "",
+        color: "",
+        analyze: false,
+        tier: kind === "goal" ? "weekly" : undefined,
+      };
     }
 
     function openCreateEntitySheet(kind, prefillTitle) {
@@ -4743,24 +4777,16 @@
     function openEditEntitySheet(entity, kind) {
       createEntityKind = kind;
       createEntityEditingId = entity.id;
-      createEntityDraft =
-        kind === "project"
-          ? {
-              title: entity.title || "",
-              description: entity.description || "",
-              spheres: [...(entity.spheres || [])],
-              start: entity.start_date || "",
-              end: entity.end_date || "",
-              color: entity.color || "",
-              analyze: false,
-            }
-          : {
-              title: entity.text || "",
-              spheres: [...(entity.spheres || [])],
-              tier: entity.tier || "weekly",
-              analyze: false,
-              referenceDate: entity.period_start || "",
-            };
+      createEntityDraft = {
+        title: entity.title || "",
+        description: entity.description || "",
+        spheres: [...(entity.spheres || [])],
+        start: entity.start_date || "",
+        end: entity.end_date || "",
+        color: entity.color || "",
+        analyze: false,
+        tier: kind === "goal" ? entity.tier || "weekly" : undefined,
+      };
       render();
     }
 
@@ -4770,9 +4796,9 @@
     // сохранить одна и та же. Без названия/формулировки, либо без сферы
     // у цели (единственное по-настоящему обязательное после названия) —
     // просто ничего не создаём/не сохраняем, без алертов, форма и так
-    // уже закрывается. Цвет проекта — единственное исключение из
-    // "недозаполнено": при отсутствии выбора назначается случайно, а не
-    // подсвечивается плиткой (см. isEntityIncomplete).
+    // уже закрывается. Цвет — единственное исключение из "недозаполнено"
+    // у обеих сущностей (Phase 54): при отсутствии выбора назначается
+    // случайно, а не подсвечивается плиткой (см. isEntityIncomplete).
     function commitEntityForm() {
       const kind = createEntityKind;
       if (!kind) return;
@@ -4782,10 +4808,10 @@
       if (!titleText) return;
       if (!isProject && !draft.spheres.length) return;
 
+      if (!draft.color) {
+        draft.color = PROJECT_COLORS[Math.floor(Math.random() * PROJECT_COLORS.length)];
+      }
       if (isProject) {
-        if (!draft.color) {
-          draft.color = PROJECT_COLORS[Math.floor(Math.random() * PROJECT_COLORS.length)];
-        }
         if (createEntityEditingId != null) editProject(createEntityEditingId, draft);
         else createProject(draft);
       } else if (createEntityEditingId != null) {
@@ -4811,7 +4837,7 @@
     // createEntityDraft, когда ответ приходит — форма могла успеть
     // закрыться или смениться (создание другой сущности) за время
     // сетевого похода, тогда результат просто отбрасывается.
-    async function maybeSuggestSpheres(kind, draft, start, end) {
+    async function maybeSuggestSpheres(draft, start, end) {
       const titleText = (draft.title || "").trim();
       if (!titleText || draft.spheres.length) return;
       try {
@@ -4819,7 +4845,9 @@
           method: "POST",
           body: JSON.stringify({
             title: titleText,
-            description: kind === "project" && draft.description ? draft.description.trim() : null,
+            // Описание теперь есть и у цели (Phase 54 — та же форма,
+            // что у проекта), kind проекта/цели тут больше не участвует.
+            description: draft.description ? draft.description.trim() : null,
             start_date: start || null,
             end_date: end || null,
           }),
@@ -5040,6 +5068,13 @@
           ? "Изменить цель"
           : "Новая цель";
 
+      // Проекты и цели — одна сущность (Phase 54): форма ниже — общая,
+      // разница только в подписи поля названия и в ряду тиров (только у
+      // цели). Раньше у цели была единственная кнопка "Период: опорная
+      // дата" вместо прямых дат — теперь то же начало/конец, что у
+      // проекта; если оставить пустыми, сервер сам проставит период из
+      // тира (core/goals.py::create_goal_now) — то самое требование
+      // "если не указывать даты, то проставятся".
       const titleInput = document.createElement("input");
       titleInput.className = "entity-form-field";
       titleInput.type = "text";
@@ -5048,15 +5083,13 @@
       titleInput.addEventListener("input", () => (createEntityDraft.title = titleInput.value));
       container.append(titleInput);
 
-      if (isProject) {
-        const descInput = document.createElement("input");
-        descInput.className = "entity-form-field";
-        descInput.type = "text";
-        descInput.placeholder = "Описание (необязательно)";
-        descInput.value = createEntityDraft.description;
-        descInput.addEventListener("input", () => (createEntityDraft.description = descInput.value));
-        container.append(descInput);
-      }
+      const descInput = document.createElement("input");
+      descInput.className = "entity-form-field";
+      descInput.type = "text";
+      descInput.placeholder = "Описание (необязательно)";
+      descInput.value = createEntityDraft.description;
+      descInput.addEventListener("input", () => (createEntityDraft.description = descInput.value));
+      container.append(descInput);
 
       if (!isProject) {
         const tierRow = document.createElement("div");
@@ -5084,71 +5117,45 @@
         })
       );
 
-      if (isProject) {
-        const datesWrap = document.createElement("div");
-        datesWrap.className = "entity-form-dates";
-        const startBtn = document.createElement("button");
-        startBtn.type = "button";
-        startBtn.className = "entity-date-btn" + (createEntityDraft.start ? " date-set" : "");
-        startBtn.innerHTML = calendarIcon() + `<span>${formatDateBtnLabel(createEntityDraft.start, "Начало")}</span>`;
-        startBtn.onclick = () =>
-          openDatePicker(createEntityDraft.start, (iso) => {
-            createEntityDraft.start = iso || "";
-            render();
-            maybeSuggestSpheres("project", createEntityDraft, createEntityDraft.start, createEntityDraft.end);
-          });
-        const endBtn = document.createElement("button");
-        endBtn.type = "button";
-        endBtn.className = "entity-date-btn" + (createEntityDraft.end ? " date-set" : "");
-        endBtn.innerHTML = calendarIcon() + `<span>${formatDateBtnLabel(createEntityDraft.end, "Конец")}</span>`;
-        endBtn.onclick = () =>
-          openDatePicker(createEntityDraft.end, (iso) => {
-            createEntityDraft.end = iso || "";
-            render();
-            maybeSuggestSpheres("project", createEntityDraft, createEntityDraft.start, createEntityDraft.end);
-          });
-        datesWrap.append(startBtn, endBtn);
-        container.append(datesWrap);
+      const datesWrap = document.createElement("div");
+      datesWrap.className = "entity-form-dates";
+      const startBtn = document.createElement("button");
+      startBtn.type = "button";
+      startBtn.className = "entity-date-btn" + (createEntityDraft.start ? " date-set" : "");
+      startBtn.innerHTML = calendarIcon() + `<span>${formatDateBtnLabel(createEntityDraft.start, "Начало")}</span>`;
+      startBtn.onclick = () =>
+        openDatePicker(createEntityDraft.start, (iso) => {
+          createEntityDraft.start = iso || "";
+          render();
+          maybeSuggestSpheres(createEntityDraft, createEntityDraft.start, createEntityDraft.end);
+        });
+      const endBtn = document.createElement("button");
+      endBtn.type = "button";
+      endBtn.className = "entity-date-btn" + (createEntityDraft.end ? " date-set" : "");
+      endBtn.innerHTML = calendarIcon() + `<span>${formatDateBtnLabel(createEntityDraft.end, "Конец")}</span>`;
+      endBtn.onclick = () =>
+        openDatePicker(createEntityDraft.end, (iso) => {
+          createEntityDraft.end = iso || "";
+          render();
+          maybeSuggestSpheres(createEntityDraft, createEntityDraft.start, createEntityDraft.end);
+        });
+      datesWrap.append(startBtn, endBtn);
+      container.append(datesWrap);
 
-        const colorGrid = document.createElement("div");
-        colorGrid.className = "palette-grid";
-        colorGrid.style.margin = "10px 0";
-        for (const hex of PROJECT_COLORS) {
-          const sw = document.createElement("div");
-          sw.className = "swatch" + (createEntityDraft.color === hex ? " selected" : "");
-          sw.style.background = hex;
-          sw.onclick = () => {
-            createEntityDraft.color = createEntityDraft.color === hex ? "" : hex;
-            render();
-          };
-          colorGrid.append(sw);
-        }
-        container.append(colorGrid);
-      } else {
-        // Опорная дата периода (Phase 28) — по ней сервер считает
-        // week_bounds/month_bounds/year_bounds; не выбрана — период
-        // считается от сегодня, как раньше (см. core/goals.py::
-        // create_goal_now/update_goal).
-        const dateRow = document.createElement("div");
-        dateRow.className = "entity-form-dates";
-        const refBtn = document.createElement("button");
-        refBtn.type = "button";
-        refBtn.className = "entity-date-btn" + (createEntityDraft.referenceDate ? " date-set" : "");
-        refBtn.innerHTML =
-          calendarIcon() + `<span>${formatDateBtnLabel(createEntityDraft.referenceDate, "Период: сегодня")}</span>`;
-        refBtn.onclick = () =>
-          openDatePicker(createEntityDraft.referenceDate, (iso) => {
-            createEntityDraft.referenceDate = iso || "";
-            render();
-            // У цели нет отдельных start/end на клиенте (период считает
-            // сервер из тира+опорной даты) — подсказка идёт по одному
-            // названию, без диапазона дат, этого обычно достаточно
-            // (см. живую проверку в claude_client.py::suggest_entity_spheres).
-            maybeSuggestSpheres("goal", createEntityDraft, null, null);
-          });
-        dateRow.append(refBtn);
-        container.append(dateRow);
+      const colorGrid = document.createElement("div");
+      colorGrid.className = "palette-grid";
+      colorGrid.style.margin = "10px 0";
+      for (const hex of PROJECT_COLORS) {
+        const sw = document.createElement("div");
+        sw.className = "swatch" + (createEntityDraft.color === hex ? " selected" : "");
+        sw.style.background = hex;
+        sw.onclick = () => {
+          createEntityDraft.color = createEntityDraft.color === hex ? "" : hex;
+          render();
+        };
+        colorGrid.append(sw);
       }
+      container.append(colorGrid);
 
       const toggleRow = document.createElement("div");
       toggleRow.className = "entity-form-toggle-row";
@@ -5526,7 +5533,7 @@
         "</div>" +
         '<div class="help-section"><h4>Проекты и цели</h4>' +
         helpRow(null, "Тот же принцип, что у задач — тап по кружку отмечает выполненным.") +
-        helpRow(swipeGestureIcon(), "Свайп открывает архив (и цвет — у проектов).") +
+        helpRow(swipeGestureIcon(), "Свайп открывает архив и цвет.") +
         helpRow(longPressGestureIcon(), "Долгое нажатие открывает окно редактирования — название, сфера, даты, цвет.") +
         helpRow(null, "Цели разбиты по срокам — недельные, месячные, годовые, каждый список отдельно.") +
         helpRow(

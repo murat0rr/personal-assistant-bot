@@ -27,6 +27,15 @@ class Project(Base):
     spheres: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, server_default="{}")
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Проекты и цели — одна сущность (Phase 54): tier=None — обычный
+    # проект, "weekly"/"monthly"/"yearly" — бывшая Goal этого тира.
+    # start_date/end_date выше — то же самое, что раньше было отдельными
+    # Goal.period_start/period_end; при создании цели без явных дат они
+    # проставляются сервером из тира (см. core/goals.py::GOAL_TIER_BOUNDS),
+    # но остаются обычным полем, которое можно задать и вручную, как у
+    # проекта — никакого отдельного механизма для "периода цели" больше
+    # нет.
+    tier: Mapped[str | None] = mapped_column(String, nullable=True)
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # Phase 26 — отображение в стиле задач (Mini App): свой статус
     # выполнено/не выполнено (не выводится автоматически из прогресса

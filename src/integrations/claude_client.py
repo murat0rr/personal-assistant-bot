@@ -492,7 +492,7 @@ async def generate_tasks_from_goals(
     конкретные выполнимые задачи, без дат — они уходят в инбокс, пользователь
     сам расставляет их по дням. `period_start`/`period_end` — только для
     контекста (масштаб цели), на сами задачи не влияют."""
-    goals_text = "\n".join(f"[{', '.join(g['spheres'])}] {g['text']}" for g in goals)
+    goals_text = "\n".join(f"[{', '.join(g['spheres'])}] {g['title']}" for g in goals)
     projects_text = (
         "\n".join(f"- {p['title']}: {p.get('description') or ''}" for p in projects)
         or "(активных проектов нет)"
@@ -579,7 +579,7 @@ async def propose_projects_from_goals(goals: list[dict], today: date) -> list[Pr
     смотрит, не складывается ли какая-то цель в конкретную многошаговую
     инициативу (см. handlers/f_goals.py), и если да — предлагает Project
     со сроками по контексту цели."""
-    goals_text = "\n".join(f"[{', '.join(g['spheres'])}] {g['text']}" for g in goals)
+    goals_text = "\n".join(f"[{', '.join(g['spheres'])}] {g['title']}" for g in goals)
     response = await client.messages.create(
         model=settings.claude_model_sonnet,
         max_tokens=1000,

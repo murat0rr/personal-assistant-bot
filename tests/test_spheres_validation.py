@@ -10,11 +10,11 @@ from src.adapters.api import (
     _validate_spheres,
 )
 
-# Валидация списков сфер (Phase 48, project/goal.spheres) — чистые
-# функции, без похода в БД (тот же принцип, что и у остальных тестов
-# этого файла — см. test_api.py). Task.sphere (одиночная строка,
-# _validate_sphere) не в этом пункте, отдельного теста для неё не было
-# и раньше.
+# Валидация списков сфер (Phase 48, Project.spheres — с Phase 54
+# проекты и цели одна сущность/таблица) — чистые функции, без похода в
+# БД (тот же принцип, что и у остальных тестов этого файла — см.
+# test_api.py). Task.sphere (одиночная строка, _validate_sphere) не в
+# этом пункте, отдельного теста для неё не было и раньше.
 
 
 def test_validate_spheres_accepts_known_values():
@@ -68,11 +68,11 @@ def test_edit_project_request_omitted_spheres_stays_none():
 
 def test_create_goal_request_rejects_empty_spheres():
     with pytest.raises(pydantic.ValidationError):
-        CreateGoalRequest(spheres=[], tier="weekly", text="Цель")
+        CreateGoalRequest(spheres=[], tier="weekly", title="Цель")
 
 
 def test_create_goal_request_accepts_nonempty_spheres():
-    payload = CreateGoalRequest(spheres=["спорт", "работа"], tier="weekly", text="Цель")
+    payload = CreateGoalRequest(spheres=["спорт", "работа"], tier="weekly", title="Цель")
     assert payload.spheres == ["спорт", "работа"]
 
 

@@ -61,9 +61,9 @@ RequiredSphereField = Annotated[str, AfterValidator(_validate_sphere)]
 
 
 # Списки сфер (Phase 48) — у проектов/целей теперь несколько сфер
-# вместо одной (см. models/project.py, models/goal.py); у задачи
-# (SetTaskSphereRequest выше по файлу) сфера по-прежнему одна —
-# SphereField/RequiredSphereField для неё не трогаем.
+# вместо одной (см. models/project.py — Phase 54: проекты и цели одна
+# сущность); у задачи (SetTaskSphereRequest выше по файлу) сфера
+# по-прежнему одна — SphereField/RequiredSphereField для неё не трогаем.
 def _validate_spheres(values: list[str]) -> list[str]:
     for value in values:
         if value not in _SPHERES:
@@ -75,7 +75,7 @@ SpheresField = Annotated[list[str], AfterValidator(_validate_spheres)]
 
 
 # У цели список не может быть пустым — весь смысл сущности в привязке к
-# сфере(-ам) жизни (см. models/goal.py).
+# сфере(-ам) жизни.
 def _validate_nonempty_spheres(values: list[str]) -> list[str]:
     if not values:
         raise ValueError("нужна хотя бы одна сфера")
@@ -233,25 +233,36 @@ class EditProjectRequest(BaseModel):
     end_date: str | None = None
 
 
+# Проекты и цели — одна сущность (Phase 54): поля те же, что у
+# Create/EditProjectRequest выше, плюс обязательный tier. start_date/
+# end_date — опциональны, как у проекта: если не переданы, сервер
+# проставит их из тира (см. core/goals.py::create_goal_now) — то самое
+# требование "если не указывать даты, то проставятся". reference_date
+# — старый путь, всё ещё поддержан как опорная дата для авто-расчёта,
+# когда даты явно не заданы.
 class CreateGoalRequest(BaseModel):
+    title: str
+    description: str | None = None
     spheres: RequiredSpheresField
     tier: str
-    text: str
+    start_date: str | None = None
+    end_date: str | None = None
+    color: str | None = None
     analyze: bool = False
     reference_date: str | None = None
 
 
-class SetGoalTextRequest(BaseModel):
-    text: str
-
-
 class EditGoalRequest(BaseModel):
-    text: str | None = None
+    title: str | None = None
+    description: str | None = None
     # None — не трогать; если список передан, он не может быть пустым
     # (см. RequiredSpheresField) — у цели, в отличие от проекта, сфера
     # обязательна и при правке.
     spheres: RequiredSpheresField | None = None
     tier: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    color: str | None = None
     reference_date: str | None = None
 
 
@@ -697,8 +708,19 @@ async def create_goal_endpoint(
     uid = user["id"]
     today = await user_today(uid)
     reference_date = date.fromisoformat(payload.reference_date) if payload.reference_date else None
+    start = date.fromisoformat(payload.start_date) if payload.start_date else None
+    end = date.fromisoformat(payload.end_date) if payload.end_date else None
     goal = await goals_repo.create_goal_now(
-        uid, payload.spheres, payload.tier, payload.text, today, reference_date
+        uid,
+        payload.spheres,
+        payload.tier,
+        payload.title,
+        today,
+        reference_date,
+        period_start=start,
+        period_end=end,
+        description=payload.description,
+        color=payload.color,
     )
     # payload.analyze больше не запускает ничего на бэкенде (Phase 52) —
     # см. тот же комментарий в create_project_endpoint выше.
@@ -716,6 +738,21 @@ async def set_goal_done_endpoint(
     return {"status": "ok"}
 
 
+# Цвет у цели (Phase 54 — проекты и цели одна сущность, то же поле,
+# что у проекта) — своя пара маршрут/функция, а не переиспользование
+# set_project_color_endpoint напрямую: URL-поверхность у целей везде
+# остаётся под /goals/*, тем же паттерном, что done/archive/edit выше.
+@app.post("/miniapp/api/goals/{goal_id}/color")
+async def set_goal_color_endpoint(
+    goal_id: int, payload: SetColorRequest, user: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    try:
+        await projects_repo.set_project_color(goal_id, user["id"], payload.color)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="goal not found") from exc
+    return {"status": "ok"}
+
+
 @app.post("/miniapp/api/goals/{goal_id}/archive")
 async def archive_goal_endpoint(
     goal_id: int, user: dict = Depends(get_authorized_user)
@@ -727,33 +764,29 @@ async def archive_goal_endpoint(
     return {"status": "ok"}
 
 
-@app.post("/miniapp/api/goals/{goal_id}/text")
-async def set_goal_text_endpoint(
-    goal_id: int, payload: SetGoalTextRequest, user: dict = Depends(get_authorized_user)
-) -> dict[str, str]:
-    try:
-        await goals_repo.set_goal_text(goal_id, user["id"], payload.text)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail="goal not found") from exc
-    return {"status": "ok"}
-
-
 @app.post("/miniapp/api/goals/{goal_id}/edit")
 async def edit_goal_endpoint(
     goal_id: int, payload: EditGoalRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     today = await user_today(user["id"])
     reference_date = date.fromisoformat(payload.reference_date) if payload.reference_date else None
+    start = date.fromisoformat(payload.start_date) if payload.start_date else None
+    end = date.fromisoformat(payload.end_date) if payload.end_date else None
     try:
         await goals_repo.update_goal(
             goal_id,
             user["id"],
             today,
-            text=payload.text,
+            title=payload.title,
             spheres=payload.spheres,
             tier=payload.tier,
             reference_date=reference_date,
+            period_start=start,
+            period_end=end,
+            color=payload.color,
         )
+        if payload.description is not None:
+            await projects_repo.update_project(goal_id, user["id"], description=payload.description)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="goal not found") from exc
     return {"status": "ok"}
@@ -768,7 +801,9 @@ async def suggest_goal_tasks_endpoint(
     goal = next((g for g in goals if g["id"] == goal_id), None)
     if goal is None:
         raise HTTPException(status_code=404, detail="goal not found")
-    titles = await suggest_tasks_for_entity(goal["text"], None, goal["spheres"], None, None)
+    start = date.fromisoformat(goal["start_date"]) if goal["start_date"] else None
+    end = date.fromisoformat(goal["end_date"]) if goal["end_date"] else None
+    titles = await suggest_tasks_for_entity(goal["title"], None, goal["spheres"], start, end)
     return {"tasks": titles}
 
 
@@ -784,10 +819,9 @@ async def create_goal_suggested_tasks_endpoint(
     if goal is None:
         raise HTTPException(status_code=404, detail="goal not found")
     titles = [t.strip() for t in payload.titles if t.strip()]
-    # Задача остаётся с одной сферой (Task.sphere не входит в Phase 48) —
-    # берёт первую из списка сфер цели, та же привязка, что раньше
-    # делала линковка.
-    sphere = goal["spheres"][0] if goal["spheres"] else None
+    # Настоящая связь через project_id (Phase 54) — раньше это была
+    # первая сфера из списка цели, теперь id той же сущности, что и у
+    # проекта (проекты и цели — одна таблица).
     async with async_session() as session:
         for title in titles:
             session.add(
@@ -797,7 +831,7 @@ async def create_goal_suggested_tasks_endpoint(
                     priority=_DEFAULT_PRIORITY,
                     source="suggest",
                     sort_order=time.time(),
-                    sphere=sphere,
+                    project_id=goal_id,
                 )
             )
         await session.commit()
