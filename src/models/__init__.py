@@ -1,5 +1,7 @@
+from src.models.ai_analytics_cache import AiAnalyticsCache
 from src.models.authorized_user import AuthorizedUser
 from src.models.chat_message import ChatMessage
+from src.models.day_review import DayReview
 from src.models.goal import Goal
 from src.models.habit import Habit
 from src.models.project import Project
@@ -21,4 +23,6 @@ __all__ = [
     "Project",
     "Goal",
     "RecurringTaskRule",
+    "DayReview",
+    "AiAnalyticsCache",
 ]

@@ -113,8 +113,12 @@ async def handle_goal_text(message: Message, state: FSMContext) -> None:
     period_start = date.fromisoformat(data["period_start"]) if data["period_start"] else None
     period_end = date.fromisoformat(data["period_end"]) if data["period_end"] else None
 
+    # Goal.spheres — список (Phase 48), но этот диалог по-прежнему
+    # спрашивает одну сферу за раз (цикл "ещё сфера — или готово" уже
+    # даёт тот же результат — несколько целей, каждая со своей сферой);
+    # оборачиваем в список из одного элемента, не переделывая сам диалог.
     await create_goal(
-        message.from_user.id, sphere, tier, period_start, period_end, message.text.strip()
+        message.from_user.id, [sphere], tier, period_start, period_end, message.text.strip()
     )
 
     done_spheres = [*data.get("done_spheres", []), sphere]
@@ -231,7 +235,7 @@ async def _propose_projects_for_month(bot: Bot, user_id: int, goals: list[dict])
     names = []
     for p in proposals:
         await create_project(
-            user_id, p.title, p.description or None, p.sphere, p.start_date, p.end_date
+            user_id, p.title, p.description or None, [p.sphere], p.start_date, p.end_date
         )
         names.append(f"— {p.title} ({p.start_date.isoformat()} – {p.end_date.isoformat()})")
     await bot.send_message(

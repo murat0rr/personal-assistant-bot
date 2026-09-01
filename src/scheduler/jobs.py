@@ -11,6 +11,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 
+from src.core import ai_analytics
 from src.core.auth import list_authorized_user_ids
 from src.core.config import settings
 from src.core.db import async_session
@@ -41,6 +42,18 @@ logger = logging.getLogger(__name__)
 # MacroDroid (экранное время), конкретный банк/выписка (финансы),
 # Notion-дневник одного воркспейса (см. TECHDEBT.md — то же ограничение,
 # что у заметок/дневника в api.py::_NOT_READY_FOR_OTHERS).
+
+
+async def _ai_analytics_refresh_job(bot: Bot, user_id: int) -> None:
+    """Раз в сутки, до того как пользователь обычно открывает Mini App
+    (Phase 48) — пересчитывает текстовую ИИ-аналитику и кладёт в кэш
+    (см. core/ai_analytics.py). До этой фазы её на каждое открытие
+    вкладки "Аналитика" заново дёргал сам эндпоинт — теперь он просто
+    читает то, что здесь посчитано. Не отчитывается в чат (в отличие от
+    большинства джоб) — это тихий фоновый пересчёт кэша, не то, что
+    пользователю нужно видеть каждое утро."""
+    logger.info("Обновляю кэш ИИ-аналитики (%s)", user_id)
+    await ai_analytics.refresh_summary(user_id)
 
 
 async def _materialize_recurring_tasks_job(bot: Bot, user_id: int) -> None:
@@ -299,6 +312,15 @@ def _job_specs(
             "materialize_recurring_tasks",
             _materialize_recurring_tasks_job,
             {"hour": 7, "minute": 0},
+            [bot, user_id],
+        ),
+        # Кэш ИИ-аналитики (Phase 48) — до materialize_recurring_tasks
+        # (07:00) и morning_digest (08:00), чтобы к моменту, как
+        # пользователь обычно открывает Mini App утром, кэш уже был свежим.
+        (
+            "ai_analytics_refresh",
+            _ai_analytics_refresh_job,
+            {"hour": 6, "minute": 30},
             [bot, user_id],
         ),
         # Разбор инбокса (Phase 22) — ночью, до материализации повторяющихся

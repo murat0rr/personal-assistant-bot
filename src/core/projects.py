@@ -12,7 +12,7 @@ def _serialize(project: Project, task_count: int, done_count: int) -> dict:
         "id": project.id,
         "title": project.title,
         "description": project.description,
-        "sphere": project.sphere,
+        "spheres": project.spheres,
         "color": project.color,
         "done": project.done,
         "start_date": project.start_date.isoformat() if project.start_date else None,
@@ -64,7 +64,7 @@ async def create_project(
     user_id: int,
     title: str,
     description: str | None,
-    sphere: str | None,
+    spheres: list[str],
     start_date: date | None,
     end_date: date | None,
     color: str | None = None,
@@ -74,7 +74,7 @@ async def create_project(
             user_id=user_id,
             title=title,
             description=description,
-            sphere=sphere,
+            spheres=spheres,
             start_date=start_date,
             end_date=end_date,
             color=color,
@@ -125,20 +125,22 @@ async def update_project(
     user_id: int,
     title: str | None = None,
     description: str | None = None,
-    sphere: str | None = None,
+    spheres: list[str] | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> None:
     """Правка полей проекта из карточки/шторки Mini App (Phase 26) — все
-    аргументы опциональны, передаётся только то, что реально поменялось."""
+    аргументы опциональны, передаётся только то, что реально поменялось.
+    spheres — список, поэтому "не трогать" отличается от "очистить":
+    None значит первое, [] (пустой список — "без сферы") — второе."""
     async with async_session() as session:
         project = await _get_owned(session, project_id, user_id)
         if title is not None:
             project.title = title
         if description is not None:
             project.description = description
-        if sphere is not None:
-            project.sphere = sphere
+        if spheres is not None:
+            project.spheres = spheres
         if start_date is not None:
             project.start_date = start_date
         if end_date is not None:

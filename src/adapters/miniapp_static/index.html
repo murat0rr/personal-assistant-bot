@@ -2038,6 +2038,17 @@
       title.textContent = task.title;
 
       row.append(checkbox, title);
+      // Тап в любом месте строки переключает статус (Phase 48) — не
+      // только по кружку. Кружок сам уже переключает по своему onclick,
+      // поэтому его явно исключаем из общего обработчика — иначе клик по
+      // нему дошёл бы и до kружка, и до строки, и статус переключился бы
+      // дважды подряд (визуально — как будто ничего не произошло).
+      // Остальной набор исключений — тот же список интерактивных
+      // элементов, что и у attachReorderEntry (см. ROW_TAP_IGNORE_SELECTOR).
+      row.addEventListener("click", (e) => {
+        if (isPending || e.target.closest(ROW_TAP_IGNORE_SELECTOR)) return;
+        toggleTaskDone(task);
+      });
 
       if (showDateButton && !task.done) {
         const dateBtn = document.createElement("button");
@@ -2647,8 +2658,9 @@
       content.append(checkbox);
 
       // Текст только читается здесь — правка доступна лишь в режиме
-      // переноса (Phase 14, см. renderReorderRow), поэтому у заголовка
-      // намеренно нет обработчика клика.
+      // переноса (Phase 14, см. renderReorderRow). Тап по нему (как и по
+      // всей остальной строке) переключает статус — см. обработчик клика
+      // на content ниже (Phase 48).
       const title = document.createElement("span");
       title.className = titleClass(task);
       title.textContent = task.title;
@@ -2681,6 +2693,18 @@
       const zone = document.createElement("span");
       zone.className = "swipe-zone";
       content.append(zone);
+
+      // Тап в любом месте строки переключает статус (Phase 48) — та же
+      // логика и тот же список исключений, что у renderTaskRow
+      // (ROW_TAP_IGNORE_SELECTOR уже покрывает .checkbox/.swipe-zone/
+      // .small-btn/input, так что кружок и кнопки шторки не задвоят
+      // переключение). Пока открыта сама шторка действий — клик до сюда
+      // не доходит вообще (гасится перехватчиком на document, см.
+      // closeOpenSwipeRow выше), так что дополнительной проверки не нужно.
+      content.addEventListener("click", (e) => {
+        if (isPending || e.target.closest(ROW_TAP_IGNORE_SELECTOR)) return;
+        toggleTaskDone(task);
+      });
 
       // Обновляет активность значков важности/события, тип пикера даты
       // (для события — сразу с временем), содержимое кружка статуса и
@@ -2994,16 +3018,22 @@
       render();
     }
 
-    function renderSphereChips(selected, onSelect) {
+    // Многовыборные чипы сфер (Phase 48) — проект/цель теперь может
+    // относиться сразу к нескольким сферам. selected — массив выбранных
+    // значений, onToggle(value) зовётся при тапе по чипу (сам решает,
+    // добавить value в массив или убрать — см. вызовы ниже). Отдельного
+    // чипа "без сферы" больше нет — пустой выбор уже и есть "без сферы"
+    // (актуально только для проекта, у цели пустой список запрещён на
+    // сохранении, см. commitEntityForm).
+    function renderSphereChips(selected, onToggle) {
       const wrap = document.createElement("div");
       wrap.className = "sphere-chips";
-      const options = [["", "без сферы"], ...SPHERES.map((s) => [s, s])];
-      for (const [value, label] of options) {
+      for (const value of SPHERES) {
         const chip = document.createElement("button");
         chip.type = "button";
-        chip.className = "sphere-chip" + (selected === value ? " selected" : "");
-        chip.textContent = label;
-        chip.onclick = () => onSelect(value);
+        chip.className = "sphere-chip" + (selected.includes(value) ? " selected" : "");
+        chip.textContent = value;
+        chip.onclick = () => onToggle(value);
         wrap.append(chip);
       }
       return wrap;
@@ -3034,7 +3064,9 @@
     // остаётся "пустым" полем.
     function isEntityIncomplete(entity, kind) {
       if (kind !== "project") return false;
-      return !entity.description || !entity.sphere || !entity.start_date || !entity.end_date;
+      return (
+        !entity.description || !entity.spheres.length || !entity.start_date || !entity.end_date
+      );
     }
 
     // Долгое нажатие по строке проекта/цели — открывает форму правки,
@@ -3137,7 +3169,7 @@
 
       const meta = document.createElement("span");
       meta.className = "entity-meta";
-      meta.textContent = kind === "project" ? projectMeta(entity) : entity.sphere;
+      meta.textContent = kind === "project" ? projectMeta(entity) : entity.spheres.join(", ");
       content.append(meta);
 
       const handle = document.createElement("span");
@@ -3531,12 +3563,17 @@
       container.append(renderAddTaskRow(ctx));
     }
 
+    // Элементы с собственной, уже занятой семантикой жеста — чекбокс/
+    // кнопки/свайп-зона/шторка/поля ввода. Общий список исключений и для
+    // долгого нажатия (attachReorderEntry — иначе оно бы отбирало жест у
+    // обычного тапа/свайпа этих элементов), и для тапа по всей строке,
+    // переключающего статус (Phase 48, см. renderTaskRow/
+    // renderSwipeableTaskRow) — иначе тап по кнопке даты/архива/etc.
+    // попутно ещё и переключил бы задачу выполненной.
+    const ROW_TAP_IGNORE_SELECTOR = ".checkbox, .small-btn, .icon-btn, .swipe-zone, .swipe-actions, input";
+
     // Долгое нажатие где угодно в поле списка (500мс без сдвига > 8px)
     // включает режим переноса для этого списка (см. enterReorderMode).
-    // Исключены только элементы с собственной, уже занятой семантикой
-    // жеста — чекбокс/кнопки/свайп-зона/шторка/поля ввода — иначе долгий
-    // палец на них тоже включил бы перенос, отбирая жест у их обычного
-    // тапа/свайпа.
     // listKey — строка либо функция-геттер (для недельного дня, у
     // которого выбранная дата может смениться, см. renderWeekDetail):
     // резолвим на каждое использование, а не один раз при вызове, иначе
@@ -3555,7 +3592,7 @@
       }
       container.addEventListener("pointerdown", (e) => {
         if (isReorderActive(resolveKey())) return;
-        if (e.target.closest(".checkbox, .small-btn, .icon-btn, .swipe-zone, .swipe-actions, input")) return;
+        if (e.target.closest(ROW_TAP_IGNORE_SELECTOR)) return;
         startX = e.clientX;
         startY = e.clientY;
         pointerId = e.pointerId;
@@ -4446,7 +4483,7 @@
           body: JSON.stringify({
             title: draft.title.trim(),
             description: draft.description ? draft.description.trim() : null,
-            sphere: draft.sphere || null,
+            spheres: draft.spheres,
             start_date: draft.start || null,
             end_date: draft.end || null,
             color: draft.color || null,
@@ -4464,11 +4501,15 @@
 
     // Правка (Phase 28) — в отличие от createProject, не дописывает
     // локальный кэш вручную, а перечитывает список целиком: у edit-
-    // эндпоинта поле со значением null означает "не трогать", а не
-    // "очистить" (см. core/projects.py::update_project) — ручное
-    // слияние на фронтенде рисковало разойтись с тем, что реально
-    // сохранилось в БД. Ничего из уже привязанных задач эта операция не
-    // трогает — эндпоинт правит только сам проект.
+    // эндпоинта отсутствие поля означает "не трогать", а не "очистить"
+    // (см. core/projects.py::update_project) — ручное слияние на
+    // фронтенде рисковало разойтись с тем, что реально сохранилось в
+    // БД. spheres шлём всегда настоящим массивом (в т.ч. пустым — Phase 48),
+    // не null: пустой массив здесь и значит "очистить", в отличие от
+    // старой семантики одиночной строки, где пустой выбор случайно
+    // превращался в null и правка молча не применялась. Ничего из уже
+    // привязанных задач эта операция не трогает — эндпоинт правит
+    // только сам проект.
     async function editProject(id, draft) {
       try {
         await api(`/miniapp/api/projects/${id}/edit`, {
@@ -4476,7 +4517,7 @@
           body: JSON.stringify({
             title: draft.title.trim(),
             description: draft.description ? draft.description.trim() : null,
-            sphere: draft.sphere || null,
+            spheres: draft.spheres,
             start_date: draft.start || null,
             end_date: draft.end || null,
           }),
@@ -4492,7 +4533,7 @@
         const result = await api("/miniapp/api/goals", {
           method: "POST",
           body: JSON.stringify({
-            sphere: draft.sphere,
+            spheres: draft.spheres,
             tier: draft.tier,
             text: draft.title.trim(),
             analyze: !!draft.analyze,
@@ -4517,7 +4558,7 @@
           method: "POST",
           body: JSON.stringify({
             text: draft.title.trim(),
-            sphere: draft.sphere || null,
+            spheres: draft.spheres,
             tier: draft.tier,
             reference_date: draft.referenceDate || null,
           }),
@@ -4540,8 +4581,8 @@
 
     function emptyEntityDraft(kind, prefillTitle) {
       return kind === "project"
-        ? { title: prefillTitle || "", description: "", sphere: "", start: "", end: "", color: "", analyze: false }
-        : { title: prefillTitle || "", sphere: "", tier: "weekly", analyze: false, referenceDate: "" };
+        ? { title: prefillTitle || "", description: "", spheres: [], start: "", end: "", color: "", analyze: false }
+        : { title: prefillTitle || "", spheres: [], tier: "weekly", analyze: false, referenceDate: "" };
     }
 
     function openCreateEntitySheet(kind, prefillTitle) {
@@ -4561,7 +4602,7 @@
           ? {
               title: entity.title || "",
               description: entity.description || "",
-              sphere: entity.sphere || "",
+              spheres: [...(entity.spheres || [])],
               start: entity.start_date || "",
               end: entity.end_date || "",
               color: entity.color || "",
@@ -4569,7 +4610,7 @@
             }
           : {
               title: entity.text || "",
-              sphere: entity.sphere || "",
+              spheres: [...(entity.spheres || [])],
               tier: entity.tier || "weekly",
               analyze: false,
               referenceDate: entity.period_start || "",
@@ -4593,7 +4634,7 @@
       const isProject = kind === "project";
       const titleText = (draft.title || "").trim();
       if (!titleText) return;
-      if (!isProject && !draft.sphere) return;
+      if (!isProject && !draft.spheres.length) return;
 
       if (isProject) {
         if (!draft.color) {
@@ -4671,8 +4712,10 @@
       }
 
       container.append(
-        renderSphereChips(createEntityDraft.sphere, (value) => {
-          createEntityDraft.sphere = value;
+        renderSphereChips(createEntityDraft.spheres, (value) => {
+          const idx = createEntityDraft.spheres.indexOf(value);
+          if (idx === -1) createEntityDraft.spheres.push(value);
+          else createEntityDraft.spheres.splice(idx, 1);
           render();
         })
       );
@@ -5034,13 +5077,12 @@
       const el = document.getElementById("help-body");
       el.innerHTML =
         '<div class="help-section"><h4>Задачи</h4>' +
-        helpRow(null, "<b>Отметить выполненной</b> — тап по кружку слева.") +
-        helpRow(tapGestureIcon(), "<b>Изменить текст</b> — тап по самому тексту задачи, курсор встанет туда, куда нажал.") +
+        helpRow(tapGestureIcon(), "<b>Отметить выполненной</b> — тап в любом месте строки (не только по кружку).") +
         helpRow(swipeGestureIcon(), "<b>Важность, событие, дата, архив</b> — свайп влево по строке открывает кнопки действий.") +
         helpRow(swipeGestureIcon(), "<b>Перенести на сегодня</b> — у вчерашней задачи в свайпе есть отдельная кнопка.") +
         helpRow(
           longPressGestureIcon(),
-          "<b>Изменить порядок</b> — долгое нажатие на строку (около секунды), список превращается в отдельное окно, дальше перетаскивай пальцем."
+          "<b>Изменить порядок или текст</b> — долгое нажатие на строку (около секунды), список превращается в отдельное окно; там же тап по тексту ставит курсор для правки, дальше перетаскивай пальцем за ручку."
         ) +
         helpRow(null, "<b>Частые шаблоны</b> — значок звезды у поля добавления: тап по шаблону сразу создаёт задачу.") +
         "</div>" +
@@ -5596,7 +5638,12 @@
         el.innerHTML =
           `<p class="day-info-title">${label} — ревью дня</p>` +
           `<div class="day-info-ratings">${ratingLine("физ.", entry.physical)}${ratingLine("соц.", entry.social)}${ratingLine("продукт.", entry.productivity)}${ratingLine("счастье", entry.happiness)}</div>` +
-          (entry.highlight ? `<div>${escapeHtml(entry.highlight)}</div>` : "");
+          (entry.highlight ? `<div>${escapeHtml(entry.highlight)}</div>` : "") +
+          // ИИ-саммари дня (Phase 48) — из Postgres (см. api.py::
+          // diary_day_endpoint), уже посчитан вечером, тут просто
+          // показывается; отсутствует, если дневник заполнен без
+          // highlight/reflection (саммари тогда не считался вовсе).
+          (entry.review ? `<div class="ai-summary-text">${escapeHtml(entry.review)}</div>` : "");
       } catch (e) {
         el.innerHTML = `<p class="day-info-title">${label}</p><div style="color:var(--text-muted)">Не удалось загрузить.</div>`;
       }

@@ -8,6 +8,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from src.core.auth import is_authorized
 from src.core.config import settings
+from src.core.day_reviews import save_review
 from src.core.user_location import user_today
 from src.integrations.claude_client import summarize_diary
 from src.integrations.notion import create_diary_entry
@@ -116,6 +117,12 @@ async def _finish(bot: Bot, state: FSMContext) -> None:
             text_for_summary = "\n".join(part for part in (highlight, reflection) if part)
             summary = await summarize_diary(text_for_summary)
         url = await create_diary_entry(today, ratings, highlight, reflection, summary)
+        # Дублируем уже посчитанный саммари в Postgres (Phase 48) — тут
+        # же, а не отдельным заходом, чтобы Notion и Postgres версия
+        # ревью дня не могли разойтись между собой: либо весь дневник за
+        # день сохранился, либо (см. except ниже) ничего.
+        if summary:
+            await save_review(settings.telegram_user_id, today, summary)
     except Exception:
         logger.exception("Не удалось сохранить дневник за %s", today)
         await bot.send_message(

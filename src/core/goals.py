@@ -40,7 +40,7 @@ GOAL_TIER_BOUNDS = {
 def _serialize(goal: Goal) -> dict:
     return {
         "id": goal.id,
-        "sphere": goal.sphere,
+        "spheres": goal.spheres,
         "tier": goal.tier,
         "period_start": goal.period_start.isoformat() if goal.period_start else None,
         "period_end": goal.period_end.isoformat() if goal.period_end else None,
@@ -51,7 +51,7 @@ def _serialize(goal: Goal) -> dict:
 
 async def create_goal(
     user_id: int,
-    sphere: str,
+    spheres: list[str],
     tier: str,
     period_start: date | None,
     period_end: date | None,
@@ -60,7 +60,7 @@ async def create_goal(
     async with async_session() as session:
         goal = Goal(
             user_id=user_id,
-            sphere=sphere,
+            spheres=spheres,
             tier=tier,
             period_start=period_start,
             period_end=period_end,
@@ -74,7 +74,7 @@ async def create_goal(
 
 async def create_goal_now(
     user_id: int,
-    sphere: str,
+    spheres: list[str],
     tier: str,
     text: str,
     today: date,
@@ -87,7 +87,7 @@ async def create_goal_now(
     дата, прежнее поведение."""
     bounds = GOAL_TIER_BOUNDS.get(tier)
     period_start, period_end = bounds(reference_date or today) if bounds else (None, None)
-    return await create_goal(user_id, sphere, tier, period_start, period_end, text)
+    return await create_goal(user_id, spheres, tier, period_start, period_end, text)
 
 
 async def _get_owned(session, goal_id: int, user_id: int) -> Goal:
@@ -104,21 +104,23 @@ async def update_goal(
     user_id: int,
     today: date,
     text: str | None = None,
-    sphere: str | None = None,
+    spheres: list[str] | None = None,
     tier: str | None = None,
     reference_date: date | None = None,
 ) -> None:
     """Правка полей цели из карточки Mini App (Phase 28) — как
     update_project, все аргументы опциональны, передаётся только то, что
-    реально поменялось. Период — производная величина (тир + опорная
-    дата), не редактируется напрямую: пересчитывается заново, если
-    поменялся тир и/или опорная дата (иначе остаётся как был)."""
+    реально поменялось (spheres=None — не трогать; у цели список в любом
+    случае не может остаться пустым, это проверяется в API-слое до
+    вызова). Период — производная величина (тир + опорная дата), не
+    редактируется напрямую: пересчитывается заново, если поменялся тир
+    и/или опорная дата (иначе остаётся как был)."""
     async with async_session() as session:
         goal = await _get_owned(session, goal_id, user_id)
         if text is not None:
             goal.text = text
-        if sphere is not None:
-            goal.sphere = sphere
+        if spheres is not None:
+            goal.spheres = spheres
         new_tier = tier or goal.tier
         if tier is not None or reference_date is not None:
             bounds = GOAL_TIER_BOUNDS.get(new_tier)

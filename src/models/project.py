@@ -1,6 +1,7 @@
 from datetime import date, datetime
 
 from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -17,11 +18,13 @@ class Project(Base):
     )
     title: Mapped[str] = mapped_column(String)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
-    # Та же таксономия, что у Task.sphere/Goal.sphere — не enum на уровне
-    # БД (см. Task.sphere), и, в отличие от них, может быть пустой: не
-    # каждый проект укладывается в одну из 5 сфер (например бытовой
-    # проект без явной сферы) — это ожидаемо, не ошибка ввода.
-    sphere: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Та же таксономия, что у Task.sphere/Goal.spheres — не enum на
+    # уровне БД (см. Task.sphere). Список, а не одна строка (Phase 48) —
+    # проект может относиться сразу к нескольким сферам жизни; пустой
+    # список — "без сферы" (было None), не каждый проект укладывается в
+    # одну из 5 сфер (например бытовой проект без явной сферы) — это
+    # ожидаемо, не ошибка ввода.
+    spheres: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, server_default="{}")
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")

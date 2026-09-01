@@ -81,7 +81,7 @@ function _serializeProject(p) {
     id: p.id,
     title: p.title,
     description: p.description,
-    sphere: p.sphere,
+    spheres: p.spheres || [],
     color: p.color || null,
     done: !!p.done,
     start_date: p.start_date,
@@ -94,7 +94,7 @@ function _serializeProject(p) {
 function _serializeGoal(g) {
   return {
     id: g.id,
-    sphere: g.sphere,
+    spheres: g.spheres || [],
     tier: g.tier,
     period_start: g.period_start || null,
     period_end: g.period_end || null,
@@ -238,7 +238,7 @@ window.fetch = async (path, options = {}) => {
       id,
       title: body.title,
       description: body.description,
-      sphere: body.sphere,
+      spheres: body.spheres || [],
       start_date: body.start_date,
       end_date: body.end_date,
       color: body.color || null,
@@ -277,7 +277,7 @@ window.fetch = async (path, options = {}) => {
     const id = _nextGoalId++;
     const g = {
       id,
-      sphere: body.sphere,
+      spheres: body.spheres || [],
       tier: body.tier,
       text: body.text,
       period_start: null,
@@ -298,7 +298,7 @@ window.fetch = async (path, options = {}) => {
     else if (action === "text") g.text = body.text;
     else if (action === "edit") {
       if (body.text != null) g.text = body.text;
-      if (body.sphere != null) g.sphere = body.sphere;
+      if (body.spheres != null) g.spheres = body.spheres;
       if (body.tier != null) g.tier = body.tier;
     } else if (action === "analyze") result = { linked: 0 };
   } else if (path.match(/\\/calendar\\/month\\?month=(\\d{4})-(\\d{2})/)) {
@@ -337,7 +337,10 @@ window.fetch = async (path, options = {}) => {
             social: 3,
             productivity: 1,
             happiness: 2,
-            highlight: "дев-харнесс: пример ревью дня",
+            highlight: "дев-харнесс: пример особенности дня",
+            // Ревью дня (Phase 48) — из Postgres в реальном бэкенде,
+            // тут просто мок, чтобы было на чём проверить блок.
+            review: "дев-харнесс: пример ИИ-саммари дня",
           }
         : null;
   } else if (path === "/miniapp/api/analytics/spheres") {
@@ -540,7 +543,10 @@ def _default_projects() -> list[dict]:
             "id": 1,
             "title": "Подготовка к сессии",
             "description": "Зачёты и экзамены зимней сессии",
-            "sphere": "учёба",
+            # Несколько сфер (Phase 48) — заодно проверяет, что список из
+            # 2+ элементов рендерится/редактируется корректно, не только
+            # частный случай "одна сфера" или "без сферы".
+            "spheres": ["учёба", "развитие"],
             "start_date": today.isoformat(),
             "end_date": (today + timedelta(days=30)).isoformat(),
             "archived": False,
@@ -549,23 +555,23 @@ def _default_projects() -> list[dict]:
             "id": 2,
             "title": "Без сферы и дат",
             "description": None,
-            "sphere": None,
+            "spheres": [],
             "start_date": None,
             "end_date": None,
             "archived": False,
         },
         # Три ниже — специально для проверки упаковки строк ганта (item 2,
-        # Phase 41): "Курсовая" той же сферы, что "Подготовка к сессии",
-        # но НЕ пересекается по датам с ней — должна встать в ОДНУ строку
-        # с ней. "Практика" той же сферы, но ПЕРЕСЕКАЕТСЯ по датам с
-        # "Подготовка к сессии" — должна получить отдельную строку,
-        # несмотря на совпадение сферы. "Тренировки" — другая сфера,
-        # своя строка независимо от пересечения дат с кем угодно.
+        # Phase 41): "Курсовая" той же (первой) сферы, что "Подготовка к
+        # сессии", но НЕ пересекается по датам с ней — должна встать в
+        # ОДНУ строку с ней. "Практика" той же сферы, но ПЕРЕСЕКАЕТСЯ по
+        # датам с "Подготовка к сессии" — должна получить отдельную
+        # строку, несмотря на совпадение сферы. "Тренировки" — другая
+        # сфера, своя строка независимо от пересечения дат с кем угодно.
         {
             "id": 3,
             "title": "Курсовая работа",
             "description": None,
-            "sphere": "учёба",
+            "spheres": ["учёба"],
             "start_date": (today + timedelta(days=35)).isoformat(),
             "end_date": (today + timedelta(days=55)).isoformat(),
             "archived": False,
@@ -574,7 +580,7 @@ def _default_projects() -> list[dict]:
             "id": 4,
             "title": "Практика",
             "description": None,
-            "sphere": "учёба",
+            "spheres": ["учёба"],
             "start_date": (today + timedelta(days=5)).isoformat(),
             "end_date": (today + timedelta(days=20)).isoformat(),
             "archived": False,
@@ -583,7 +589,7 @@ def _default_projects() -> list[dict]:
             "id": 5,
             "title": "Тренировки к марафону",
             "description": None,
-            "sphere": "спорт",
+            "spheres": ["спорт"],
             "start_date": today.isoformat(),
             "end_date": (today + timedelta(days=40)).isoformat(),
             "archived": False,
@@ -595,7 +601,7 @@ def _default_goals() -> list[dict]:
     return [
         {
             "id": 1,
-            "sphere": "спорт",
+            "spheres": ["спорт"],
             "tier": "weekly",
             "text": "Пробежать 15км за неделю",
             "period_start": None,
@@ -605,7 +611,7 @@ def _default_goals() -> list[dict]:
         },
         {
             "id": 2,
-            "sphere": "работа",
+            "spheres": ["работа"],
             "tier": "monthly",
             "text": "Закрыть квартальный отчёт",
             "period_start": None,
@@ -615,7 +621,7 @@ def _default_goals() -> list[dict]:
         },
         {
             "id": 3,
-            "sphere": "развитие",
+            "spheres": ["развитие", "учёба"],
             "tier": "yearly",
             "text": "Выучить испанский до разговорного уровня",
             "period_start": None,

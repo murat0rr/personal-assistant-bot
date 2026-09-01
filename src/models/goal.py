@@ -1,6 +1,7 @@
 from datetime import date, datetime
 
 from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -15,11 +16,14 @@ class Goal(Base):
     user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False
     )
-    # Та же таксономия, что Task.sphere/Project.sphere — не enum на
-    # уровне БД (см. Task.sphere). У целей, в отличие от проектов, сфера
-    # обязательна: весь смысл этой сущности — сгруппировать намерения по
-    # жизненным сферам для будущей аналитики.
-    sphere: Mapped[str] = mapped_column(String)
+    # Та же таксономия, что Task.sphere/Project.spheres — не enum на
+    # уровне БД (см. Task.sphere). Список, а не одна строка (Phase 48) —
+    # цель может относиться сразу к нескольким сферам жизни. У целей, в
+    # отличие от проектов, список не может быть пустым (проверяется в
+    # API-слое, см. api.py::RequiredSpheresField) — весь смысл этой
+    # сущности — сгруппировать намерения по жизненным сферам для будущей
+    # аналитики.
+    spheres: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, server_default="{}")
     # "weekly" | "monthly" | "quarterly" | "yearly" | "5year"
     tier: Mapped[str] = mapped_column(String)
     # Для "5year" оба поля NULL — нет естественной границы периода,

@@ -17,7 +17,12 @@ const GANTT_PX_PER_DAY = 10; // фиксированный масштаб — т
 export function packGanttRows(projects) {
   const groups = new Map();
   for (const p of projects) {
-    const key = p.sphere || "";
+    // Проект теперь может относиться сразу к нескольким сферам (Phase 48,
+    // Project.spheres) — для дорожек Ганта это чисто визуальная
+    // группировка, берём первую сферу списка (порядок выбора в форме),
+    // сам список сфер проекта нигде не теряется, просто не влияет на то,
+    // в какой дорожке рисуется бар.
+    const key = (p.spheres && p.spheres[0]) || "";
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(p);
   }

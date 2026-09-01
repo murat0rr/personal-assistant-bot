@@ -14,8 +14,9 @@ from sqlalchemy import select, update
 
 from src.adapters.tasker_webhook import router as tasker_webhook_router
 from src.adapters.web_auth import router as web_auth_router
+from src.core import ai_analytics, calendar_view
 from src.core import analytics as analytics_repo
-from src.core import calendar_view
+from src.core import day_reviews as day_reviews_repo
 from src.core import goals as goals_repo
 from src.core import habits as habits_repo
 from src.core import projects as projects_repo
@@ -28,7 +29,7 @@ from src.core.user_location import apply_stored_timezone, user_today
 from src.core.web_session import SESSION_COOKIE_NAME, verify_session_token
 from src.handlers.f8_habits import check_habit
 from src.handlers.miniapp_tasks import build_task_board
-from src.integrations.claude_client import analyze_productivity, find_tasks_for_entity
+from src.integrations.claude_client import find_tasks_for_entity
 from src.integrations.notion import list_diary_entries
 from src.integrations.weather import get_weather_summary
 from src.models.task import Task
@@ -57,6 +58,31 @@ SphereField = Annotated[str | None, AfterValidator(_validate_sphere)]
 # так что в _validate_sphere value тут гарантированно не None — можно
 # переиспользовать ту же функцию для обязательного варианта поля.
 RequiredSphereField = Annotated[str, AfterValidator(_validate_sphere)]
+
+
+# Списки сфер (Phase 48) — у проектов/целей теперь несколько сфер
+# вместо одной (см. models/project.py, models/goal.py); у задачи
+# (SetTaskSphereRequest выше по файлу) сфера по-прежнему одна —
+# SphereField/RequiredSphereField для неё не трогаем.
+def _validate_spheres(values: list[str]) -> list[str]:
+    for value in values:
+        if value not in _SPHERES:
+            raise ValueError(f"недопустимая сфера: {value!r}")
+    return values
+
+
+SpheresField = Annotated[list[str], AfterValidator(_validate_spheres)]
+
+
+# У цели список не может быть пустым — весь смысл сущности в привязке к
+# сфере(-ам) жизни (см. models/goal.py).
+def _validate_nonempty_spheres(values: list[str]) -> list[str]:
+    if not values:
+        raise ValueError("нужна хотя бы одна сфера")
+    return _validate_spheres(values)
+
+
+RequiredSpheresField = Annotated[list[str], AfterValidator(_validate_nonempty_spheres)]
 
 
 def _parse_due_date(value: str) -> datetime:
@@ -169,7 +195,7 @@ class BatchArchiveRequest(BaseModel):
 class CreateProjectRequest(BaseModel):
     title: str
     description: str | None = None
-    sphere: SphereField = None
+    spheres: SpheresField = []
     start_date: str | None = None
     end_date: str | None = None
     color: str | None = None
@@ -195,13 +221,13 @@ class SetColorRequest(BaseModel):
 class EditProjectRequest(BaseModel):
     title: str | None = None
     description: str | None = None
-    sphere: SphereField = None
+    spheres: SpheresField | None = None
     start_date: str | None = None
     end_date: str | None = None
 
 
 class CreateGoalRequest(BaseModel):
-    sphere: RequiredSphereField
+    spheres: RequiredSpheresField
     tier: str
     text: str
     analyze: bool = False
@@ -214,7 +240,10 @@ class SetGoalTextRequest(BaseModel):
 
 class EditGoalRequest(BaseModel):
     text: str | None = None
-    sphere: SphereField = None
+    # None — не трогать; если список передан, он не может быть пустым
+    # (см. RequiredSpheresField) — у цели, в отличие от проекта, сфера
+    # обязательна и при правке.
+    spheres: RequiredSpheresField | None = None
     tier: str | None = None
     reference_date: str | None = None
 
@@ -512,7 +541,7 @@ async def create_project_endpoint(
     start = date.fromisoformat(payload.start_date) if payload.start_date else None
     end = date.fromisoformat(payload.end_date) if payload.end_date else None
     project = await projects_repo.create_project(
-        uid, payload.title, payload.description, payload.sphere, start, end, payload.color
+        uid, payload.title, payload.description, payload.spheres, start, end, payload.color
     )
     if payload.analyze:
         await _analyze_and_link_project(
@@ -566,7 +595,7 @@ async def edit_project_endpoint(
             user["id"],
             title=payload.title,
             description=payload.description,
-            sphere=payload.sphere,
+            spheres=payload.spheres,
             start_date=start,
             end_date=end,
         )
@@ -646,17 +675,19 @@ async def create_goal_endpoint(
     today = await user_today(uid)
     reference_date = date.fromisoformat(payload.reference_date) if payload.reference_date else None
     goal = await goals_repo.create_goal_now(
-        uid, payload.sphere, payload.tier, payload.text, today, reference_date
+        uid, payload.spheres, payload.tier, payload.text, today, reference_date
     )
     if payload.analyze:
         candidates = await _unlinked_candidate_tasks(uid, "sphere")
         matched_ids = await find_tasks_for_entity(goal["text"], None, candidates)
         if matched_ids:
+            # Задача остаётся с одной сферой (Task.sphere не входит в
+            # Phase 48) — берём первую из списка сфер цели.
             async with async_session() as session:
                 await session.execute(
                     update(Task)
                     .where(Task.id.in_(matched_ids), Task.user_id == uid)
-                    .values(sphere=payload.sphere)
+                    .values(sphere=payload.spheres[0])
                 )
                 await session.commit()
     return goal
@@ -707,7 +738,7 @@ async def edit_goal_endpoint(
             user["id"],
             today,
             text=payload.text,
-            sphere=payload.sphere,
+            spheres=payload.spheres,
             tier=payload.tier,
             reference_date=reference_date,
         )
@@ -726,11 +757,13 @@ async def analyze_goal_endpoint(goal_id: int, user: dict = Depends(get_authorize
     candidates = await _unlinked_candidate_tasks(uid, "sphere")
     matched_ids = await find_tasks_for_entity(goal["text"], None, candidates)
     if matched_ids:
+        # Та же логика, что в create_goal_endpoint выше — задача берёт
+        # первую сферу из списка сфер цели.
         async with async_session() as session:
             await session.execute(
                 update(Task)
                 .where(Task.id.in_(matched_ids), Task.user_id == uid)
-                .values(sphere=goal["sphere"])
+                .values(sphere=goal["spheres"][0])
             )
             await session.commit()
     return {"linked": len(matched_ids)}
@@ -778,7 +811,10 @@ async def calendar_month_moods_endpoint(
 # дневник по-прежнему только в Notion (Diary) и только у владельца (см.
 # _NOT_READY_FOR_OTHERS) — тут просто читаем и фильтруем по дате на
 # своей стороне (list_diary_entries — маленький датасет, без серверной
-# фильтрации).
+# фильтрации). Текстовый ИИ-саммари ("review", Phase 48) — отдельно, из
+# Postgres (см. core/day_reviews.py): он уже посчитан в момент вечернего
+# опроса, доставать его заново через Claude тут не нужно и не нужно было
+# бы даже если бы он не пришёл вместе с записью Notion.
 @app.get("/miniapp/api/diary/{entry_date}")
 async def diary_day_endpoint(
     entry_date: str, user: dict = Depends(get_authorized_user)
@@ -790,12 +826,14 @@ async def diary_day_endpoint(
     entry = next((e for e in entries if e["entry_date"] == target), None)
     if entry is None:
         return None
+    review = await day_reviews_repo.get_review(user["id"], target)
     return {
         "physical": entry["physical"],
         "social": entry["social"],
         "productivity": entry["productivity"],
         "happiness": entry["happiness"],
         "highlight": entry["highlight"],
+        "review": review,
     }
 
 
@@ -822,14 +860,18 @@ async def analytics_month_endpoint(
     return await analytics_repo.month_breakdown(user["id"], anchor)
 
 
+# ИИ-аналитика (Phase 48) — раньше эндпоинт на каждый запрос заново
+# дёргал Claude; теперь читает кэш, который раз в сутки обновляет
+# утренняя джоба (scheduler/jobs.py, см. core/ai_analytics.py). Живая
+# генерация — только аварийный фолбэк на случай, если для пользователя
+# ещё нет ни одной строки в кэше (первый день, джоба ещё не успела
+# отработать), а не обычный путь.
 @app.get("/miniapp/api/analytics/summary")
 async def analytics_summary_endpoint(user: dict = Depends(get_authorized_user)) -> dict:
     uid = user["id"]
-    today = await user_today(uid)
-    spheres = await analytics_repo.sphere_breakdown(uid)
-    month = await analytics_repo.month_breakdown(uid, today)
-    projects = await projects_repo.list_projects(uid)
-    text = await analyze_productivity(spheres, month, projects)
+    text = await ai_analytics.get_cached_summary(uid)
+    if text is None:
+        text = await ai_analytics.refresh_summary(uid)
     return {"text": text}
 
 

@@ -25,12 +25,12 @@ async def seed_onboarding_data(user_id: int, today: date) -> None:
         user_id,
         title="Пробный проект",
         description="Можно переименовать, поменять сферу/цвет или удалить — это просто пример.",
-        sphere=_SEED_SPHERE,
+        spheres=[_SEED_SPHERE],
         start_date=today,
         end_date=None,
     )
     goal = await goals_repo.create_goal_now(
-        user_id, _SEED_SPHERE, "weekly", "Освоить приложение", today
+        user_id, [_SEED_SPHERE], "weekly", "Освоить приложение", today
     )
 
     async with async_session() as session:
@@ -54,7 +54,7 @@ async def seed_onboarding_data(user_id: int, today: date) -> None:
                 priority="средний",
                 source="onboarding",
                 sort_order=time.time() + 1,
-                sphere=goal["sphere"],
+                sphere=goal["spheres"][0],
             )
         )
         await session.commit()
