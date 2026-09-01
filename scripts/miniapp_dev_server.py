@@ -230,6 +230,20 @@ window.fetch = async (path, options = {}) => {
       t.last_used = due.slice(0, 10);
       result = { id: taskId, title: t.title };
     }
+  } else if (path === "/miniapp/api/suggest-spheres" && method === "POST") {
+    // Мок подсказки сферы (Phase 51) — простое сопоставление по
+    // ключевому слову в названии, чтобы было на чём проверить сам
+    // механизм (тихий запрос после простановки даты, автозаполнение
+    // чипов, пустой список — не блокирует форму), без реального Claude.
+    const title = (body.title || "").toLowerCase();
+    const sport = ["марафон", "трениров", "спорт"];
+    const study = ["испанск", "курс", "учеба", "учёба"];
+    const work = ["отчет", "отчёт", "работ"];
+    let spheres = [];
+    if (sport.some((w) => title.includes(w))) spheres = ["спорт"];
+    else if (study.some((w) => title.includes(w))) spheres = ["учёба"];
+    else if (work.some((w) => title.includes(w))) spheres = ["работа"];
+    result = { spheres };
   } else if (path === "/miniapp/api/projects" && method === "GET") {
     result = _projects.filter((p) => !p.archived).map((p) => _serializeProject(p));
   } else if (path === "/miniapp/api/projects" && method === "POST") {

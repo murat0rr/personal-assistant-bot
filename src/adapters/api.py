@@ -29,7 +29,7 @@ from src.core.user_location import apply_stored_timezone, user_today
 from src.core.web_session import SESSION_COOKIE_NAME, verify_session_token
 from src.handlers.f8_habits import check_habit
 from src.handlers.miniapp_tasks import build_task_board
-from src.integrations.claude_client import find_tasks_for_entity
+from src.integrations.claude_client import find_tasks_for_entity, suggest_entity_spheres
 from src.integrations.notion import list_diary_entries
 from src.integrations.weather import get_weather_summary
 from src.models.task import Task
@@ -200,6 +200,13 @@ class CreateProjectRequest(BaseModel):
     end_date: str | None = None
     color: str | None = None
     analyze: bool = False
+
+
+class SuggestSpheresRequest(BaseModel):
+    title: str
+    description: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
 
 
 class SetTaskProjectRequest(BaseModel):
@@ -528,6 +535,21 @@ async def use_template_endpoint(
 # (Task.project_id). Прогресс (task_count/done_count) считается на бэкенде
 # при листинге — фронтенду не нужно тянуть все задачи, чтобы нарисовать
 # прогресс-бар карточки проекта.
+# Подсказка сферы(-ей) проекта/цели (Phase 51) — общий эндпоинт для
+# обеих сущностей: поля запроса одинаковы (название/описание/срок),
+# ничего не пишет в БД, только читает черновик формы и возвращает
+# предложение. Дёргается фронтендом после простановки даты/периода, не
+# на каждое нажатие клавиши (см. index.html).
+@app.post("/miniapp/api/suggest-spheres")
+async def suggest_spheres_endpoint(
+    payload: SuggestSpheresRequest, user: dict = Depends(get_authorized_user)
+) -> dict[str, list[str]]:
+    start = date.fromisoformat(payload.start_date) if payload.start_date else None
+    end = date.fromisoformat(payload.end_date) if payload.end_date else None
+    spheres = await suggest_entity_spheres(payload.title, payload.description, start, end)
+    return {"spheres": spheres}
+
+
 @app.get("/miniapp/api/projects")
 async def list_projects_endpoint(user: dict = Depends(get_authorized_user)) -> list[dict]:
     return await projects_repo.list_projects(user["id"])

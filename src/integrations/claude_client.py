@@ -113,6 +113,72 @@ async def extract_tasks_fields(text: str, today: date) -> list[TaskFields]:
     return parsed.tasks
 
 
+_SUGGEST_SPHERES_TOOL = {
+    "name": "suggest_spheres",
+    "description": "Предложить сферу(-ы) жизни, к которым явно относится проект или цель.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "spheres": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(_SPHERES)},
+                "description": (
+                    "0-2 сферы, к которым проект/цель ЯВНО относится. Пустой "
+                    "список, если по названию/описанию не очевидно — не гадай "
+                    "ради заполнения поля."
+                ),
+            },
+        },
+        "required": ["spheres"],
+    },
+}
+
+
+class SuggestedSpheres(BaseModel):
+    spheres: list[str]
+
+
+async def suggest_entity_spheres(
+    title: str,
+    description: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[str]:
+    """Подсказка сферы(-ей) проекта/цели по названию/описанию/срокам
+    (Phase 51) — дёргается фронтендом один раз, после того как
+    пользователь проставил дату/период в форме создания, и только если
+    сфера ещё не выбрана вручную (см. index.html). Пустой список — тоже
+    валидный, ожидаемый ответ, не ошибка: далеко не для каждого
+    проекта/цели сфера очевидна по одному названию."""
+    period = ""
+    if start_date or end_date:
+        start_str = start_date.isoformat() if start_date else "?"
+        end_str = end_date.isoformat() if end_date else "?"
+        period = f" Срок: {start_str} — {end_str}."
+    response = await client.messages.create(
+        model=settings.claude_model_haiku,
+        max_tokens=200,
+        system=(
+            "Пользователь заводит проект или цель в личном планировщике. "
+            "Определи, к какой сфере(-ам) жизни это явно относится, из "
+            "закрытого списка. Если неочевидно — верни пустой список, не "
+            "выбирай сферу наугад."
+        ),
+        tools=[_SUGGEST_SPHERES_TOOL],
+        tool_choice={"type": "tool", "name": "suggest_spheres"},
+        messages=[
+            {
+                "role": "user",
+                "content": f"Название: {title}\nОписание: {description or '(нет)'}.{period}",
+            }
+        ],
+    )
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+    if tool_use is None:
+        return []
+    return SuggestedSpheres.model_validate(tool_use.input).spheres
+
+
 _PARSE_REMINDER_TOOL = {
     "name": "parse_reminder",
     "description": (

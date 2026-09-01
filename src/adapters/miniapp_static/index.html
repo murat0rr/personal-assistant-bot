@@ -4716,6 +4716,39 @@
       render();
     }
 
+    // Подсказка сферы(-ей) проекта/цели (Phase 51) — вызывается один раз
+    // после того, как пользователь проставил дату/период в форме
+    // создания (см. колбэки openDatePicker ниже), не на каждое нажатие
+    // клавиши. Ничего не делает, если сфера уже выбрана вручную (не
+    // перезаписывает выбор пользователя) или название ещё пустое.
+    // Захватываем ссылку на текущий черновик и сверяем её с
+    // createEntityDraft, когда ответ приходит — форма могла успеть
+    // закрыться или смениться (создание другой сущности) за время
+    // сетевого похода, тогда результат просто отбрасывается.
+    async function maybeSuggestSpheres(kind, draft, start, end) {
+      const titleText = (draft.title || "").trim();
+      if (!titleText || draft.spheres.length) return;
+      try {
+        const result = await api("/miniapp/api/suggest-spheres", {
+          method: "POST",
+          body: JSON.stringify({
+            title: titleText,
+            description: kind === "project" && draft.description ? draft.description.trim() : null,
+            start_date: start || null,
+            end_date: end || null,
+          }),
+        });
+        if (createEntityDraft !== draft || draft.spheres.length) return;
+        if (result.spheres && result.spheres.length) {
+          draft.spheres = result.spheres;
+          render();
+        }
+      } catch (e) {
+        // Тихо — форма и так рабочая без предложенной сферы (см. NFR3
+        // в плане фазы), пользователь просто выбирает вручную как раньше.
+      }
+    }
+
     function formatDateBtnLabel(iso, placeholder) {
       return iso ? formatShortDate(iso) : placeholder;
     }
@@ -4791,6 +4824,7 @@
           openDatePicker(createEntityDraft.start, (iso) => {
             createEntityDraft.start = iso || "";
             render();
+            maybeSuggestSpheres("project", createEntityDraft, createEntityDraft.start, createEntityDraft.end);
           });
         const endBtn = document.createElement("button");
         endBtn.type = "button";
@@ -4800,6 +4834,7 @@
           openDatePicker(createEntityDraft.end, (iso) => {
             createEntityDraft.end = iso || "";
             render();
+            maybeSuggestSpheres("project", createEntityDraft, createEntityDraft.start, createEntityDraft.end);
           });
         datesWrap.append(startBtn, endBtn);
         container.append(datesWrap);
@@ -4834,6 +4869,11 @@
           openDatePicker(createEntityDraft.referenceDate, (iso) => {
             createEntityDraft.referenceDate = iso || "";
             render();
+            // У цели нет отдельных start/end на клиенте (период считает
+            // сервер из тира+опорной даты) — подсказка идёт по одному
+            // названию, без диапазона дат, этого обычно достаточно
+            // (см. живую проверку в claude_client.py::suggest_entity_spheres).
+            maybeSuggestSpheres("goal", createEntityDraft, null, null);
           });
         dateRow.append(refBtn);
         container.append(dateRow);
