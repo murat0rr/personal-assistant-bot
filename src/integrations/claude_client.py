@@ -6,27 +6,63 @@ from pydantic import BaseModel
 
 from src.core.config import settings
 
-_EXTRACT_TASK_TOOL = {
-    "name": "extract_task",
-    "description": "Извлечь структурированные поля задачи из текста сообщения пользователя.",
+# Та же таксономия, что и везде в проекте (Task.sphere/Project.spheres/
+# Goal.spheres, api.py::_SPHERES, handlers/f_goals.py::SPHERES) — свой
+# локальный список тут, а не общий импорт: claude_client.py уже нигде
+# не зависит от api.py/handlers, заводить связь ради 5 строк не за чем.
+_SPHERES = ("учёба", "работа", "спорт", "развитие", "отношения")
+
+# Одно сообщение может содержать несколько отдельных задач (Phase 49,
+# item 1) — "tasks" всегда массив, даже для однозадачного сообщения
+# (обычный случай — массив из одного элемента), тот же приём, что уже
+# использует _GENERATE_TASKS_FROM_GOALS_TOOL. sphere — необязательное
+# поле (Phase 49, item 2): заполняется только если модель уверена, иначе
+# null — тот же практический приём "не выдумывай ради галочки", что и в
+# остальных мягких ИИ-решениях этого файла (см. PROPOSE_PROJECTS_TOOL,
+# _FIND_TASKS_TOOL).
+_EXTRACT_TASKS_TOOL = {
+    "name": "extract_tasks",
+    "description": (
+        "Извлечь из сообщения пользователя одну или несколько отдельных задач "
+        "— по одному объекту на каждое самостоятельное дело, упомянутое в тексте."
+    ),
     "input_schema": {
         "type": "object",
         "properties": {
-            "title": {
-                "type": "string",
-                "description": "Краткое название задачи",
-            },
-            "due_date": {
-                "type": ["string", "null"],
-                "description": "Срок в формате YYYY-MM-DD, или null, если в сообщении не указан",
-            },
-            "priority": {
-                "type": "string",
-                "enum": ["низкий", "средний", "высокий"],
-                "description": "Приоритет; если явно не указан в сообщении — 'средний'",
+            "tasks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Краткое название задачи",
+                        },
+                        "due_date": {
+                            "type": ["string", "null"],
+                            "description": (
+                                "Срок в формате YYYY-MM-DD, или null, если в сообщении не указан"
+                            ),
+                        },
+                        "priority": {
+                            "type": "string",
+                            "enum": ["низкий", "средний", "высокий"],
+                            "description": "Приоритет; если явно не указан в сообщении — 'средний'",
+                        },
+                        "sphere": {
+                            "type": ["string", "null"],
+                            "enum": [*_SPHERES, None],
+                            "description": (
+                                "Сфера жизни, к которой явно относится задача — только если "
+                                "уверен, иначе null. Не гадай ради заполнения поля."
+                            ),
+                        },
+                    },
+                    "required": ["title", "priority"],
+                },
             },
         },
-        "required": ["title", "priority"],
+        "required": ["tasks"],
     },
 }
 
@@ -40,25 +76,41 @@ class TaskFields(BaseModel):
     title: str
     due_date: date | None = None
     priority: Literal["низкий", "средний", "высокий"]
+    sphere: Literal["учёба", "работа", "спорт", "развитие", "отношения"] | None = None
 
 
-async def extract_task_fields(text: str, today: date) -> TaskFields:
+class ExtractedTasks(BaseModel):
+    tasks: list[TaskFields]
+
+
+async def extract_tasks_fields(text: str, today: date) -> list[TaskFields]:
+    """Одно голосовое/текстовое сообщение может называть несколько задач
+    сразу ("купить хлеб, позвонить маме и забронировать столик") — модель
+    сама решает, сколько отдельных задач в тексте, и возвращает список
+    (Phase 49). Обычный однозадачный текст — список из одного элемента,
+    поведение не меняется по сравнению с прежним extract_task_fields."""
     response = await client.messages.create(
         model=settings.claude_model_haiku,
-        max_tokens=300,
+        max_tokens=800,
         system=(
             f"Сегодняшняя дата: {today.isoformat()}. Извлеки из сообщения "
-            "пользователя задачу: название, срок (переведи относительные даты "
-            "вроде 'завтра'/'послезавтра' в конкретную дату YYYY-MM-DD) и приоритет."
+            "пользователя одну или несколько задач: если в тексте перечислено "
+            "несколько самостоятельных дел (через запятую, союз 'и' и т.п.) — "
+            "верни отдельный объект на каждое, не объединяй их в одну задачу. "
+            "Для каждой — название, срок (переведи относительные даты вроде "
+            "'завтра'/'послезавтра' в конкретную дату YYYY-MM-DD) и приоритет."
         ),
-        tools=[_EXTRACT_TASK_TOOL],
-        tool_choice={"type": "tool", "name": "extract_task"},
+        tools=[_EXTRACT_TASKS_TOOL],
+        tool_choice={"type": "tool", "name": "extract_tasks"},
         messages=[{"role": "user", "content": text}],
     )
     tool_use = next((block for block in response.content if block.type == "tool_use"), None)
     if tool_use is None:
         raise ValueError(f"Claude не вернул структурированный ответ на текст: {text!r}")
-    return TaskFields.model_validate(tool_use.input)
+    parsed = ExtractedTasks.model_validate(tool_use.input)
+    if not parsed.tasks:
+        raise ValueError(f"Claude не нашёл ни одной задачи в тексте: {text!r}")
+    return parsed.tasks
 
 
 _PARSE_REMINDER_TOOL = {
