@@ -228,6 +228,16 @@
       margin: 0 0 8px;
       padding: 0 2px;
     }
+    /* Заголовок панели аналитики + шестерёнка настройки виджетов
+       (Phase 46) — .section-label внутри теряет свой нижний отступ,
+       весь ряд сам держит одинаковый отступ снизу через margin-bottom. */
+    .analytics-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .analytics-panel-header .section-label { margin-bottom: 0; }
     .list {
       background: var(--card-bg);
       border-radius: 12px;
@@ -1497,14 +1507,18 @@
        список, друг под другом, без свайпа и точек. Показывается только
        одна панель за раз (display:none у остальных), их состояние
        (extendedActiveTab) — в JS, см. switchExtendedTab. -->
+  <!-- Заголовок вне #analytics-widgets намеренно (Phase 46) — панель
+       виджетов (js/widgets/panel.js) полностью очищает и перестраивает
+       СВОЙ контейнер при каждом рендере (в т.ч. при переключении
+       настроек), а заголовок с шестерёнкой должен остаться на месте. -->
   <div id="ext-panel-analytics">
     <div class="section">
-      <p class="section-label">Аналитика</p>
-      <div id="analytics-spheres" class="chart-card"></div>
+      <div class="analytics-panel-header">
+        <p class="section-label">Аналитика</p>
+        <button type="button" class="small-btn" id="btn-open-widget-settings" aria-label="Настроить графики"></button>
+      </div>
     </div>
-    <div class="section"><div id="analytics-month" class="chart-card"></div></div>
-    <div class="section"><div id="analytics-gantt" class="chart-card"></div></div>
-    <div class="section"><div id="analytics-ai" class="chart-card"></div></div>
+    <div id="analytics-widgets"></div>
   </div>
 
   <div id="ext-panel-calendar" style="display:none">
@@ -1630,6 +1644,15 @@
     <div class="bottom-sheet-handle"></div>
     <p class="section-label">Проект задачи</p>
     <div id="project-picker-list" class="list"></div>
+  </div>
+
+  <!-- Настройка виджетов аналитики (Phase 46) — список из
+       window.__analyticsPanel.registry, чекбокс на каждый; JS-разметку
+       строк см. renderWidgetSettingsList. -->
+  <div id="widget-settings-sheet" class="bottom-sheet">
+    <div class="bottom-sheet-handle"></div>
+    <p class="section-label">Графики аналитики</p>
+    <div id="widget-settings-list" class="list"></div>
   </div>
 
   <div id="color-picker-sheet" class="bottom-sheet">
@@ -1764,6 +1787,15 @@
     function undoIcon() {
       return icon('<path d="M4 10h9a5 5 0 010 10H9"/><path d="M4 10l5-5M4 10l5 5"/>', 16);
     }
+    // Шестерёнка настройки виджетов аналитики (Phase 46) — рядом с
+    // заголовком "Аналитика", открывает список включения/отключения
+    // графиков.
+    function settingsGearIcon() {
+      return icon(
+        '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>',
+        18
+      );
+    }
     // Шаблонные задачи (Phase 18) — контур звезды, "избранное/быстрый
     // выбор", слева от кнопки подтверждения в строке добавления.
     function starIcon() {
@@ -1849,6 +1881,7 @@
 
     let sideDrawerOpen = false;
     let helpSheetOpen = false;
+    let widgetSettingsOpen = false; // Phase 46 — настройка включённых виджетов аналитики
 
     // Та же палитра, что уже показывали на макете-прототипе — 20 цветов,
     // без внешних библиотек.
@@ -3202,6 +3235,13 @@
         if (kind === "project") {
           projectsData = projectsData.filter((p) => p.id !== entity.id);
           renderProjectsPage();
+          // Баг, найденный при переводе Ганта на событийную шину (Phase
+          // 46): архивация проекта раньше вообще не трогала Гант — он
+          // продолжал показывать уже архивированный проект до
+          // следующей полной перезагрузки страницы. Не было отдельного
+          // вызова renderGanttChart() здесь, в отличие от loadProjects/
+          // createProject.
+          notifyProjectsChanged();
         } else {
           goalsData = goalsData.filter((g) => g.id !== entity.id);
           renderGoalsPages();
@@ -4003,7 +4043,8 @@
         createEntityKind !== null ||
         datePickerOpen ||
         sideDrawerOpen ||
-        helpSheetOpen;
+        helpSheetOpen ||
+        widgetSettingsOpen;
       document
         .getElementById("reorder-scrim")
         .classList.toggle("visible", reorderActiveKey !== null || anySheetOpen);
@@ -4020,6 +4061,9 @@
       document.getElementById("date-picker-sheet").classList.toggle("visible", datePickerOpen);
       document.getElementById("side-drawer").classList.toggle("visible", sideDrawerOpen);
       document.getElementById("help-sheet").classList.toggle("visible", helpSheetOpen);
+      document
+        .getElementById("widget-settings-sheet")
+        .classList.toggle("visible", widgetSettingsOpen);
     }
 
     function addDaysIso(iso, days) {
@@ -4363,6 +4407,20 @@
 
     // ---- Проекты (Phase 19) — тот же optimistic-паттерн.
 
+    // Гант в аналитике (Phase 24, независимый ES-модуль-виджет — Phase
+    // 46) читает projectsData, но не через общий render()-цикл — код
+    // проектов не вызывает виджет по имени напрямую (раньше вызывал —
+    // renderGanttChart(), прямая связь "проекты знают о существовании
+    // Ганта"), а публикует событие в общую шину; виджет подписан сам,
+    // если его сейчас на экране нет вообще (или выключен настройками) —
+    // событие просто некому слушать, ничего не падает. window.__coreBridge.
+    // bus может ещё не быть подставлен модулем-бутстрапом (см. loadAnalytics
+    // выше) в самые первые миллисекунды жизни страницы — опциональная
+    // цепочка, а не жёсткий вызов, чтобы не уронить loadProjects().
+    function notifyProjectsChanged() {
+      window.__coreBridge.bus?.dispatchEvent(new Event("projects:changed"));
+    }
+
     async function loadProjects() {
       try {
         projectsData = await api("/miniapp/api/projects");
@@ -4370,10 +4428,7 @@
         projectsData = [];
       }
       render();
-      // Гант в аналитике (Phase 24) читает projectsData напрямую, вне
-      // общего render()-цикла — держим его в курсе каждый раз, когда
-      // список проектов реально мог поменяться.
-      if (document.getElementById("analytics-gantt")) renderGanttChart();
+      notifyProjectsChanged();
     }
 
     async function createProject(draft) {
@@ -4395,7 +4450,7 @@
         alert("Не удалось создать проект.");
       } finally {
         render();
-        if (document.getElementById("analytics-gantt")) renderGanttChart();
+        notifyProjectsChanged();
       }
     }
 
@@ -4795,448 +4850,103 @@
       }
     }
 
-    // ---- Аналитика (Phase 24) — независимо от боевого render()-цикла:
-    // читается один раз при загрузке, каждая диаграмма рисуется в свой
+    // ---- Аналитика (Phase 24, с Phase 46 — виджеты вынесены в
+    // js/widgets/*.js, ES-модули) — независимо от боевого render()-цикла:
+    // читается один раз при загрузке, каждый виджет рисуется в свой
     // контейнер напрямую (не через общий render(), сюда не нужен
     // optimistic UI — данные только для чтения).
-
-    // Тот же порядок, что SPHERES, — фиксированная палитра, чтобы цвет
-    // сферы был одним и тем же везде, где она встречается на странице.
-    const SPHERE_COLORS = {
-      учёба: "#5b8def",
-      работа: "#e0a52c",
-      спорт: "#4caf7d",
-      развитие: "#a06fe0",
-      отношения: "#e0637a",
+    //
+    // Мост к модулям виджетов — не переносим escapeHtml/api/даты сюда
+    // же (используются и вне аналитики: неделя, календарь, доска),
+    // публикуем явным объектом то немногое, что виджетам реально нужно.
+    // Не полагаемся на то, что function-объявления сами всплывают в
+    // window — хрупко и неочевидно при чтении.
+    window.__coreBridge = {
+      api,
+      escapeHtml,
+      // Геттер, не голое значение (как getBoardState/getProjectsData
+      // ниже) — namespace конструируется РАНЬШЕ, чем в файле встречается
+      // `const MONTH_NAMES_FULL = [...]` (она в секции месячного
+      // календаря, ниже по файлу): прямое обращение к значению здесь
+      // упёрлось бы в temporal dead zone ("Cannot access before
+      // initialization"), пойманное живой проверкой сразу после первой
+      // версии этой правки. Функция же просто откладывает обращение к
+      // переменной до момента, когда её реально вызовет виджет — к
+      // этому времени `const` давно инициализирован.
+      getMonthNamesFull: () => MONTH_NAMES_FULL,
+      pad2,
+      adjMonth,
+      getBoardState: () => boardState,
+      getProjectsData: () => projectsData,
+      bus: null, // подставится модулем-бутстрапом ниже, до первого реального использования
     };
-    function sphereColor(sphere) {
-      return SPHERE_COLORS[sphere] || "var(--text-muted)";
-    }
-
-    function renderSphereChart(data) {
-      const el = document.getElementById("analytics-spheres");
-      el.innerHTML = '<p class="chart-title">Задачи по сферам</p>';
-      const total = data.reduce((sum, s) => sum + s.count, 0);
-      if (total === 0) {
-        el.innerHTML += '<div class="chart-empty">Пока нет задач со сферой</div>';
-        return;
-      }
-
-      // Столбчатая диаграмма вместо тортика (item 4, Phase 33) — один
-      // столбец на сферу, нижняя часть темнее (выполнено), верхняя —
-      // обычный цвет сферы (не выполнено). Тот же приём color-mix, что
-      // уже даёт .gantt-bar-progress (только к белому — для
-      // противоположного эффекта, здесь к чёрному — темнее). Компоновка
-      // (item 5, Phase 34) — график слева, легенда справа (не друг под
-      // другом): подписи под столбцами убраны (в легенде и так есть
-      // название сферы), столбцы уже, график занимает меньше ширины.
-      const max = Math.max(1, ...data.map((s) => s.count));
-      const w = 100;
-      const h = 130;
-      const padLeft = 20;
-      const padBottom = 4;
-      const padTop = 4;
-      const plotW = w - padLeft - 4;
-      const plotH = h - padTop - padBottom;
-      const barGap = 6;
-      const barW = (plotW - barGap * (data.length - 1)) / data.length;
-
-      const yTicks = Array.from(new Set([0, Math.round(max / 2), max]));
-      const yToPx = (v) => padTop + plotH - (v / max) * plotH;
-      const gridLines = yTicks
-        .map((v) => {
-          const y = yToPx(v);
-          return (
-            `<line x1="${padLeft}" y1="${y}" x2="${w - 4}" y2="${y}" stroke="var(--hairline)" stroke-width="1"/>` +
-            `<text x="${padLeft - 4}" y="${y + 3}" font-size="8" fill="var(--text-muted)" text-anchor="end">${v}</text>`
-          );
-        })
-        .join("");
-
-      const bars = data
-        .map((s, i) => {
-          const color = sphereColor(s.sphere);
-          const darker = `color-mix(in srgb, ${color} 65%, black 35%)`;
-          const x = padLeft + i * (barW + barGap);
-          const totalH = (s.count / max) * plotH;
-          const doneH = s.count ? totalH * (s.done / s.count) : 0;
-          const notDoneH = totalH - doneH;
-          const topY = padTop + plotH - totalH;
-          const doneY = padTop + plotH - doneH;
-          let bar = "";
-          if (notDoneH > 0) {
-            bar += `<rect x="${x}" y="${topY}" width="${barW}" height="${notDoneH}" fill="${color}"/>`;
-          }
-          if (doneH > 0) {
-            bar += `<rect x="${x}" y="${doneY}" width="${barW}" height="${doneH}" fill="${darker}"/>`;
-          }
-          return bar;
-        })
-        .join("");
-
-      const svg = `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="flex-shrink:0">${gridLines}${bars}</svg>`;
-      const legend = data
-        .map(
-          (s) =>
-            `<div class="sphere-legend-row"><span class="sphere-swatch" style="background:${sphereColor(s.sphere)}"></span>` +
-            `<span class="sphere-legend-label">${escapeHtml(s.sphere)}</span>` +
-            `<span class="sphere-legend-value">${s.done}/${s.count} · ${Math.round((s.count / total) * 100)}%</span></div>`
-        )
-        .join("");
-      el.innerHTML += `<div class="sphere-chart-row">${svg}<div class="sphere-legend">${legend}</div></div>`;
-    }
-
-    // Листаемый график месяца (item 3, Phase 41) — тот же принцип, что у
-    // месячного календаря (calYear/calMonth), но отдельное состояние: это
-    // разные виджеты, пролистывать их синхронно никто не просил. null —
-    // ещё не инициализировано (ставим на "сейчас" при первом
-    // loadMonthChart, см. loadAnalytics).
-    let analyticsMonthYear = null;
-    let analyticsMonthMonth = null;
-
-    function renderMonthChart(data) {
-      // Важно: собираем всю разметку в переменные и присваиваем
-      // el.innerHTML РОВНО ОДИН РАЗ в конце (см. attachMonthNav ниже).
-      // `el.innerHTML += ...` заново парсит весь поддерево при каждом
-      // вызове — это пересоздаёт DOM-узлы кнопок навигации, которым
-      // .onclick уже назначен, и обработчик тихо теряется: кнопка
-      // рисуется, но перестаёт на что-либо реагировать (баг, пойманный
-      // при живой проверке Phase 41 — прямой вызов goToAnalyticsMonth()
-      // из консоли работал, а реальный тап по кнопке — нет).
-      const el = document.getElementById("analytics-month");
-      const nav =
-        '<div class="month-chart-nav">' +
-        '<button type="button" class="small-btn" id="analytics-month-prev" aria-label="Предыдущий месяц">‹</button>' +
-        `<span>${MONTH_NAMES_FULL[data.month - 1]} ${data.year}</span>` +
-        '<button type="button" class="small-btn" id="analytics-month-next" aria-label="Следующий месяц">›</button>' +
-        "</div>";
-      const header = `<p class="chart-title">Выполнено задач</p>${nav}`;
-
-      function attachMonthNav() {
-        document.getElementById("analytics-month-prev").onclick = () => goToAnalyticsMonth(-1);
-        document.getElementById("analytics-month-next").onclick = () => goToAnalyticsMonth(1);
-        attachMonthChartSwipe(el);
-      }
-
-      const counts = data.all_counts || [];
-      if (counts.every((c) => c === 0)) {
-        el.innerHTML = `${header}<div class="chart-empty">В этом месяце пока ничего не отмечено</div>`;
-        attachMonthNav();
-        return;
-      }
-
-      // Оси (item 9, Phase 29) — раньше был голый график без единиц: не
-      // видно ни какое число дня под какой полоской, ни какой счёт
-      // соответствует высоте. Слева — счёт (0/середина/максимум),
-      // снизу — числа месяца через 5 (плюс 1-е и последнее), пунктиром —
-      // текущий день, если он в этом месяце. Выходные — светлее (item 1,
-      // Phase 41): визуально сразу видно ритм недели, не только даты.
-      const max = Math.max(1, ...counts);
-      const w = 300;
-      const h = 110;
-      const padLeft = 18;
-      const padBottom = 12;
-      const padTop = 4;
-      const plotW = w - padLeft - 2;
-      const plotH = h - padTop - padBottom;
-      const barW = plotW / counts.length;
-
-      const isWeekend = (dayNum) => {
-        const wd = new Date(Date.UTC(data.year, data.month - 1, dayNum)).getUTCDay();
-        return wd === 0 || wd === 6; // вс=0, сб=6
-      };
-
-      const yTicks = Array.from(new Set([0, Math.round(max / 2), max]));
-      const yToPx = (v) => padTop + plotH - (v / max) * plotH;
-      const gridLines = yTicks
-        .map((v) => {
-          const y = yToPx(v);
-          return (
-            `<line x1="${padLeft}" y1="${y}" x2="${w - 2}" y2="${y}" stroke="var(--hairline)" stroke-width="1"/>` +
-            `<text x="${padLeft - 4}" y="${y + 3}" font-size="8" fill="var(--text-muted)" text-anchor="end">${v}</text>`
-          );
-        })
-        .join("");
-
-      const bars = counts
-        .map((c, i) => {
-          const barH = (c / max) * plotH;
-          const x = padLeft + i * barW;
-          const y = padTop + plotH - barH;
-          const opacity = isWeekend(i + 1) ? 0.5 : 1;
-          return `<rect x="${x + 0.5}" y="${y}" width="${Math.max(barW - 1, 1)}" height="${Math.max(barH, c > 0 ? 1 : 0)}" fill="var(--accent)" opacity="${opacity}" rx="1"/>`;
-        })
-        .join("");
-
-      const todayIso = boardState.days.today ? boardState.days.today.date : null;
-      const isCurrentMonth =
-        todayIso && todayIso.slice(0, 4) == data.year && Number(todayIso.slice(5, 7)) === data.month;
-      const todayDay = isCurrentMonth ? Number(todayIso.slice(8, 10)) : null;
-      const todayLine =
-        todayDay && todayDay <= counts.length
-          ? `<line x1="${padLeft + (todayDay - 0.5) * barW}" y1="${padTop}" x2="${padLeft + (todayDay - 0.5) * barW}" y2="${padTop + plotH}" stroke="var(--neutral-blue)" stroke-width="1.5" stroke-dasharray="2 2"/>`
-          : "";
-
-      const xLabels = counts
-        .map((c, i) => {
-          const dayNum = i + 1;
-          if (dayNum !== 1 && dayNum !== counts.length && dayNum % 5 !== 0) return "";
-          const x = padLeft + i * barW + barW / 2;
-          return `<text x="${x}" y="${h - 1}" font-size="8" fill="var(--text-muted)" text-anchor="middle">${dayNum}</text>`;
-        })
-        .join("");
-
-      const svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">${gridLines}${bars}${todayLine}${xLabels}</svg>`;
-
-      // Все проекты + "Без проекта" (item 1, Phase 41) — раньше топ-6 по
-      // выполненному, теперь целиком: проект без прогресса в этом месяце
-      // тоже должен быть виден (нулевая строка), не пропадать молча.
-      const projects = data.projects || [];
-      let projectsHtml = "";
-      if (projects.length) {
-        const rows = projects
-          .map(
-            (p) =>
-              `<div class="month-project-row"><span class="month-project-title">${escapeHtml(p.title)}</span>` +
-              `<span class="month-project-count">${p.total}</span></div>`
-          )
-          .join("");
-        projectsHtml = `<p class="chart-title" style="margin-top:14px;">По проектам</p>${rows}`;
-      }
-
-      el.innerHTML = `${header}${svg}${projectsHtml}`;
-      attachMonthNav();
-    }
-
-    async function loadMonthChart() {
-      const monthEl = document.getElementById("analytics-month");
-      monthEl.innerHTML = '<div class="chart-empty">Загрузка…</div>';
-      try {
-        const key = `${analyticsMonthYear}-${pad2(analyticsMonthMonth)}`;
-        const month = await api(`/miniapp/api/analytics/month?month=${key}`);
-        renderMonthChart(month);
-      } catch (e) {
-        monthEl.innerHTML = '<div class="chart-empty">Не удалось загрузить.</div>';
-      }
-    }
-
-    async function goToAnalyticsMonth(delta) {
-      const target = adjMonth(analyticsMonthYear, analyticsMonthMonth, delta);
-      analyticsMonthYear = target.year;
-      analyticsMonthMonth = target.month;
-      await loadMonthChart();
-    }
-
-    // Свайп по самому графику — пролистывает месяц (item 3, Phase 41).
-    // Простое обнаружение жеста (старт/конец по X), не полноценная
-    // 3-панельная карусель с переносом пальца — тут только один виджет
-    // внутри и так скроллящегося экрана, тянуть сюда механику
-    // month-cal-track ценой сложности не стоит; кнопки ‹ › (см.
-    // renderMonthChart) — то же самое понадёжнее для тех, кто свайп не
-    // найдёт.
-    function attachMonthChartSwipe(el) {
-      // Вызывается из renderMonthChart при КАЖДОМ рендере (включая каждое
-      // листание месяца) — но сам el (#analytics-month) никогда не
-      // пересоздаётся, только его innerHTML. Без этой защиты слушатели
-      // копились бы с каждым свайпом, и один жест через несколько
-      // навигаций уже переключал бы на несколько месяцев разом.
-      if (el.dataset.swipeAttached) return;
-      el.dataset.swipeAttached = "1";
-      let startX = null;
-      let startY = null;
-      let pointerId = null;
-      el.addEventListener("pointerdown", (e) => {
-        if (e.target.closest("button")) return;
-        startX = e.clientX;
-        startY = e.clientY;
-        pointerId = e.pointerId;
-      });
-      el.addEventListener("pointerup", (e) => {
-        if (startX === null || e.pointerId !== pointerId) return;
-        const dx = e.clientX - startX;
-        const dy = e.clientY - startY;
-        startX = null;
-        if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-          goToAnalyticsMonth(dx < 0 ? 1 : -1);
-        }
-      });
-    }
-
-    // Пиксель на день шкалы ганта (item 2, Phase 41) — фиксированный, не
-    // проценты от ширины экрана: только так появляется что скроллить.
-    const GANTT_PX_PER_DAY = 10;
-
-    // Непересекающиеся по времени проекты одной сферы — в одну строку
-    // (item 2, Phase 41). Стандартный жадный алгоритм упаковки интервалов
-    // ("минимум переговорных комнат под непересекающиеся встречи"):
-    // группируем по сфере (её отсутствие — тоже группа, наравне с
-    // остальными — два проекта без сферы точно так же могут делить
-    // строку), внутри группы сортируем по началу и кладём каждый
-    // проект в первую строку, чей последний элемент уже закончился к
-    // его началу; не нашлось такой — заводим новую строку.
-    function packGanttRows(projects) {
-      const groups = new Map();
-      for (const p of projects) {
-        const key = p.sphere || "";
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(p);
-      }
-      const rows = [];
-      for (const group of groups.values()) {
-        const sorted = [...group].sort(
-          (a, b) => new Date(a.start_date) - new Date(b.start_date)
-        );
-        const rowsInGroup = []; // { items: [...], lastEnd: <ms> }
-        for (const p of sorted) {
-          const start = new Date(p.start_date).getTime();
-          const end = new Date(p.end_date).getTime();
-          const row = rowsInGroup.find((r) => start >= r.lastEnd);
-          if (row) {
-            row.items.push(p);
-            row.lastEnd = end;
-          } else {
-            rowsInGroup.push({ items: [p], lastEnd: end });
-          }
-        }
-        rows.push(...rowsInGroup.map((r) => r.items));
-      }
-      return rows;
-    }
-
-    function renderGanttChart() {
-      const el = document.getElementById("analytics-gantt");
-      el.innerHTML = '<p class="chart-title">Проекты</p>';
-      const withDates = projectsData.filter((p) => p.start_date && p.end_date);
-      if (withDates.length === 0) {
-        el.innerHTML += '<div class="chart-empty">Нет проектов со сроками</div>';
-        return;
-      }
-
-      const starts = withDates.map((p) => new Date(p.start_date).getTime());
-      const ends = withDates.map((p) => new Date(p.end_date).getTime());
-      const min = Math.min(...starts);
-      const max = Math.max(...ends);
-      const totalDays = Math.max(Math.ceil((max - min) / 86400000), 1);
-      const canvasW = totalDays * GANTT_PX_PER_DAY;
-      const dayToPx = (ms) => ((ms - min) / 86400000) * GANTT_PX_PER_DAY;
-
-      // Шкала месяцев + линия "сегодня" (item 10, Phase 29) — без этого
-      // непонятно, на какой календарный период приходятся полоски.
-      const monthTicks = [];
-      const cursor = new Date(min);
-      cursor.setDate(1);
-      while (cursor.getTime() <= max) {
-        const x = Math.max(0, dayToPx(cursor.getTime()));
-        // Если самый ранний проект начинается в последний день месяца
-        // (напр. 31 августа), 1-е число ЭТОГО месяца уходит в отрицательный
-        // x и прижимается к 0 (см. Math.max выше), а 1-е число СЛЕДУЮЩЕГО
-        // месяца оказывается буквально в одном дне правее — подписи двух
-        // соседних месяцев рисуются друг на друге. Пропускаем метку, если
-        // она не отстоит от предыдущей хотя бы на ширину подписи (найдено
-        // живой проверкой Phase 41 — не гипотетический случай).
-        const prev = monthTicks[monthTicks.length - 1];
-        if (!prev || x - prev.x >= 40) {
-          monthTicks.push({
-            x,
-            label: `${MONTH_NAMES_FULL[cursor.getMonth()].slice(0, 3)} ${cursor.getFullYear()}`,
-          });
-        }
-        cursor.setMonth(cursor.getMonth() + 1);
-      }
-      const axisHtml = monthTicks
-        .map((t) => `<span class="gantt-axis-tick" style="left:${t.x}px">${t.label}</span>`)
-        .join("");
-
-      const now = Date.now();
-      const todayX = dayToPx(now);
-      const todayLineHtml =
-        todayX >= 0 && todayX <= canvasW ? `<div class="gantt-today-line" style="left:${todayX}px"></div>` : "";
-
-      const packedRows = packGanttRows(withDates);
-      const rowsHtml = packedRows
-        .map((items) => {
-          const labels = items
-            .map((p) => {
-              const left = dayToPx(new Date(p.start_date).getTime());
-              const width = Math.max(dayToPx(new Date(p.end_date).getTime()) - left, 4);
-              const title = escapeHtml(p.title);
-              return `<span class="gantt-item-label" style="left:${left}px;max-width:${width}px" title="${title}">${title}</span>`;
-            })
-            .join("");
-          const bars = items
-            .map((p) => {
-              const left = dayToPx(new Date(p.start_date).getTime());
-              const width = Math.max(dayToPx(new Date(p.end_date).getTime()) - left, 4);
-              const pct = p.task_count ? Math.round((p.done_count / p.task_count) * 100) : 0;
-              const progressWidth = width * (pct / 100);
-              return (
-                `<div class="gantt-bar" style="left:${left}px;width:${width}px;"></div>` +
-                `<div class="gantt-bar-progress" style="left:${left}px;width:${progressWidth}px;"></div>`
-              );
-            })
-            .join("");
-          return (
-            '<div class="gantt-row">' +
-            `<div class="gantt-row-labels">${labels}</div>` +
-            `<div class="gantt-track">${bars}</div>` +
-            "</div>"
-          );
-        })
-        .join("");
-
-      el.innerHTML +=
-        '<div class="gantt-scroll" id="gantt-scroll">' +
-        `<div style="width:${canvasW}px">` +
-        `<div class="gantt-axis">${axisHtml}</div>` +
-        `<div class="gantt-body">${todayLineHtml}${rowsHtml}</div>` +
-        "</div></div>";
-
-      // Центрируем на "сегодня" сразу — иначе можно оказаться в самом
-      // начале шкалы, далеко от актуального (весь диапазон теперь шире
-      // экрана и не виден целиком одним взглядом, item 2, Phase 41).
-      const scrollEl = document.getElementById("gantt-scroll");
-      scrollEl.scrollLeft = Math.max(0, todayX - scrollEl.clientWidth / 2);
-    }
-
-    function renderAiSummary(text) {
-      const el = document.getElementById("analytics-ai");
-      el.innerHTML = '<p class="chart-title">ИИ-аналитика</p>';
-      el.innerHTML += `<div class="ai-summary-text">${text ? escapeHtml(text) : "Пока не набралось данных для анализа."}</div>`;
-    }
+    // loadAnalytics() зовётся синхронно в самом низу этого скрипта
+    // (см. loadBoard()/loadAnalytics() в конце файла) — раньше, чем
+    // успевает выполниться отложенный <script type="module"> бутстрап
+    // (модули по стандарту откладываются до конца парсинга документа,
+    // как defer). Явный "промис готовности" вместо предположения о
+    // порядке — корректно ждёт независимо от того, что выполнится
+    // раньше на практике. window.__analyticsPanelReady — не приватная
+    // переменная, а именно свойство window: и loadAnalytics(), и шторка
+    // настройки виджетов (см. renderWidgetSettingsList ниже) — оба
+    // независимо ждут готовности модуля через один и тот же промис.
+    let _resolveAnalyticsPanelReady;
+    window.__analyticsPanelReady = new Promise((resolve) => {
+      _resolveAnalyticsPanelReady = resolve;
+    });
+    window.__registerAnalyticsPanel = (panelApi, bus) => {
+      window.__coreBridge.bus = bus;
+      _resolveAnalyticsPanelReady(panelApi);
+    };
 
     async function loadAnalytics() {
-      const spheresEl = document.getElementById("analytics-spheres");
-      const monthEl = document.getElementById("analytics-month");
-      const aiEl = document.getElementById("analytics-ai");
-      spheresEl.innerHTML = '<div class="chart-empty">Загрузка…</div>';
-      monthEl.innerHTML = '<div class="chart-empty">Загрузка…</div>';
-      aiEl.innerHTML = '<div class="chart-empty">Загрузка…</div>';
+      const panel = await window.__analyticsPanelReady;
+      // #analytics-widgets, не #ext-panel-analytics целиком — заголовок
+      // "Аналитика" + шестерёнка настройки живут вне того, что панель
+      // виджетов очищает и перестраивает при каждом рендере (см. разметку).
+      await panel.render(document.getElementById("analytics-widgets"), window.__coreBridge);
+    }
 
-      try {
-        const spheres = await api("/miniapp/api/analytics/spheres");
-        renderSphereChart(spheres);
-      } catch (e) {
-        spheresEl.innerHTML = '<div class="chart-empty">Не удалось загрузить.</div>';
-      }
-
-      // Локальная дата устройства, не boardState (loadBoard идёт
-      // параллельно, к этому моменту ещё может не успеть) — тот же приём,
-      // что уже даёт today0 у месячного календаря (см. calYear/calMonth).
-      if (analyticsMonthYear === null) {
-        const now = new Date();
-        analyticsMonthYear = now.getFullYear();
-        analyticsMonthMonth = now.getMonth() + 1;
-      }
-      await loadMonthChart();
-
-      renderGanttChart();
-
-      try {
-        const summary = await api("/miniapp/api/analytics/summary");
-        renderAiSummary(summary.text);
-      } catch (e) {
-        aiEl.innerHTML = '<div class="chart-empty">Не удалось загрузить.</div>';
-      }
+    function openWidgetSettingsSheet() {
+      widgetSettingsOpen = true;
+      renderWidgetSettingsList();
+      render();
+    }
+    function closeWidgetSettingsSheet() {
+      widgetSettingsOpen = false;
+      render();
+    }
+    // Список чекбоксов строится один раз при открытии (не на каждый
+    // render() — состав виджетов не меняется на лету извне, только этой
+    // же формой). await того же промиса, что и loadAnalytics() —
+    // на практике к моменту, когда пользователь физически успевает
+    // открыть эту шторку (тап по шестерёнке — жест руками, не
+    // автоматика при загрузке страницы), модуль давно готов, но
+    // полагаться на "на практике" вместо явного ожидания — тот же
+    // риск гонки, что уже был найден и исправлен у loadAnalytics().
+    async function renderWidgetSettingsList() {
+      const listEl = document.getElementById("widget-settings-list");
+      const panel = await window.__analyticsPanelReady;
+      const enabled = new Set(panel.getEnabledIds());
+      listEl.innerHTML = "";
+      panel.registry.forEach((entry) => {
+        const label = document.createElement("label");
+        label.className = "row";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = enabled.has(entry.id);
+        checkbox.onchange = () => {
+          const next = new Set(panel.getEnabledIds());
+          if (checkbox.checked) next.add(entry.id);
+          else next.delete(entry.id);
+          panel.setEnabledIds([...next]);
+          loadAnalytics();
+        };
+        const span = document.createElement("span");
+        span.textContent = entry.title;
+        label.append(checkbox, span);
+        listEl.append(label);
+      });
     }
 
     // Вкладки расширенного экрана (Phase 35) — заменили обе горизонтальные
@@ -5373,6 +5083,11 @@
       openHelpSheet();
     };
     document.getElementById("help-close").addEventListener("click", closeHelpSheet);
+
+    // Шестерёнка настройки виджетов аналитики (Phase 46).
+    const widgetSettingsBtn = document.getElementById("btn-open-widget-settings");
+    widgetSettingsBtn.innerHTML = settingsGearIcon();
+    widgetSettingsBtn.onclick = openWidgetSettingsSheet;
 
     // Выход из веб-версии (Phase 45) — только вне Telegram, там это
     // единственное место, где вообще есть смысл "выходить" (см. разметку
@@ -5905,6 +5620,11 @@
       document.getElementById("color-picker-list"),
       closeColorPicker
     );
+    attachSheetOverswipeClose(
+      document.getElementById("widget-settings-sheet"),
+      document.getElementById("widget-settings-list"),
+      closeWidgetSettingsSheet
+    );
     // create-entity-sheet больше не .bottom-sheet (Phase 33) — окно по
     // центру, закрывается крестиком/тапом по фону/кнопкой "Готово", без
     // свайпа (см. .entity-window в CSS и комментарий там же).
@@ -5937,6 +5657,8 @@
         closeCreateEntitySheet();
       } else if (helpSheetOpen) {
         closeHelpSheet();
+      } else if (widgetSettingsOpen) {
+        closeWidgetSettingsSheet();
       } else if (sideDrawerOpen) {
         closeSideDrawer();
       }
@@ -6139,6 +5861,23 @@
     loadAnalytics();
     loadGoals();
     loadMonthEvents();
+  </script>
+
+  <!-- Виджеты аналитики (Phase 46) — первый пилот ES-модулей в этом
+       файле (см. SPEC.md §5 п.3 — остальной index.html пока остаётся
+       классическим скриптом выше, не переписан целиком). Публикует
+       свой API через window.__registerAnalyticsPanel — единственная
+       точка соприкосновения с классическим скриптом (см. loadAnalytics
+       и window.__coreBridge там же). -->
+  <script type="module">
+    import { renderAnalyticsPanel, getEnabledIds, setEnabledIds } from "./js/widgets/panel.js";
+    import { WIDGET_REGISTRY } from "./js/widgets/registry.js";
+    import { bus } from "./js/core/bus.js";
+
+    window.__registerAnalyticsPanel(
+      { render: renderAnalyticsPanel, getEnabledIds, setEnabledIds, registry: WIDGET_REGISTRY },
+      bus
+    );
   </script>
 </body>
 </html>

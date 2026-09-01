@@ -654,6 +654,13 @@ def build_merged_html(
     return merged.encode("utf-8")
 
 
+_STATIC_DIR = INDEX_HTML.parent  # src/adapters/miniapp_static
+_JS_CONTENT_TYPES = {
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+}
+
+
 def make_handler(
     tasks: list[dict], templates: list[dict], projects: list[dict], goals: list[dict]
 ) -> type[http.server.BaseHTTPRequestHandler]:
@@ -673,9 +680,31 @@ def make_handler(
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(body)
-            else:
-                self.send_response(404)
-                self.end_headers()
+                return
+
+            # Виджеты аналитики (Phase 46) — index.html грузит их через
+            # <script type="module" src="./js/widgets/...">, до сих пор
+            # этот харнесс отдавал ровно один файл (index.html целиком,
+            # с внедрённым моком) и ничего больше не требовалось. Теперь
+            # нужно реально отдавать дерево статики — тот же принцип,
+            # что прод (StaticFiles(directory=_STATIC_DIR) в api.py),
+            # только руками: резолвим путь и проверяем, что он не вышел
+            # за пределы _STATIC_DIR (../../secrets и т.п.).
+            suffix = Path(self.path).suffix
+            if suffix in _JS_CONTENT_TYPES:
+                requested = (_STATIC_DIR / self.path.lstrip("/")).resolve()
+                if _STATIC_DIR.resolve() in requested.parents and requested.is_file():
+                    body = requested.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", _JS_CONTENT_TYPES[suffix])
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+
+            self.send_response(404)
+            self.end_headers()
 
         def log_message(self, fmt: str, *args: object) -> None:
             pass  # тихо — не засорять вывод при каждом запросе/скролле
