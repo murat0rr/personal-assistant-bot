@@ -10,31 +10,45 @@ from src.models.task import Task
 _NO_PROJECT_LABEL = "Без проекта"
 
 
-async def sphere_breakdown(user_id: int) -> list[dict]:
-    """Процентное соотношение задач по сферам (Phase 24) — все
-    неархивированные задачи со сферой, вне зависимости от статуса
+async def sphere_breakdown(user_id: int, month_anchor: date) -> dict:
+    """Процентное соотношение задач по сферам (Phase 24; листаемый по
+    месяцам — Phase 53, тот же приём, что уже есть у month_breakdown)
+    — все неархивированные задачи со сферой и датой в пределах месяца,
+    на который указывает month_anchor, вне зависимости от статуса
     "готово": это снимок того, как распределены намерения по сферам
-    жизни прямо сейчас, а не только выполненное. Плюс разбивка
-    выполнено/не выполнено внутри каждой сферы (Phase 29, item 8) — для
-    "расщеплённого" сегмента в тортике на фронтенде."""
+    жизни в этом месяце, а не только выполненное (в отличие от
+    month_breakdown, у которого другая цель — "сколько реально
+    сделано по дням", поэтому там фильтр по done=True, здесь — нет).
+    Плюс разбивка выполнено/не выполнено внутри каждой сферы (Phase 29,
+    item 8) — для "расщеплённого" сегмента в тортике на фронтенде."""
+    days_in_month = calendar.monthrange(month_anchor.year, month_anchor.month)[1]
+    month_start = month_anchor.replace(day=1)
+    month_end = month_anchor.replace(day=days_in_month)
+
     async with async_session() as session:
         result = await session.execute(
-            select(Task.sphere, Task.done).where(
-                Task.archived.is_(False), Task.sphere.is_not(None), Task.user_id == user_id
+            select(Task.sphere, Task.done, Task.due_date).where(
+                Task.archived.is_(False),
+                Task.sphere.is_not(None),
+                Task.due_date.is_not(None),
+                Task.user_id == user_id,
             )
         )
         rows = result.all()
 
     counts: dict[str, int] = {}
     done_counts: dict[str, int] = {}
-    for sphere, done in rows:
+    for sphere, done, due_date in rows:
+        if not (month_start <= due_date.date() <= month_end):
+            continue
         counts[sphere] = counts.get(sphere, 0) + 1
         if done:
             done_counts[sphere] = done_counts.get(sphere, 0) + 1
-    return [
+    spheres_out = [
         {"sphere": sphere, "count": count, "done": done_counts.get(sphere, 0)}
         for sphere, count in sorted(counts.items())
     ]
+    return {"year": month_anchor.year, "month": month_anchor.month, "spheres": spheres_out}
 
 
 async def month_breakdown(user_id: int, month_anchor: date) -> dict:

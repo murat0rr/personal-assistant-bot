@@ -876,8 +876,18 @@ async def diary_day_endpoint(
 # GET /miniapp/api/projects (task_count/done_count/start_date/end_date
 # там уже есть), отдельного эндпоинта под него не заводим.
 @app.get("/miniapp/api/analytics/spheres")
-async def analytics_spheres_endpoint(user: dict = Depends(get_authorized_user)) -> list[dict]:
-    return await analytics_repo.sphere_breakdown(user["id"])
+async def analytics_spheres_endpoint(
+    month: str | None = None, user: dict = Depends(get_authorized_user)
+) -> dict:
+    # month — тот же формат "YYYY-MM" и то же поведение без параметра,
+    # что у /analytics/month (Phase 53 — график по сферам тоже листается
+    # по месяцам, тем же приёмом).
+    if month:
+        year_str, month_str = month.split("-")
+        anchor = date(int(year_str), int(month_str), 1)
+    else:
+        anchor = await user_today(user["id"])
+    return await analytics_repo.sphere_breakdown(user["id"], anchor)
 
 
 @app.get("/miniapp/api/analytics/month")

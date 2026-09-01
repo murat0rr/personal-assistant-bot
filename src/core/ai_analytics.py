@@ -17,7 +17,9 @@ async def refresh_summary(user_id: int) -> str:
     день после регистрации, джоба ещё не успела отработать) — общая
     функция, чтобы не дублировать эту логику в двух местах."""
     today = await user_today(user_id)
-    spheres = await analytics_repo.sphere_breakdown(user_id)
+    # sphere_breakdown теперь листается по месяцам (Phase 53) и отдаёт
+    # {"year", "month", "spheres"} — сводке нужен только сам список.
+    spheres = (await analytics_repo.sphere_breakdown(user_id, today))["spheres"]
     month = await analytics_repo.month_breakdown(user_id, today)
     projects = await projects_repo.list_projects(user_id)
     text = await analyze_productivity(spheres, month, projects)

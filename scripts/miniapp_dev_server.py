@@ -402,18 +402,30 @@ window.fetch = async (path, options = {}) => {
             review: "дев-харнесс: пример ИИ-саммари дня",
           }
         : null;
-  } else if (path === "/miniapp/api/analytics/spheres") {
+  } else if (path.match(/\\/analytics\\/spheres(\\?month=(\\d{4})-(\\d{2}))?/)) {
+    // Листаемый по месяцам (Phase 53, тот же приём, что /analytics/month
+    // ниже) — в отличие от того мока, тут считаем по-настоящему
+    // отфильтрованные по due-дате задачи (не синтетику): переключение на
+    // соседний месяц у большинства мок-задач (due="сегодня") корректно
+    // покажет пустой график — это и есть проверяемое поведение (фильтр
+    // реально работает), не баг мока.
+    const m = path.match(/\\/analytics\\/spheres\\?month=(\\d{4})-(\\d{2})/);
+    const now = new Date();
+    const year = m ? Number(m[1]) : now.getFullYear();
+    const month = m ? Number(m[2]) : now.getMonth() + 1;
+    const monthKey = `${year}-${String(month).padStart(2, "0")}`;
     const counts = {};
     const doneCounts = {};
     for (const t of _tasks) {
-      if (!t.archived && t.sphere) {
+      if (!t.archived && t.sphere && t.due && t.due.startsWith(monthKey)) {
         counts[t.sphere] = (counts[t.sphere] || 0) + 1;
         if (t.done) doneCounts[t.sphere] = (doneCounts[t.sphere] || 0) + 1;
       }
     }
-    result = Object.keys(counts)
+    const spheres = Object.keys(counts)
       .sort()
       .map((sphere) => ({ sphere, count: counts[sphere], done: doneCounts[sphere] || 0 }));
+    result = { year, month, spheres };
   } else if (path.match(/\\/analytics\\/month(\\?month=(\\d{4})-(\\d{2}))?/)) {
     // Листаемый график (Phase 41) — без ?month= отдаёт "текущий месяц"
     // (реального today), с ?month= — тот месяц, который спросили;
