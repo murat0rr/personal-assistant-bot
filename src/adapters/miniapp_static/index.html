@@ -286,13 +286,22 @@
     }
     .checkbox svg { display: none; width: 12px; height: 12px; }
     .checkbox.done svg { display: block; }
+    /* Максимум 2 строки, дальше многоточие (Phase 55) — раньше было
+       однострочное усечение (white-space: nowrap). Не путать с
+       .title-full ниже — та для режима переноса задач и строк
+       проектов/целей, где текст всегда показывается полностью, её
+       не трогаем. */
     .title {
       flex: 1;
       font-size: 15px;
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
-      white-space: nowrap;
+      white-space: normal;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
     }
     .title.important {
       font-weight: 500;
@@ -475,6 +484,17 @@
       bottom: 0;
       width: 72px;
       touch-action: pan-y;
+    }
+    /* "Перенести на сегодня" в свайпаемой строке (Phase 55, БАГ) — flex
+       прижимает эту кнопку к правому краю .swipe-content, прямо под
+       .swipe-zone выше (та 72px и без z-index, так что по умолчанию
+       перекрывает любой обычный поток-элемент в этой полосе). Поднимаем
+       кнопку над зоной, иначе реальный тап по ней ловит зона, не кнопку
+       (свайпа не происходит — палец не двигался, — и клик просто
+       пропадает без вида ошибки). */
+    .move-today-btn {
+      position: relative;
+      z-index: 1;
     }
     .swipe-handle {
       position: absolute;
@@ -2165,6 +2185,20 @@
         toggleTaskDone(task);
       });
 
+      // "На сегодня" — слева от календаря (Phase 55, сейчас нужна и
+      // Инбоксу, не только "Вчера" — единственный компонент, который
+      // раньше строился последним, теперь строится и вставляется в DOM
+      // раньше dateBtn/archiveBtn, чтобы визуально оказаться левее).
+      if (showMoveToToday && !task.done) {
+        const moveBtn = document.createElement("button");
+        moveBtn.className = "small-btn";
+        moveBtn.disabled = isPending;
+        moveBtn.setAttribute("aria-label", "Перенести на сегодня");
+        moveBtn.innerHTML = moveToTodayIcon();
+        moveBtn.onclick = () => setTaskDueDate(task, boardState.days.today.date);
+        row.append(moveBtn);
+      }
+
       if (showDateButton && !task.done) {
         const dateBtn = document.createElement("button");
         dateBtn.className = "small-btn";
@@ -2191,16 +2225,6 @@
         archiveBtn.innerHTML = archiveIcon();
         archiveBtn.onclick = () => archiveTask(task);
         row.append(archiveBtn);
-      }
-
-      if (showMoveToToday && !task.done) {
-        const moveBtn = document.createElement("button");
-        moveBtn.className = "small-btn";
-        moveBtn.disabled = isPending;
-        moveBtn.setAttribute("aria-label", "Перенести на сегодня");
-        moveBtn.innerHTML = moveToTodayIcon();
-        moveBtn.onclick = () => setTaskDueDate(task, boardState.days.today.date);
-        row.append(moveBtn);
       }
 
       return row;
@@ -2790,7 +2814,18 @@
 
       if (showMoveToToday && !task.done) {
         const moveBtn = document.createElement("button");
-        moveBtn.className = "small-btn";
+        // move-today-btn (Phase 55, БАГ) — .swipe-zone ниже абсолютно
+        // спозиционирована поверх правых 72px строки (см. CSS) и не имеет
+        // z-index, поэтому по умолчанию перекрывает любую обычную кнопку
+        // потока, оказавшуюся в этой полосе — а эта кнопка, приклеенная
+        // flex'ом к правому краю прямо перед .swipe-handle/.swipe-zone,
+        // туда как раз попадает. Реальный тап по ней на самом деле бил в
+        // .swipe-zone (подтверждено live: document.elementFromPoint по
+        // центру кнопки возвращал SPAN.swipe-zone, не саму кнопку) —
+        // свайп не начинался (движения нет), а клик просто терялся,
+        // визуально "кнопка не работает". z-index здесь поднимает её
+        // выше зоны/ручки.
+        moveBtn.className = "small-btn move-today-btn";
         moveBtn.disabled = isPending;
         moveBtn.setAttribute("aria-label", "Перенести на сегодня");
         moveBtn.innerHTML = moveToTodayIcon();
@@ -4213,6 +4248,7 @@
         style: "plain",
         showDateButton: true,
         showTrashButton: true,
+        showMoveToToday: true,
         withDatePicker: true,
       });
       renderInboxHeader();
@@ -4879,6 +4915,11 @@
     // без архивации/переноса в проект — этих действий тут нет,
     // сущностей ещё нет в БД, только черновики в памяти этого окна.
     let taskReviewEditMode = false;
+    // Черновик строки "новая задача" внизу списка (Phase 55) — вне
+    // edit-режима, поле ввода + "+", тот же паттерн, что у
+    // renderAddEntityRow, но без похода в API — просто пуш в
+    // taskReviewItems (сущностей ещё нет в БД, это черновик окна).
+    let taskReviewDraft = "";
 
     function showTaskSuggestPill() {
       document.getElementById("task-suggest-pill").classList.add("visible");
@@ -4901,7 +4942,11 @@
         if (!titles.length) return;
         taskReviewKind = kind;
         taskReviewEntityId = entityId;
-        taskReviewItems = titles.map((title, i) => ({ title, selected: true, sortOrder: i }));
+        // По умолчанию НЕ выбраны (Phase 55) — раньше все ИИ-предложения
+        // были отмечены сразу, пользователь решал, что снять; теперь
+        // наоборот — сам решает, что добавить. Задачи, которые пользователь
+        // печатает сам через renderAddTaskReviewRow, остаются selected:true.
+        taskReviewItems = titles.map((title, i) => ({ title, selected: false, sortOrder: i }));
         taskReviewEditMode = false;
         taskReviewOpen = true;
         renderTaskReviewList();
@@ -4917,6 +4962,7 @@
       taskReviewOpen = false;
       taskReviewEditMode = false;
       taskReviewItems = [];
+      taskReviewDraft = "";
       render();
     }
 
@@ -4962,6 +5008,51 @@
       document.addEventListener("pointercancel", (e) => {
         if (e.pointerId === pointerId) clear();
       });
+    }
+
+    // Строка "новая задача" внизу списка ревью (Phase 55) — тот же
+    // визуальный паттерн, что у renderAddEntityRow (поле + "+", Enter
+    // отправляет), но без похода в API: пуш прямо в taskReviewItems.
+    function renderAddTaskReviewRow() {
+      const row = document.createElement("div");
+      row.className = "row add-task-row";
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = "Новая задача";
+      input.value = taskReviewDraft;
+      row.append(input);
+
+      const submitBtn = document.createElement("button");
+      submitBtn.className = "icon-btn add-task-submit";
+      submitBtn.setAttribute("aria-label", "Добавить задачу");
+      submitBtn.innerHTML = plusIcon();
+      submitBtn.disabled = !taskReviewDraft.trim();
+      input.addEventListener("input", () => {
+        taskReviewDraft = input.value;
+        submitBtn.disabled = !input.value.trim();
+      });
+
+      const submit = () => {
+        const value = input.value.trim();
+        if (!value) return;
+        taskReviewDraft = "";
+        // Введена пользователем сама — в отличие от ИИ-предложений
+        // (см. maybeSuggestEntityTasks), которые по умолчанию не
+        // выбраны — эту явно попросили добавить, так что сразу отмечена.
+        const nextOrder = taskReviewItems.length
+          ? Math.max(...taskReviewItems.map((i) => i.sortOrder)) + 1
+          : 0;
+        taskReviewItems.push({ title: value, selected: true, sortOrder: nextOrder });
+        renderTaskReviewList();
+      };
+      submitBtn.onclick = submit;
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") submit();
+      });
+      row.append(submitBtn);
+
+      return row;
     }
 
     function renderTaskReviewList() {
@@ -5025,6 +5116,9 @@
 
         listEl.append(row);
       });
+      // Строка добавления — только вне режима правки (там перенос и
+      // переименование уже созданных черновиков, не место для новых).
+      if (!taskReviewEditMode) listEl.append(renderAddTaskReviewRow());
     }
 
     async function commitTaskReview() {
