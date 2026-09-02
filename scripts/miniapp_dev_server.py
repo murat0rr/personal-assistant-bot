@@ -58,7 +58,7 @@ let _nextTemplateId = 100;
 const _templates = __TEMPLATES_JSON__;
 let _nextProjectId = 10;
 const _projects = __PROJECTS_JSON__;
-let _nextGoalId = 100;
+let _nextGoalId = 104; // сид уже занял 101-103, см. _default_goals
 const _goals = __GOALS_JSON__;
 
 function _serialize(t) {
@@ -732,7 +732,15 @@ def _default_goals() -> list[dict]:
     today = date.today()
     return [
         {
-            "id": 1,
+            # id — в диапазоне _nextGoalId (100+), НЕ 1-5, как у
+            # _default_projects (Phase 56, БАГ): на реальном бэкенде
+            # проекты и цели — одна таблица с одним сиквенсом (Phase 54),
+            # id никогда не пересекаются; в моке раньше были отдельные
+            # счётчики и совпадающие id 1/2/3 у сида — из-за этого
+            # tasksForProject (фильтр по голому entity.id, без kind)
+            # ошибочно показывала задачи проекта id=1 внутри окна цели
+            # id=1 и наоборот. Нашли живой проверкой Phase 56.
+            "id": 101,
             "title": "Пробежать 15км за неделю",
             "description": None,
             "spheres": ["спорт"],
@@ -744,7 +752,7 @@ def _default_goals() -> list[dict]:
             "archived": False,
         },
         {
-            "id": 2,
+            "id": 102,
             "title": "Закрыть квартальный отчёт",
             "description": "Свести цифры по всем отделам",
             "spheres": ["работа"],
@@ -756,7 +764,7 @@ def _default_goals() -> list[dict]:
             "archived": False,
         },
         {
-            "id": 3,
+            "id": 103,
             "title": "Выучить испанский до разговорного уровня",
             "description": None,
             "spheres": ["развитие", "учёба"],

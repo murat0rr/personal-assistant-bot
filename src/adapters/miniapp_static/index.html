@@ -1296,6 +1296,27 @@
       -webkit-overflow-scrolling: touch;
       padding: 4px 16px calc(16px + env(safe-area-inset-bottom, 0px));
     }
+    /* Окно проекта/цели по тапу (Phase 56) — та же .entity-window, но
+       чуть шире (90vw, не 88vw) — так попросили в требовании ("90% по
+       ширине"). max-height, не фиксированная height — как у обычного
+       .entity-window: короткий список задач не должен растягивать окно
+       в пустой блок на 80% экрана. */
+    .project-detail-window { width: 90vw; }
+    .project-detail-head-actions { display: flex; gap: 8px; }
+    .project-detail-description {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin: 0 0 10px;
+      white-space: pre-wrap;
+    }
+    /* Шестерёнка открывает форму правки (#create-entity-sheet) ПОВЕРХ
+       этого окна — тот же приём, что уже применён к #templates-sheet/
+       #date-picker-sheet (z-index 27), которые точно так же обязаны
+       всплывать над уже открытым окном z-index 26. Аддитивно и
+       безопасно: единственное, что сейчас открывается поверх формы
+       правки — #date-picker-sheet, тоже 27, при равенстве побеждает
+       порядок в разметке (он объявлен позже) — ничего не меняется. */
+    #create-entity-sheet { z-index: 27; }
     /* Плашка "Генерируем задачи…" (Phase 52) — левый верхний угол, тот
        же safe-area-приём, что и .entity-window-body выше, но сверху. */
     .task-suggest-pill {
@@ -1806,6 +1827,26 @@
     </div>
   </div>
 
+  <!-- Окно проекта/цели по тапу (Phase 56) — тот же .entity-window, что
+       у формы правки/ревью-экрана/помощи, только шире (90vw, не 88vw —
+       см. .project-detail-window в CSS). Шестерёнка открывает уже
+       существующую форму правки (#create-entity-sheet) ПОВЕРХ этого
+       окна — см. z-index #create-entity-sheet и порядок веток в
+       обработчике клика по #reorder-scrim. -->
+  <div id="project-detail-sheet" class="entity-window project-detail-window">
+    <div class="entity-window-head">
+      <span class="entity-window-title" id="project-detail-title"></span>
+      <div class="project-detail-head-actions">
+        <button type="button" class="entity-window-close" id="project-detail-settings" aria-label="Настройки"></button>
+        <button type="button" class="entity-window-close" id="project-detail-close" aria-label="Закрыть">✕</button>
+      </div>
+    </div>
+    <div class="entity-window-body">
+      <p id="project-detail-description" class="project-detail-description"></p>
+      <div id="project-detail-list" class="list"></div>
+    </div>
+  </div>
+
   <div id="date-picker-sheet">
     <div class="month-cal-nav">
       <button class="small-btn" id="date-picker-prev" aria-label="Предыдущий месяц">‹</button>
@@ -2000,6 +2041,33 @@
     // фронтенде (см. GOAL_TIERS/renderGoalsPages).
     let goalsData = [];
 
+    // Окно проекта/цели по тапу (Phase 56) — хранит ТОЛЬКО id/kind, не
+    // саму сущность: editProject/editGoal перезагружают
+    // projectsData/goalsData целиком новыми объектами (не мутируют на
+    // месте), так что захваченная ссылка на entity устарела бы сразу
+    // после правки через шестерёнку внутри окна — тот же класс бага,
+    // что уже был описан и исправлен для weekDetailListEl (Phase 32).
+    let projectDetailId = null;
+    let projectDetailKind = null; // "project" | "goal"
+
+    function getProjectDetailEntity() {
+      if (projectDetailId == null) return null;
+      const arr = projectDetailKind === "project" ? projectsData : goalsData;
+      return arr.find((e) => e.id === projectDetailId) || null;
+    }
+
+    function openProjectDetailSheet(entity, kind) {
+      projectDetailId = entity.id;
+      projectDetailKind = kind;
+      render();
+    }
+
+    function closeProjectDetailSheet() {
+      projectDetailId = null;
+      projectDetailKind = null;
+      render();
+    }
+
     // Форма создания/правки проекта/цели (Phase 28) — один sheet и на
     // создание, и на правку. createEntityKind ("project" | "goal" | null)
     // — что редактируем; createEntityEditingId — null при создании новой
@@ -2159,6 +2227,22 @@
 
     function tasksForDate(iso) {
       return (boardState.dated_tasks || []).filter((t) => t.due_date === iso);
+    }
+
+    // Задачи конкретного проекта/цели (Phase 56) — тот же приём, что
+    // tasksForDate, но без нового backend-эндпоинта: dated_tasks (ВСЕ
+    // датированные задачи, не только ближайшая неделя) + inbox (без
+    // даты ИЛИ просроченные-невыполненные) вместе покрывают весь
+    // не-архивированный набор задач пользователя (см. build_task_board).
+    // Дедуп по id обязателен — просроченная-невыполненная задача
+    // попадает СРАЗУ в оба массива (та же логика на бэкенде и в
+    // rebucketTask выше), иначе она задвоилась бы в списке.
+    function tasksForProject(entityId) {
+      const byId = new Map();
+      for (const t of [...(boardState.dated_tasks || []), ...(boardState.inbox || [])]) {
+        if (t.project_id === entityId) byId.set(t.id, t);
+      }
+      return [...byId.values()];
     }
 
     function renderTaskRow(task, { showDateButton, showTrashButton, showMoveToToday }) {
@@ -3336,6 +3420,18 @@
       wrap.append(actions, content);
       const swipeHandle = setupSwipeDrag(zone, actions, (kind === "project" ? "project-" : "goal-") + entity.id);
       attachEntityLongPress(content, entity, kind);
+      // Обычный тап — открывает окно проекта/цели (Phase 56). Долгое
+      // нажатие (attachEntityLongPress выше) по-прежнему сразу ведёт в
+      // форму правки — гонки нет: render() внутри неё (см.
+      // openEditEntitySheet) целиком перестраивает список раньше, чем
+      // нативный click успевает всплыть после отпускания, так что узел
+      // content к этому моменту уже отсоединён от документа. checkbox/
+      // zone/handle исключены — у них свой смысл тапа (отметить
+      // выполненным / начать свайп).
+      content.addEventListener("click", (e) => {
+        if (e.target.closest(".checkbox, .swipe-zone, .swipe-handle")) return;
+        openProjectDetailSheet(entity, kind);
+      });
       return wrap;
     }
 
@@ -3404,6 +3500,29 @@
         const items = goalsData.filter((g) => g.tier === tier);
         renderEntityList("pg-goals-" + tier, items, "goal", "goal-" + tier, tier);
       }
+    }
+
+    // Содержимое окна проекта/цели (Phase 56) — видимость самого
+    // #project-detail-sheet переключается в render() вместе с
+    // остальными шторками, эта функция только заполняет содержимое.
+    // #project-detail-list — статический узел (см. разметку), никогда
+    // не пересоздаётся, поэтому просто перерисовываем его как обычный
+    // список (attachReorderEntry навешан один раз при загрузке, см.
+    // ниже по файлу, с динамическим ключом — рядом с остальными
+    // attachReorderEntry).
+    function renderProjectDetailSheet() {
+      const entity = getProjectDetailEntity();
+      if (!entity) return;
+      document.getElementById("project-detail-title").textContent = entity.title;
+      document.getElementById("project-detail-description").textContent = entity.description || "";
+      renderList(document.getElementById("project-detail-list"), tasksForProject(entity.id), {
+        listKey: "project:" + projectDetailKind + ":" + entity.id,
+        style: "swipe",
+        showMoveToToday: true,
+        showTemplatesPicker: false,
+        dateFor: () => null,
+        projectId: entity.id,
+      });
     }
 
     async function setEntityDone(entity, kind, done) {
@@ -3643,7 +3762,10 @@
         if (!value) return;
         const dueDate = ctx.withDatePicker ? draft.date : ctx.dateFor();
         addTaskDrafts[ctx.listKey] = { text: "", date: null };
-        createTaskFor(dueDate, value);
+        // ctx.projectId — только у окна проекта/цели (Phase 56), у
+        // остальных списков не задан (undefined), createTaskFor
+        // подставит null.
+        createTaskFor(dueDate, value, ctx.projectId);
       };
       submitBtn.onclick = submit;
       input.addEventListener("keydown", (e) => {
@@ -4262,6 +4384,15 @@
       renderColorPickerList();
       renderCreateEntityForm();
       renderDatePickerGrid();
+      // Сущность окна проекта/цели могла пропасть (заархивирована,
+      // пока окно было открыто) — projectsData/goalsData выше уже
+      // свежие на этот момент рендера, так что проверка здесь надёжна.
+      // Закрываем сами, а не оставляем окно со сломанным состоянием.
+      if (projectDetailId != null && !getProjectDetailEntity()) {
+        projectDetailId = null;
+        projectDetailKind = null;
+      }
+      renderProjectDetailSheet();
       const anySheetOpen =
         templatesPickerOpen ||
         projectPickerOpen ||
@@ -4272,7 +4403,8 @@
         helpSheetOpen ||
         widgetSettingsOpen ||
         dayViewSettingsOpen ||
-        taskReviewOpen;
+        taskReviewOpen ||
+        projectDetailId !== null;
       document
         .getElementById("reorder-scrim")
         .classList.toggle("visible", reorderActiveKey !== null || anySheetOpen);
@@ -4296,6 +4428,9 @@
         .getElementById("day-view-settings-sheet")
         .classList.toggle("visible", dayViewSettingsOpen);
       document.getElementById("task-review-sheet").classList.toggle("visible", taskReviewOpen);
+      document
+        .getElementById("project-detail-sheet")
+        .classList.toggle("visible", projectDetailId !== null);
     }
 
     function addDaysIso(iso, days) {
@@ -4488,7 +4623,7 @@
       }
     }
 
-    async function createTaskFor(dueDate, title) {
+    async function createTaskFor(dueDate, title, projectId) {
       // dueDate === null — валидный случай (задача для инбокса, без даты).
       // undefined — реальная ошибка (не нашли дату дня-источника).
       if (dueDate === undefined) return;
@@ -4505,6 +4640,11 @@
         // models/task.py, default=time.time), пока сервер не подтвердит
         // настоящее значение.
         sort_order: Date.now(),
+        // Привязка к проекту/цели (Phase 56) — только у окна проекта,
+        // остальные вызовы createTaskFor её не передают (undefined ??
+        // null). Оптимистично сразу, чтобы задача показалась в
+        // tasksForProject ещё до ответа сервера.
+        project_id: projectId ?? null,
       };
       pendingIds.add(tempId);
       rebucketTask(tempTask);
@@ -4515,6 +4655,19 @@
           body: JSON.stringify({ title, due_date: dueDate }),
         });
         tempTask.id = result.id;
+        if (projectId) {
+          // POST .../tasks/{id}/project уже существует (используется
+          // assignTaskProject для существующих задач) — здесь тот же
+          // вызов сразу после создания, без отдельного эндпоинта.
+          await api(`/miniapp/api/tasks/${encodeURIComponent(result.id)}/project`, {
+            method: "POST",
+            body: JSON.stringify({ project_id: projectId }),
+          });
+          // task_count/done_count у сущности — кэш на сервере, обновится
+          // только перезагрузкой соответствующей коллекции.
+          if (projectDetailKind === "goal") await loadGoals();
+          else await loadProjects();
+        }
       } catch (e) {
         removeTaskEverywhere(tempId);
         alert("Не удалось создать задачу.");
@@ -6201,6 +6354,12 @@
     attachReorderEntry(document.getElementById("tomorrow-list"), "tomorrow");
     attachReorderEntry(document.getElementById("inbox-list"), "inbox");
     attachReorderEntry(document.getElementById("templates-list"), "templates");
+    // Окно проекта/цели (Phase 56) — тоже статический, никогда не
+    // пересоздаётся, так что и здесь один вызов на загрузку хватает; ключ
+    // — функция, а не строка, потому что projectDetailId/Kind меняются,
+    // пока сам DOM-узел живёт (тот же приём, что у "cal:"+selectedWeekDate
+    // в renderWeekDetail).
+    attachReorderEntry(document.getElementById("project-detail-list"), () => "project:" + projectDetailKind + ":" + projectDetailId);
 
     attachSheetOverswipeClose(
       document.getElementById("templates-sheet"),
@@ -6240,6 +6399,16 @@
     document.getElementById("task-review-submit").addEventListener("click", commitTaskReview);
     attachTaskReviewLongPress(document.getElementById("task-review-list"));
 
+    // Окно проекта/цели (Phase 56) — крестик закрывает; шестерёнка
+    // открывает форму правки ПОВЕРХ этого окна (см. z-index
+    // #create-entity-sheet в CSS).
+    document.getElementById("project-detail-settings").innerHTML = settingsGearIcon();
+    document.getElementById("project-detail-settings").addEventListener("click", () => {
+      const entity = getProjectDetailEntity();
+      if (entity) openEditEntitySheet(entity, projectDetailKind);
+    });
+    document.getElementById("project-detail-close").addEventListener("click", closeProjectDetailSheet);
+
     attachScreenTransition();
 
     // Тап по затемнению — единственный выход из режима переноса (кнопки
@@ -6265,6 +6434,13 @@
         closeDatePickerSheet();
       } else if (createEntityKind !== null) {
         closeCreateEntitySheet();
+      } else if (projectDetailId !== null) {
+        // Проверяем после createEntityKind (Phase 56) — форма правки
+        // открывается ПОВЕРХ окна проекта (шестерёнка), тап по фону
+        // должен закрыть сначала именно её, оставив окно проекта
+        // открытым — тот же принцип "сначала более вложенное
+        // состояние", что и у taskReviewEditMode ниже.
+        closeProjectDetailSheet();
       } else if (helpSheetOpen) {
         closeHelpSheet();
       } else if (widgetSettingsOpen) {
