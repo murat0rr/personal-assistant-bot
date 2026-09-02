@@ -16,7 +16,7 @@ from src.core.auth import is_authorized
 from src.core.config import settings
 from src.core.user_location import save_location_for
 from src.integrations.geocoding import resolve_timezone, reverse_geocode_label
-from src.scheduler.jobs import reschedule_for_timezone
+from src.scheduler.jobs import reschedule_user_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -66,16 +66,20 @@ async def handle_location(
 
     # Часовой пояс каждого пользователя управляет ЕГО ЛИЧНЫМ расписанием
     # (Phase 40 — у каждого свои джобы) и его личной погодой — применяем
-    # сразу, без перезапуска процесса: reschedule_for_timezone пересобирает
+    # сразу, без перезапуска процесса: reschedule_user_jobs пересобирает
     # именно его джобы (CronTrigger резолвит tzinfo один раз при
-    # создании, просто поменять что-то задним числом нельзя).
+    # создании, просто поменять что-то задним числом нельзя). Она же
+    # читает tz_name заново из БД (уже сохранён строкой выше) — не
+    # передаём параметром, тот же пересборщик используют /morning и
+    # /evening (Phase 61, handlers/f_schedule.py), каждый меняет своё
+    # поле.
     if user_id == settings.telegram_user_id:
         # Основной владелец — его зона ещё и дефолт settings.timezone для
         # всего, что пока не стало per-user (см. user_location.py).
         # settings — обычный мутируемый pydantic-объект, применяется
         # немедленно, без правок в каждом месте использования.
         settings.timezone = tz_name
-    await reschedule_for_timezone(scheduler, bot, storage, user_id, tz_name)
+    await reschedule_user_jobs(scheduler, bot, storage, user_id)
     logger.info("Часовой пояс обновлён (%s): %s", user_id, tz_name)
 
     where = f" ({label})" if label else ""

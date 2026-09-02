@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from src.core.auth import is_authorized
 from src.core.db import async_session
-from src.core.user_location import user_timezone
+from src.core.user_location import user_schedule_hours, user_timezone
 from src.models.task import Task
 from src.models.task_nag import TaskNagSettings
 
@@ -30,14 +30,12 @@ _NUDGE_DELETE_AFTER = timedelta(minutes=59)
 _QUIET_HOUR_START = 0
 _QUIET_HOUR_END = 7  # не включительно — 7:00 уже можно
 
-# Утренняя рассылка (Phase 60) — не намекать ближайший час после нее,
-# человек и так только что получил дайджест. Час рассылки — константа
-# 8 (текущее фиксированное время, см. scheduler/jobs.py::_job_specs);
-# Phase 61 сделает его настраиваемым за пользователя (AuthorizedUser.
-# morning_hour) — тогда сюда придёт то же значение параметром, не
-# менять сам механизм. Длина окна (1 час) — разумный дефолт, конкретное
-# число не называлось.
-_MORNING_DIGEST_HOUR = 8
+# Утренняя рассылка (Phase 60) — не намекать ближайший час после неё,
+# человек и так только что получил дайджест. Час рассылки — свой у
+# пользователя (Phase 61, /morning, см. user_location.py::
+# user_schedule_hours — тот же источник, что и у самого джоба
+# рассылки в scheduler/jobs.py). Длина окна (1 час) — разумный дефолт,
+# конкретное число не называлось.
 _MORNING_DIGEST_GRACE = timedelta(hours=1)
 
 _HOURS_CHOICES = range(1, 7)  # 1..6, как попросили
@@ -185,11 +183,11 @@ def _is_quiet_hour(now: datetime) -> bool:
     return _QUIET_HOUR_START <= now.hour < _QUIET_HOUR_END
 
 
-def _within_morning_digest_grace(now: datetime, morning_hour: int = _MORNING_DIGEST_HOUR) -> bool:
+def _within_morning_digest_grace(now: datetime, morning_hour: int) -> bool:
     """Чистая функция для теста — окно тишины сразу после утренней
-    рассылки (Phase 60). morning_hour — параметр, не жёсткая
-    зависимость от константы, ради Phase 61 (настраиваемое время
-    рассылки за пользователя)."""
+    рассылки (Phase 60). morning_hour — свой у пользователя (Phase 61,
+    /morning), вызывающая сторона (check_and_nudge) достаёт его через
+    user_schedule_hours перед вызовом."""
     digest_at = now.replace(hour=morning_hour, minute=0, second=0, microsecond=0)
     return digest_at <= now < digest_at + _MORNING_DIGEST_GRACE
 
@@ -239,12 +237,13 @@ async def check_and_nudge(bot: Bot, user_id: int) -> None:
     ):
         return
 
-    # Тихие часы/окно после утренней рассылки (Phase 60) — таймер/
+    # Тихие часы/окно после утренней рассылки (Phase 60/61) — таймер/
     # счётчик НЕ трогаем, тот же принцип, что и у "нет незакрытых
     # задач" ниже: как только окно кончится, следующая же проверка
     # (порог уже пройден) пришлёт намёк сразу же, не будет ждать заново
     # полный интервал.
-    if _is_quiet_hour(now) or _within_morning_digest_grace(now):
+    morning_hour, _evening_hour = await user_schedule_hours(user_id)
+    if _is_quiet_hour(now) or _within_morning_digest_grace(now, morning_hour):
         return
 
     # Незакрытых задач физически нет — намекать не о чем. Таймер/счётчик

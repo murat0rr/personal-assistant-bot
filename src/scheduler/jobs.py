@@ -20,7 +20,7 @@ from src.core.goals import GOAL_TIER_BOUNDS
 from src.core.habits import list_habits
 from src.core.recurring_tasks import materialize_due_rules
 from src.core.task_templates import create_ai_template, list_templates
-from src.core.user_location import user_timezone, user_today
+from src.core.user_location import user_schedule_hours, user_timezone, user_today
 from src.handlers.f4_diary import DiaryStates, ask_question
 from src.handlers.f9_finance import FINANCE_GUIDE
 from src.handlers.f11_weekly_review import build_weekly_review
@@ -296,7 +296,12 @@ async def _suggest_templates_job(bot: Bot, user_id: int) -> None:
 
 
 def _job_specs(
-    bot: Bot, storage: BaseStorage, user_id: int, tz_name: str
+    bot: Bot,
+    storage: BaseStorage,
+    user_id: int,
+    tz_name: str,
+    morning_hour: int,
+    evening_hour: int,
 ) -> list[tuple[str, Any, dict, list]]:
     """Единый источник правды для расписания джобов ОДНОГО пользователя
     (Phase 40 — раньше был один глобальный набор джобов на всё
@@ -305,11 +310,19 @@ def _job_specs(
     приходился один-единственный экземпляр, теперь их по одному на
     пользователя, id должны быть уникальны в рамках всего scheduler.
     Используется и register_jobs_for_user (первичная регистрация), и
-    reschedule_for_timezone (Phase 39/40, команда /timezone: пересобирает
-    триггеры ЭТОГО пользователя на новый часовой пояс в рантайме)."""
+    reschedule_user_jobs (Phase 39/40/61 — команды /timezone, /morning,
+    /evening: пересобирают триггеры ЭТОГО пользователя в рантайме).
+    morning_hour/evening_hour — уже разрешённые значения (дефолт
+    подставлен вызывающей стороной, см. user_location.py::
+    user_schedule_hours), не сырые nullable-поля из БД."""
     is_owner = user_id == settings.telegram_user_id
     specs: list[tuple[str, Any, dict, list]] = [
-        ("morning_digest", _morning_digest, {"hour": 8, "minute": 0}, [bot, storage, user_id]),
+        (
+            "morning_digest",
+            _morning_digest,
+            {"hour": morning_hour, "minute": 0},
+            [bot, storage, user_id],
+        ),
         ("reminders", _reminders_job, {"hour": 8, "minute": 0}, [bot, user_id]),
         (
             "weekly_review",
@@ -375,7 +388,12 @@ def _job_specs(
                 {"day": 1, "hour": 8, "minute": 0},
                 [bot],
             ),
-            ("evening_diary", _evening_diary, {"hour": 21, "minute": 0}, [bot, storage]),
+            (
+                "evening_diary",
+                _evening_diary,
+                {"hour": evening_hour, "minute": 0},
+                [bot, storage],
+            ),
         ]
     return [
         (f"{name}:{user_id}", func, {**trigger, "timezone": tz_name}, args)
@@ -391,7 +409,10 @@ async def register_jobs_for_user(
     каждого уже авторизованного (см. setup_scheduler) и сразу при
     успешной авторизации нового пользователя (см. handlers/f_auth.py)."""
     tz_name = str(await user_timezone(user_id))
-    for job_id, func, trigger_kwargs, args in _job_specs(bot, storage, user_id, tz_name):
+    morning_hour, evening_hour = await user_schedule_hours(user_id)
+    for job_id, func, trigger_kwargs, args in _job_specs(
+        bot, storage, user_id, tz_name, morning_hour, evening_hour
+    ):
         scheduler.add_job(
             func, CronTrigger(**trigger_kwargs), args=args, id=job_id, replace_existing=True
         )
@@ -400,7 +421,7 @@ async def register_jobs_for_user(
     # (тот контракт жёстко завязан на CronTrigger). Опрос раз в 15 минут
     # — разрешение проверки, сам намёк придёт не позже, чем через 15
     # минут после расчётного порога, не секунда в секунду. Часовой пояс
-    # IntervalTrigger не важен — reschedule_for_timezone его не трогает.
+    # IntervalTrigger не важен — reschedule_user_jobs его не трогает.
     scheduler.add_job(
         _task_nag_sweep,
         IntervalTrigger(minutes=15),
@@ -426,16 +447,26 @@ async def setup_scheduler(bot: Bot, storage: BaseStorage) -> AsyncIOScheduler:
     return scheduler
 
 
-async def reschedule_for_timezone(
-    scheduler: AsyncIOScheduler, bot: Bot, storage: BaseStorage, user_id: int, tz_name: str
+async def reschedule_user_jobs(
+    scheduler: AsyncIOScheduler, bot: Bot, storage: BaseStorage, user_id: int
 ) -> None:
-    """Часовой пояс пользователя сменился в рантайме (команда /timezone,
-    handlers/f_timezone.py) — пересобирает триггеры ЕГО ЛИЧНЫХ джобов на
-    новую зону (не всех пользователей — у каждого своя). CronTrigger
-    резолвит tzinfo один раз при создании (не держит живую ссылку на
-    scheduler.timezone), так что нужно явно пересоздать каждый триггер,
-    не просто поменять атрибут задним числом."""
-    for job_id, func, trigger_kwargs, args in _job_specs(bot, storage, user_id, tz_name):
+    """Что-то в личном расписании пользователя сменилось в рантайме —
+    часовой пояс (/timezone, handlers/f_timezone.py), час утренней
+    рассылки или вечерней рефлексии (/morning /evening, Phase 61,
+    handlers/f_schedule.py) — пересобирает триггеры ЕГО ЛИЧНЫХ джобов
+    (не всех пользователей — у каждого своё). Читает актуальные
+    значения из БД сама (не принимает параметром, как было раньше
+    только с tz_name) — один пересборщик на все три случая, вызывающей
+    стороне достаточно один раз сохранить своё поле и позвать эту
+    функцию. CronTrigger резолвит tzinfo/час один раз при создании (не
+    держит живую ссылку на scheduler.timezone), так что нужно явно
+    пересоздать каждый триггер, не просто поменять атрибут задним
+    числом."""
+    tz_name = str(await user_timezone(user_id))
+    morning_hour, evening_hour = await user_schedule_hours(user_id)
+    for job_id, func, trigger_kwargs, args in _job_specs(
+        bot, storage, user_id, tz_name, morning_hour, evening_hour
+    ):
         if scheduler.get_job(job_id) is not None:
             scheduler.reschedule_job(job_id, trigger=CronTrigger(**trigger_kwargs))
         else:

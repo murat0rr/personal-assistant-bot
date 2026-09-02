@@ -27,6 +27,7 @@ from src.handlers.f_auth import router as auth_router
 from src.handlers.f_goals import router as goals_router
 from src.handlers.f_morning_advice import router as morning_advice_router
 from src.handlers.f_reminders import router as reminders_router
+from src.handlers.f_schedule import router as schedule_router
 from src.handlers.f_task_nag import router as task_nag_router
 from src.handlers.f_timezone import router as timezone_router
 from src.handlers.f_web_login import router as web_login_router
@@ -53,6 +54,7 @@ dp.include_router(mode_buttons_router)
 dp.include_router(reminders_router)
 dp.include_router(finance_router)
 dp.include_router(task_nag_router)
+dp.include_router(schedule_router)
 dp.include_router(timezone_router)
 dp.include_router(web_login_router)
 dp.include_router(orchestrator_router)
@@ -120,6 +122,8 @@ async def main() -> None:
             BotCommand(command="start", description="Начать / показать кнопки"),
             BotCommand(command="reminders", description="Список напоминаний"),
             BotCommand(command="nag", description="Намёки о незакрытых задачах — вкл/выкл"),
+            BotCommand(command="morning", description="Час утренней рассылки"),
+            BotCommand(command="evening", description="Час вечерней рефлексии"),
             BotCommand(command="timezone", description="Определить часовой пояс по геопозиции"),
             BotCommand(command="staging", description="Открыть staging Mini App"),
         ]

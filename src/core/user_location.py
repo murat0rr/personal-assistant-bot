@@ -56,6 +56,57 @@ async def apply_stored_timezone() -> None:
         settings.timezone = owner.timezone
 
 
+# Дефолты часа утренней рассылки/вечерней рефлексии (Phase 61) — те
+# же значения, что были жёстко зашиты в scheduler/jobs.py::_job_specs
+# до этой фазы, теперь только фолбэк, если пользователь не задавал
+# свои /morning /evening.
+DEFAULT_MORNING_HOUR = 8
+DEFAULT_EVENING_HOUR = 21
+
+
+async def user_schedule_hours(user_id: int) -> tuple[int, int]:
+    """(час утренней рассылки, час вечерней рефлексии) — свои, если
+    когда-то заданы командами /morning /evening, иначе дефолты выше.
+    Используется и планировщиком (register_jobs_for_user/
+    reschedule_user_jobs), и /nag (тихий час после рассылки, см.
+    handlers/f_task_nag.py) — один источник правды на оба."""
+    location = await get_user_location(user_id)
+    morning = (
+        location.morning_hour
+        if location and location.morning_hour is not None
+        else DEFAULT_MORNING_HOUR
+    )
+    evening = (
+        location.evening_hour
+        if location and location.evening_hour is not None
+        else DEFAULT_EVENING_HOUR
+    )
+    return morning, evening
+
+
+async def save_schedule_hour(
+    user_id: int, *, morning_hour: int | None = None, evening_hour: int | None = None
+) -> None:
+    """Сохраняет час утренней рассылки и/или вечерней рефлексии — вызывается
+    из handlers/f_schedule.py (/morning, /evening). Обновляет только
+    переданные поля, второе остаётся как было. Строка AuthorizedUser
+    обычно уже существует (создаётся при авторизации, см. f_auth.py) —
+    ветка создания на случай, если её почему-то нет, та же защита, что
+    у save_location_for."""
+    async with async_session() as session:
+        existing = await session.get(AuthorizedUser, user_id)
+        if existing is None:
+            existing = AuthorizedUser(
+                telegram_user_id=user_id, added_at=datetime.now(await user_timezone(user_id))
+            )
+            session.add(existing)
+        if morning_hour is not None:
+            existing.morning_hour = morning_hour
+        if evening_hour is not None:
+            existing.evening_hour = evening_hour
+        await session.commit()
+
+
 async def save_location_for(
     telegram_user_id: int,
     latitude: float,
