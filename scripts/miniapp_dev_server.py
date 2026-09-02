@@ -807,9 +807,11 @@ def build_merged_html(
 
 
 _STATIC_DIR = INDEX_HTML.parent  # src/adapters/miniapp_static
-_JS_CONTENT_TYPES = {
+_STATIC_CONTENT_TYPES = {
     ".js": "text/javascript; charset=utf-8",
     ".mjs": "text/javascript; charset=utf-8",
+    # .css (Phase 57) — вынос <style> из index.html в css/app.css.
+    ".css": "text/css; charset=utf-8",
 }
 
 
@@ -841,14 +843,15 @@ def make_handler(
             # нужно реально отдавать дерево статики — тот же принцип,
             # что прод (StaticFiles(directory=_STATIC_DIR) в api.py),
             # только руками: резолвим путь и проверяем, что он не вышел
-            # за пределы _STATIC_DIR (../../secrets и т.п.).
+            # за пределы _STATIC_DIR (../../secrets и т.п.). С Phase 57
+            # сюда же попадает css/app.css и js/core/icons.js.
             suffix = Path(self.path).suffix
-            if suffix in _JS_CONTENT_TYPES:
+            if suffix in _STATIC_CONTENT_TYPES:
                 requested = (_STATIC_DIR / self.path.lstrip("/")).resolve()
                 if _STATIC_DIR.resolve() in requested.parents and requested.is_file():
                     body = requested.read_bytes()
                     self.send_response(200)
-                    self.send_header("Content-Type", _JS_CONTENT_TYPES[suffix])
+                    self.send_header("Content-Type", _STATIC_CONTENT_TYPES[suffix])
                     self.send_header("Content-Length", str(len(body)))
                     self.send_header("Cache-Control", "no-store")
                     self.end_headers()
