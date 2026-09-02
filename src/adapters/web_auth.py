@@ -45,8 +45,19 @@ def _page(body: str) -> HTMLResponse:
     )
 
 
+_NOT_CONFIGURED_PAGE = """
+<div class="card"><h1>Вход не настроен</h1>
+<p>Веб-версия вне Telegram недоступна — обратитесь к владельцу бота.</p></div>
+"""
+
+
 @router.get("/login")
 async def login_page() -> HTMLResponse:
+    # SESSION_SECRET не задан — фича опциональна (см. Settings.session_secret),
+    # но тогда должна быть выключена целиком, а не тихо подписывать
+    # HMAC пустым ключом (Phase 58, БАГ безопасности).
+    if not settings.session_secret:
+        return _page(_NOT_CONFIGURED_PAGE)
     bot_hint = f" @{settings.telegram_bot_username}" if settings.telegram_bot_username else ""
     return _page(f"""
     <div class="card">
@@ -65,6 +76,10 @@ async def login_page() -> HTMLResponse:
 
 @router.post("/verify-code", response_model=None)
 async def verify_code_endpoint(request: Request) -> HTMLResponse | RedirectResponse:
+    # Тот же guard, что и у GET /login (Phase 58) — прямой POST мимо
+    # страницы входа не должен обойти проверку "фича выключена".
+    if not settings.session_secret:
+        return _page(_NOT_CONFIGURED_PAGE)
     client_ip = request.client.host if request.client else "unknown"
     if not await can_attempt_verify(client_ip):
         return _page("""

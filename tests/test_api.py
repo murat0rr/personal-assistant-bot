@@ -71,3 +71,39 @@ def test_verify_code_rate_limited_after_too_many_attempts():
         client.post("/auth/verify-code", data={"code": "0000"})
     response = client.post("/auth/verify-code", data={"code": "0000"})
     assert "слишком много попыток" in response.text.lower()
+
+
+# ---- Phase 58 (БАГ безопасности) — session_secret пустой должен реально
+# выключать веб-вход, а не молча подписывать HMAC пустым ключом
+# (см. src/core/web_session.py/web_auth.py). conftest.py по умолчанию
+# задаёт непустой SESSION_SECRET (иначе тесты выше не проверяли бы
+# настоящий рабочий путь) — здесь временно очищаем его и восстанавливаем.
+
+
+def test_login_page_reports_not_configured_without_session_secret():
+    from src.core.config import settings
+
+    prev = settings.session_secret
+    settings.session_secret = ""
+    try:
+        client = TestClient(app)
+        response = client.get("/auth/login")
+        assert response.status_code == 200
+        assert "не настроен" in response.text.lower()
+        assert "/webcode" not in response.text
+    finally:
+        settings.session_secret = prev
+
+
+def test_verify_code_reports_not_configured_without_session_secret():
+    from src.core.config import settings
+
+    prev = settings.session_secret
+    settings.session_secret = ""
+    try:
+        client = TestClient(app)
+        response = client.post("/auth/verify-code", data={"code": "0000"})
+        assert response.status_code == 200
+        assert "не настроен" in response.text.lower()
+    finally:
+        settings.session_secret = prev

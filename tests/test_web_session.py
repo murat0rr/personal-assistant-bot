@@ -49,3 +49,27 @@ def test_malformed_token_rejected():
     settings.session_secret = "test-secret"
     assert verify_session_token("garbage") is None
     assert verify_session_token("") is None
+
+
+def test_create_token_refuses_empty_secret():
+    # Phase 58 (БАГ безопасности) — раньше пустой секрет молча подписывал
+    # HMAC пустым ключом (подделываемо кем угодно, кто прочитал код), а
+    # не отказывался явно.
+    import pytest
+
+    settings.session_secret = ""
+    try:
+        with pytest.raises(RuntimeError):
+            create_session_token(42)
+    finally:
+        settings.session_secret = "test-secret"
+
+
+def test_verify_token_rejects_when_secret_empty():
+    settings.session_secret = "test-secret"
+    token = create_session_token(42)
+    settings.session_secret = ""
+    try:
+        assert verify_session_token(token) is None
+    finally:
+        settings.session_secret = "test-secret"

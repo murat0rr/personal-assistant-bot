@@ -5,6 +5,17 @@ import pytest
 
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("TELEGRAM_USER_ID", "12345")
+# Обязательное поле без дефолта в коде с Phase 58 (см. src/core/config.py)
+# — тесты не должны зависеть от того, что .env локально уже его задаёт.
+os.environ.setdefault("BOT_ACCESS_PASSWORD", "test-password")
+# session_secret остаётся опциональным полем (веб-вход можно не включать),
+# но test_api.py::test_login_page_renders_code_form и соседние тесты
+# проверяют именно ВКЛЮЧЁННЫЙ /auth/login — без этого с Phase 58 (см.
+# web_auth.py — пустой секрет теперь отвечает "не настроено", раньше
+# молча подписывал HMAC пустым ключом) они упирались бы в "не настроено".
+# tests/test_web_session.py по-прежнему явно переопределяет значение
+# в каждом тесте, этому дефолту не мешает.
+os.environ.setdefault("SESSION_SECRET", "test-session-secret")
 
 
 class FakeRedis:

@@ -17,6 +17,14 @@ SESSION_COOKIE_NAME = "session"
 
 
 def create_session_token(user_id: int) -> str:
+    if not settings.session_secret:
+        # Без секрета HMAC считался бы пустым ключом — подделываемо кем
+        # угодно, кто просто прочитал код (Phase 58, БАГ безопасности,
+        # см. комментарий у Settings.session_secret). session_secret —
+        # опциональная фича (веб-вход вне Telegram можно не включать
+        # вовсе), но тогда она должна быть выключена целиком, не
+        # молчаливо небезопасна.
+        raise RuntimeError("SESSION_SECRET не настроен — вход в веб-версию недоступен.")
     payload = json.dumps({"uid": user_id, "exp": int(time.time()) + _SESSION_MAX_AGE_SECONDS})
     payload_b64 = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
     signature = hmac.new(
@@ -29,6 +37,8 @@ def verify_session_token(token: str) -> int | None:
     """Возвращает user_id при валидной, не протухшей подписи — иначе None.
     Не бросает исключений ни на каком мусорном вводе (кука — недоверенный
     ввод от клиента, тот же принцип, что verify_miniapp_init_data)."""
+    if not settings.session_secret:
+        return None
     try:
         payload_b64, signature = token.rsplit(".", 1)
     except ValueError:

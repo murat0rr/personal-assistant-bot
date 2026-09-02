@@ -6,7 +6,14 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str
     telegram_user_id: int
-    bot_access_password: str = "это читинец"
+    # Обязательное поле, без дефолта (Phase 58, БАГ безопасности) — раньше
+    # был захардкожен дефолт "это читинец", тот же текст был и в
+    # .env.example, а на проде переменная вообще не задавалась в .env —
+    # значит бот реально работал с этим публичным паролем (репозиторий
+    # публичный на GitHub). Ловится сразу при старте (pydantic-settings
+    # бросит ValidationError, если переменная не задана), а не тихим
+    # публичным дефолтом.
+    bot_access_password: str
 
     claude_api_key: str = ""
     claude_base_url: str | None = None
@@ -35,7 +42,12 @@ class Settings(BaseSettings):
     # генерировать `openssl rand -hex 32`, не переиспользовать
     # tasker_webhook_secret/bot_token. Username бота (без @) — для
     # data-telegram-login атрибута виджета входа; пусто = /auth/login
-    # отвечает понятной "не настроено", как staging_miniapp_url выше.
+    # отвечает понятной "не настроено", как staging_miniapp_url выше —
+    # ЭТО реально проверяется (Phase 58, БАГ безопасности: раньше
+    # комментарий описывал поведение, которого на деле не было —
+    # create_session_token/verify_session_token подписывали HMAC пустым
+    # ключом молча, что подделываемо кем угодно; см. web_session.py и
+    # web_auth.py::login_page).
     session_secret: str = ""
     telegram_bot_username: str = ""
 
