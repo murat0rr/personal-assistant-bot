@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import BaseStorage, StorageKey
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 
 from src.core import ai_analytics
@@ -27,6 +28,7 @@ from src.handlers.f12_briefing import build_morning_briefing
 from src.handlers.f_goals import start_goal_flow
 from src.handlers.f_morning_advice import send_morning_advice
 from src.handlers.f_reminders import check_reminders
+from src.handlers.f_task_nag import check_and_nudge
 from src.handlers.miniapp_tasks import build_task_board
 from src.integrations.claude_client import suggest_new_templates, tidy_task_titles
 from src.models.chat_message import ChatMessage
@@ -87,6 +89,16 @@ async def _reminders_job(bot: Bot, user_id: int) -> None:
     logger.info("Проверяю напоминания (%s)", user_id)
     today = await user_today(user_id)
     await check_reminders(bot, user_id, today)
+
+
+async def _task_nag_sweep(bot: Bot, user_id: int) -> None:
+    # Намёки о незакрытых задачах (Phase 59, команда /nag) — тонкий
+    # wrapper, вся логика (включён ли, наступил ли порог X+N,
+    # автоудаление через 59 минут) в check_and_nudge, тот же приём, что
+    # у _reminders_job/check_reminders. Регистрируется отдельно от
+    # остальных джобов ниже (IntervalTrigger, не CronTrigger) — см.
+    # register_jobs_for_user.
+    await check_and_nudge(bot, user_id)
 
 
 async def _evening_diary(bot: Bot, storage: BaseStorage) -> None:
@@ -383,6 +395,19 @@ async def register_jobs_for_user(
         scheduler.add_job(
             func, CronTrigger(**trigger_kwargs), args=args, id=job_id, replace_existing=True
         )
+    # Намёки о незакрытых задачах (Phase 59) — единственный периодический
+    # (не cron) джоб в проекте, регистрируется отдельно от _job_specs
+    # (тот контракт жёстко завязан на CronTrigger). Опрос раз в 15 минут
+    # — разрешение проверки, сам намёк придёт не позже, чем через 15
+    # минут после расчётного порога, не секунда в секунду. Часовой пояс
+    # IntervalTrigger не важен — reschedule_for_timezone его не трогает.
+    scheduler.add_job(
+        _task_nag_sweep,
+        IntervalTrigger(minutes=15),
+        args=[bot, user_id],
+        id=f"task_nag_sweep:{user_id}",
+        replace_existing=True,
+    )
 
 
 def unregister_jobs_for_user(scheduler: AsyncIOScheduler, user_id: int) -> None:

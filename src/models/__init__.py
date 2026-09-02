@@ -8,6 +8,7 @@ from src.models.recurring_task_rule import RecurringTaskRule
 from src.models.reminder import Reminder
 from src.models.screen_time import ScreenTime
 from src.models.task import Base, Task
+from src.models.task_nag import TaskNagSettings
 from src.models.task_template import TaskTemplate
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "RecurringTaskRule",
     "DayReview",
     "AiAnalyticsCache",
+    "TaskNagSettings",
 ]

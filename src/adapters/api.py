@@ -28,6 +28,7 @@ from src.core.telegram_auth import verify_miniapp_init_data
 from src.core.user_location import apply_stored_timezone, user_today
 from src.core.web_session import SESSION_COOKIE_NAME, verify_session_token
 from src.handlers.f8_habits import check_habit
+from src.handlers.f_task_nag import record_task_completion
 from src.handlers.miniapp_tasks import build_task_board
 from src.integrations.claude_client import suggest_entity_spheres, suggest_tasks_for_entity
 from src.integrations.notion import list_diary_entries
@@ -330,6 +331,12 @@ async def mark_task_done(
         task = await _get_owned_task(session, task_id, user["id"])
         task.done = payload.done
         await session.commit()
+
+    if payload.done:
+        # Намёки о незакрытых задачах (Phase 59) — любое выполнение
+        # обнуляет счётчик/таймер, независимо от того, какая именно
+        # задача закрыта. No-op, если фичей не пользовались.
+        await record_task_completion(user["id"])
 
     return {"status": "ok"}
 
