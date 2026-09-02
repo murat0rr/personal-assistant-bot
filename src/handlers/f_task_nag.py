@@ -22,6 +22,24 @@ router = Router()
 # джобы (интервал опроса ниже), Telegram всё равно не пускает точнее.
 _NUDGE_DELETE_AFTER = timedelta(minutes=59)
 
+# Тихие часы (Phase 60) — не слать намёки с полуночи до 7 утра, в
+# часовом поясе пользователя (МСК по умолчанию, если свой пояс не
+# задан — тот же дефолт, что и у user_timezone() везде в приложении,
+# ничего отдельно не настраиваем). Автоудаление уже отправленного
+# намёка эти часы не затрагивают — оно должно отработать всегда.
+_QUIET_HOUR_START = 0
+_QUIET_HOUR_END = 7  # не включительно — 7:00 уже можно
+
+# Утренняя рассылка (Phase 60) — не намекать ближайший час после нее,
+# человек и так только что получил дайджест. Час рассылки — константа
+# 8 (текущее фиксированное время, см. scheduler/jobs.py::_job_specs);
+# Phase 61 сделает его настраиваемым за пользователя (AuthorizedUser.
+# morning_hour) — тогда сюда придёт то же значение параметром, не
+# менять сам механизм. Длина окна (1 час) — разумный дефолт, конкретное
+# число не называлось.
+_MORNING_DIGEST_HOUR = 8
+_MORNING_DIGEST_GRACE = timedelta(hours=1)
+
 _HOURS_CHOICES = range(1, 7)  # 1..6, как попросили
 
 # Неформальный тон, как просили ("эй бро тормозишь") — несколько
@@ -162,6 +180,20 @@ def _should_send_nudge(
     return now - last_event_at >= wait
 
 
+def _is_quiet_hour(now: datetime) -> bool:
+    """Чистая функция для теста — тихие часы 00:00–07:00 (Phase 60)."""
+    return _QUIET_HOUR_START <= now.hour < _QUIET_HOUR_END
+
+
+def _within_morning_digest_grace(now: datetime, morning_hour: int = _MORNING_DIGEST_HOUR) -> bool:
+    """Чистая функция для теста — окно тишины сразу после утренней
+    рассылки (Phase 60). morning_hour — параметр, не жёсткая
+    зависимость от константы, ради Phase 61 (настраиваемое время
+    рассылки за пользователя)."""
+    digest_at = now.replace(hour=morning_hour, minute=0, second=0, microsecond=0)
+    return digest_at <= now < digest_at + _MORNING_DIGEST_GRACE
+
+
 async def check_and_nudge(bot: Bot, user_id: int) -> None:
     """Периодическая проверка (см. scheduler/jobs.py::_task_nag_sweep,
     вызывается каждые 15 минут для каждого пользователя). Две
@@ -205,6 +237,14 @@ async def check_and_nudge(bot: Bot, user_id: int) -> None:
     if not _should_send_nudge(
         now, _aware(row.last_event_at, tz), row.interval_hours, row.streak_count
     ):
+        return
+
+    # Тихие часы/окно после утренней рассылки (Phase 60) — таймер/
+    # счётчик НЕ трогаем, тот же принцип, что и у "нет незакрытых
+    # задач" ниже: как только окно кончится, следующая же проверка
+    # (порог уже пройден) пришлёт намёк сразу же, не будет ждать заново
+    # полный интервал.
+    if _is_quiet_hour(now) or _within_morning_digest_grace(now):
         return
 
     # Незакрытых задач физически нет — намекать не о чем. Таймер/счётчик

@@ -1,6 +1,11 @@
 from datetime import UTC, datetime, timedelta
 
-from src.handlers.f_task_nag import _should_delete_nudge, _should_send_nudge
+from src.handlers.f_task_nag import (
+    _is_quiet_hour,
+    _should_delete_nudge,
+    _should_send_nudge,
+    _within_morning_digest_grace,
+)
 
 _NOW = datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
 
@@ -59,3 +64,55 @@ def test_nudge_not_deleted_before_59_minutes():
 
 def test_no_pending_deletion_when_never_sent():
     assert _should_delete_nudge(_NOW, None) is False
+
+
+# ---- _is_quiet_hour — тихие часы 00:00–07:00 (Phase 60).
+
+
+def test_midnight_is_quiet():
+    assert _is_quiet_hour(datetime(2026, 9, 3, 0, 0, tzinfo=UTC)) is True
+
+
+def test_six_fifty_nine_is_quiet():
+    assert _is_quiet_hour(datetime(2026, 9, 3, 6, 59, tzinfo=UTC)) is True
+
+
+def test_seven_am_is_not_quiet():
+    assert _is_quiet_hour(datetime(2026, 9, 3, 7, 0, tzinfo=UTC)) is False
+
+
+def test_noon_is_not_quiet():
+    assert _is_quiet_hour(_NOW) is False
+
+
+def test_eleven_pm_is_not_quiet():
+    assert _is_quiet_hour(datetime(2026, 9, 3, 23, 0, tzinfo=UTC)) is False
+
+
+# ---- _within_morning_digest_grace — час тишины после рассылки (Phase 60).
+
+
+def test_grace_starts_exactly_at_digest_hour():
+    now = datetime(2026, 9, 3, 8, 0, tzinfo=UTC)
+    assert _within_morning_digest_grace(now, morning_hour=8) is True
+
+
+def test_grace_covers_within_the_hour():
+    now = datetime(2026, 9, 3, 8, 59, tzinfo=UTC)
+    assert _within_morning_digest_grace(now, morning_hour=8) is True
+
+
+def test_grace_ends_after_one_hour():
+    now = datetime(2026, 9, 3, 9, 0, tzinfo=UTC)
+    assert _within_morning_digest_grace(now, morning_hour=8) is False
+
+
+def test_grace_does_not_apply_before_digest():
+    now = datetime(2026, 9, 3, 7, 59, tzinfo=UTC)
+    assert _within_morning_digest_grace(now, morning_hour=8) is False
+
+
+def test_grace_respects_custom_morning_hour():
+    now = datetime(2026, 9, 3, 9, 30, tzinfo=UTC)
+    assert _within_morning_digest_grace(now, morning_hour=9) is True
+    assert _within_morning_digest_grace(now, morning_hour=8) is False
