@@ -120,12 +120,21 @@ def parse_diary_page(page: dict[str, Any]) -> dict[str, Any]:
         "productivity": _read_number(props.get("Productivity")),
         "happiness": _read_number(props.get("Happiness")),
         "highlight": _read_text(props.get("Highlight")) or None,
+        # Reflection/Summary не читались до Phase 62 — list_diary_entries
+        # тогда обслуживал только календарь/день-детейл (нужны были
+        # только оценки+highlight), а не полный перенос данных. Теперь
+        # нужны оба поля целиком — для backfill-скрипта.
+        "reflection": _read_text(props.get("Reflection")) or None,
+        "summary": _read_text(props.get("Summary")) or None,
     }
 
 
 async def list_diary_entries() -> list[dict[str, Any]]:
     """Забрать все записи дневника — без серверной фильтрации по дате
-    (датасет маленький, фильтруем на своей стороне)."""
+    (датасет маленький, фильтруем на своей стороне). С Phase 62
+    используется только разовым скриптом переноса
+    (scripts/backfill_diary_and_notes.py) — основное приложение читает
+    дневник из Postgres (см. core/day_reviews.py)."""
     data_source_id, _ = await _get_data_source(settings.notion_diary_db_id)
     entries: list[dict[str, Any]] = []
     cursor: str | None = None
@@ -139,3 +148,31 @@ async def list_diary_entries() -> list[dict[str, Any]]:
             break
         cursor = response["next_cursor"]
     return entries
+
+
+def parse_note_page(page: dict[str, Any]) -> dict[str, Any]:
+    props = page["properties"]
+    return {
+        "notion_page_id": page["id"],
+        "text": _read_text(props.get("Content")) or _read_text(props.get("Name")),
+        "created_time": page.get("created_time"),
+    }
+
+
+async def list_notes() -> list[dict[str, Any]]:
+    """Временная функция (Phase 62) — только для разового переноса
+    заметок в Postgres (см. scripts/backfill_diary_and_notes.py и
+    core/notes.py). Удаляется вместе со всем модулем в Phase 63."""
+    data_source_id, _ = await _get_data_source(settings.notion_notes_db_id)
+    notes: list[dict[str, Any]] = []
+    cursor: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {"data_source_id": data_source_id}
+        if cursor:
+            kwargs["start_cursor"] = cursor
+        response = await _client.data_sources.query(**kwargs)
+        notes.extend(parse_note_page(page) for page in response["results"])
+        if not response.get("has_more"):
+            break
+        cursor = response["next_cursor"]
+    return notes

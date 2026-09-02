@@ -3,6 +3,7 @@ from src.models.authorized_user import AuthorizedUser
 from src.models.chat_message import ChatMessage
 from src.models.day_review import DayReview
 from src.models.habit import Habit
+from src.models.note import Note
 from src.models.project import Project
 from src.models.recurring_task_rule import RecurringTaskRule
 from src.models.reminder import Reminder
@@ -28,4 +29,5 @@ __all__ = [
     "DayReview",
     "AiAnalyticsCache",
     "TaskNagSettings",
+    "Note",
 ]

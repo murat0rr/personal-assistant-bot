@@ -31,7 +31,6 @@ from src.handlers.f8_habits import check_habit
 from src.handlers.f_task_nag import record_task_completion
 from src.handlers.miniapp_tasks import build_task_board
 from src.integrations.claude_client import suggest_entity_spheres, suggest_tasks_for_entity
-from src.integrations.notion import list_diary_entries
 from src.integrations.weather import get_weather_summary
 from src.models.task import Task
 
@@ -868,11 +867,12 @@ async def calendar_month_endpoint(
     return await calendar_view.month_events(user["id"], int(year_str), int(month_str))
 
 
-# Индикатор "как прошёл день" в плитках месячного календаря (Phase 27) —
-# средний балл вечерней рефлексии по дням, где она заполнена (см.
-# calendar_view.month_diary_moods). Дневник — только у владельца (см.
-# _NOT_READY_FOR_OTHERS выше) — остальные получают пустую карту, плитки
-# просто не подсвечиваются, без ошибки.
+# Индикатор "как прошёл день" в плитках месячного календаря (Phase 27,
+# переехало на Postgres в Phase 62) — средний балл вечерней рефлексии по
+# дням, где она заполнена (см. day_reviews_repo.month_diary_moods).
+# Дневник — только у владельца (см. _NOT_READY_FOR_OTHERS выше) —
+# остальные получают пустую карту, плитки просто не подсвечиваются, без
+# ошибки.
 @app.get("/miniapp/api/calendar/month-moods")
 async def calendar_month_moods_endpoint(
     month: str, user: dict = Depends(get_authorized_user)
@@ -880,17 +880,15 @@ async def calendar_month_moods_endpoint(
     if not _is_owner(user["id"]):
         return {}
     year_str, month_str = month.split("-")
-    return await calendar_view.month_diary_moods(int(year_str), int(month_str))
+    return await day_reviews_repo.month_diary_moods(user["id"], int(year_str), int(month_str))
 
 
-# Дневник (Phase 26) — ревью прошедшего дня в расширенном экране; сам
-# дневник по-прежнему только в Notion (Diary) и только у владельца (см.
-# _NOT_READY_FOR_OTHERS) — тут просто читаем и фильтруем по дате на
-# своей стороне (list_diary_entries — маленький датасет, без серверной
-# фильтрации). Текстовый ИИ-саммари ("review", Phase 48) — отдельно, из
-# Postgres (см. core/day_reviews.py): он уже посчитан в момент вечернего
-# опроса, доставать его заново через Claude тут не нужно и не нужно было
-# бы даже если бы он не пришёл вместе с записью Notion.
+# Дневник (Phase 26, переехал с Notion на Postgres в Phase 62) — ревью
+# прошедшего дня в расширенном экране, только у владельца (см.
+# _NOT_READY_FOR_OTHERS). Оценки/highlight/reflection и текстовый
+# ИИ-саммари ("review", Phase 48) теперь одна запись, один запрос (см.
+# core/day_reviews.py::get_diary_entry) — раньше это было два разных
+# источника (Notion + Postgres-кэш саммари).
 @app.get("/miniapp/api/diary/{entry_date}")
 async def diary_day_endpoint(
     entry_date: str, user: dict = Depends(get_authorized_user)
@@ -898,18 +896,16 @@ async def diary_day_endpoint(
     if not _is_owner(user["id"]):
         raise HTTPException(status_code=403, detail=_NOT_READY_FOR_OTHERS)
     target = date.fromisoformat(entry_date)
-    entries = await list_diary_entries()
-    entry = next((e for e in entries if e["entry_date"] == target), None)
+    entry = await day_reviews_repo.get_diary_entry(user["id"], target)
     if entry is None:
         return None
-    review = await day_reviews_repo.get_review(user["id"], target)
     return {
         "physical": entry["physical"],
         "social": entry["social"],
         "productivity": entry["productivity"],
         "happiness": entry["happiness"],
         "highlight": entry["highlight"],
-        "review": review,
+        "review": entry["summary"],
     }
 
 

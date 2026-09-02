@@ -3,9 +3,9 @@ from datetime import date, timedelta
 from sqlalchemy import select
 
 from src.core.config import settings
+from src.core.day_reviews import entries_since
 from src.core.db import async_session
 from src.core.habits import list_habits
-from src.integrations.notion import list_diary_entries
 from src.models.task import Task
 
 
@@ -64,12 +64,12 @@ async def build_weekly_review(user_id: int, today: date) -> str:
         )
         tasks = list(result.scalars().all())
 
-    # Дневник — только у владельца (Phase 40, живёт в Notion, привязан к
-    # одному воркспейсу, не к Telegram-пользователю, см. api.py::_is_owner
-    # за тем же обоснованием) — для остальных просто пустой список, тот
-    # же эффект, что "дневник не настроен", без ошибки.
+    # Дневник — только у владельца (Phase 40, см. api.py::_is_owner за
+    # тем же обоснованием; с Phase 62 хранится в Postgres, но
+    # ограничение по владельцу не про хранилище, оставляем как есть) —
+    # для остальных просто пустой список, без ошибки.
     is_owner = user_id == settings.telegram_user_id
-    diary_entries = await list_diary_entries() if (is_owner and settings.notion_diary_db_id) else []
+    diary_entries = await entries_since(user_id, week_start) if is_owner else []
     habits = await list_habits(user_id)
 
     return build_weekly_review_text(tasks, diary_entries, habits, week_start, today)
