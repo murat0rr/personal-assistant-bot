@@ -268,6 +268,42 @@
     <div id="create-entity-form" class="entity-window-body"></div>
   </div>
 
+  <!-- Форма редактирования задачи по долгому нажатию (Phase 63) — тот
+       же .entity-window, что у формы проекта/цели: текст, важность/
+       событие, дата, проект/цель, удаление. Может открываться поверх
+       #project-detail-sheet (задача внутри окна проекта) — тот же
+       приём z-index, что у #create-entity-sheet (см. CSS). -->
+  <div id="task-edit-sheet" class="entity-window">
+    <div class="entity-window-head">
+      <span class="entity-window-title">Задача</span>
+      <button type="button" class="entity-window-close" id="task-edit-close" aria-label="Закрыть">✕</button>
+    </div>
+    <div class="entity-window-body">
+      <textarea class="entity-form-field" id="task-edit-title" rows="2"></textarea>
+      <div class="toggle-chip-row">
+        <button type="button" class="toggle-chip" id="task-edit-important"></button>
+        <button type="button" class="toggle-chip" id="task-edit-event"></button>
+      </div>
+      <button type="button" class="entity-date-btn" id="task-edit-date"></button>
+      <button type="button" class="entity-date-btn" id="task-edit-project"></button>
+      <button type="button" class="entity-form-submit task-edit-delete" id="task-edit-delete">Удалить задачу</button>
+    </div>
+  </div>
+
+  <!-- Форма редактирования шаблона по долгому нажатию (Phase 63) — та
+       же .entity-window, только текст и удаление: у шаблона нет ни
+       важности/события, ни даты, ни проекта. -->
+  <div id="template-edit-sheet" class="entity-window">
+    <div class="entity-window-head">
+      <span class="entity-window-title">Шаблон</span>
+      <button type="button" class="entity-window-close" id="template-edit-close" aria-label="Закрыть">✕</button>
+    </div>
+    <div class="entity-window-body">
+      <textarea class="entity-form-field" id="template-edit-title" rows="2"></textarea>
+      <button type="button" class="entity-form-submit task-edit-delete" id="template-edit-delete">Удалить шаблон</button>
+    </div>
+  </div>
+
   <!-- "Проанализировать задачи и добавить" (Phase 52) — плашка-лоадер,
        пока ИИ придумывает задачи для только что сохранённого проекта/
        цели (см. maybeSuggestEntityTasks). -->
@@ -509,63 +545,25 @@
       return cls;
     }
 
-    // ---- Режим переноса (Phase 14) — зажимаешь список, кружки статуса
-    // превращаются в ручки слева, текст показывается полностью без
-    // статуса/приоритета, справа — отложенное удаление. Только один
-    // список может быть в этом режиме одновременно (то же правило, что у
-    // открытой шторки, см. openSwipeRow) — listKey однозначно определяет
-    // список ("yesterday"/"today"/"inbox"/"cal:2026-09-01").
-    let reorderActiveKey = null;
-    let pendingArchiveIds = new Set();
-
-    function isReorderActive(listKey) {
-      return reorderActiveKey === listKey;
-    }
-
-    function enterReorderMode(listKey) {
-      if (reorderActiveKey === listKey) return;
-      closeOpenSwipeRow();
-      reorderActiveKey = listKey;
-      pendingArchiveIds = new Set();
-      render();
-    }
-
-    function toggleReorderArchive(task) {
-      if (pendingArchiveIds.has(task.id)) pendingArchiveIds.delete(task.id);
-      else pendingArchiveIds.add(task.id);
-      render();
-    }
-
-    // Тап по затемнению (см. .reorder-scrim) — единственный выход из
-    // режима. Отмеченные задачи реально архивируются только сейчас, одним
-    // batch-запросом, без подтверждения (сам режим переноса с явным
-    // выходом — уже достаточная защита от случайного удаления).
-    async function exitReorderMode() {
-      const isTemplates = reorderActiveKey === "templates";
-      const ids = Array.from(pendingArchiveIds);
-      reorderActiveKey = null;
-      pendingArchiveIds = new Set();
-      if (ids.length === 0) {
-        render();
-        return;
-      }
-      const idSet = isTemplates ? pendingTemplateIds : pendingIds;
-      ids.forEach((id) => idSet.add(id));
+    // Удаление одного шаблона (Phase 63, из формы редактирования по
+    // долгому нажатию, см. openTemplateEditSheet) — отдельного
+    // single-delete эндпоинта для шаблона нет, переиспользуем тот же
+    // batch на один id (раньше так же вызывался при выходе из
+    // прежнего режима переноса, см. PLAN.md/историю).
+    async function archiveTemplateNow(template) {
+      const id = template.id;
+      pendingTemplateIds.add(id);
       render();
       try {
-        await api(
-          isTemplates ? "/miniapp/api/templates/archive-batch" : "/miniapp/api/tasks/archive-batch",
-          { method: "POST", body: JSON.stringify({ ids }) }
-        );
-        if (isTemplates) {
-          templatesData = templatesData.filter((t) => !ids.includes(t.id));
-        } else {
-          ids.forEach((id) => removeTaskEverywhere(id));
-        }
+        await api("/miniapp/api/templates/archive-batch", {
+          method: "POST",
+          body: JSON.stringify({ ids: [id] }),
+        });
+        templatesData = templatesData.filter((t) => t.id !== id);
       } catch (e) {
-        alert(isTemplates ? "Не удалось удалить шаблоны." : "Не удалось удалить задачи.");
+        alert("Не удалось удалить шаблон.");
       } finally {
-        ids.forEach((id) => idSet.delete(id));
+        pendingTemplateIds.delete(id);
         render();
       }
     }
@@ -577,6 +575,23 @@
       }
       boardState.dated_tasks = (boardState.dated_tasks || []).filter((t) => t.id !== id);
       boardState.inbox = boardState.inbox.filter((t) => t.id !== id);
+    }
+
+    // Находит актуальный объект задачи по id — те же 4 места, что
+    // проверяет removeTaskEverywhere выше (Phase 63, для формы
+    // редактирования по долгому нажатию: она держит только id, не
+    // ссылку на объект, чтобы не разъезжаться со свежими данными после
+    // очередного render()).
+    function findTaskById(id) {
+      for (const key of ["yesterday", "today"]) {
+        const found = boardState.days[key]?.tasks.find((t) => t.id === id);
+        if (found) return found;
+      }
+      return (
+        (boardState.dated_tasks || []).find((t) => t.id === id) ||
+        boardState.inbox.find((t) => t.id === id) ||
+        null
+      );
     }
 
     // Кладёт задачу во все секции, которым она сейчас соответствует (тот же
@@ -619,9 +634,17 @@
       return [...byId.values()];
     }
 
+    // Единая строка задачи (Phase 63 — раньше здесь же читался текст, а
+    // свайп влево на Вчера/Сегодня/Календаре/окне проекта открывал
+    // отдельную шторку с важностью/событием/датой/проектом/архивом —
+    // renderSwipeableTaskRow, теперь удалена, разница сводилась ровно к
+    // этим необязательным флагам да к due-time). Постоянная ручка
+    // справа (перенос) и долгое нажатие по остальной части строки
+    // (форма редактирования) — теперь на каждом списке задач одинаково.
     function renderTaskRow(task, { showDateButton, showTrashButton, showMoveToToday }) {
       const row = document.createElement("div");
-      row.className = "row" + (pendingIds.has(task.id) ? " pending" : "");
+      row.className = "row task-row" + (pendingIds.has(task.id) ? " pending" : "");
+      row.dataset.sortOrder = String(task.sort_order);
       const isPending = pendingIds.has(task.id);
 
       const checkbox = renderStatusCircle(task, isPending, () => toggleTaskDone(task));
@@ -636,8 +659,8 @@
       // поэтому его явно исключаем из общего обработчика — иначе клик по
       // нему дошёл бы и до kружка, и до строки, и статус переключился бы
       // дважды подряд (визуально — как будто ничего не произошло).
-      // Остальной набор исключений — тот же список интерактивных
-      // элементов, что и у attachReorderEntry (см. ROW_TAP_IGNORE_SELECTOR).
+      // Остальной набор исключений — см. ROW_TAP_IGNORE_SELECTOR (ручка
+      // переноса и прочие элементы строки со своей семантикой тапа).
       row.addEventListener("click", (e) => {
         if (isPending || e.target.closest(ROW_TAP_IGNORE_SELECTOR)) return;
         toggleTaskDone(task);
@@ -685,10 +708,51 @@
         row.append(archiveBtn);
       }
 
+      // Время события (Phase 19) — раньше показывалось только в
+      // свайпаемых списках (Вчера/Сегодня/Календарь/окно проекта), в
+      // Инбоксе такого поля у задачи просто не бывает (нет даты — нет и
+      // времени), so условие безвредно везде.
+      if (task.due_time) {
+        const time = document.createElement("span");
+        time.className = "due-time";
+        time.textContent = task.due_time;
+        row.append(time);
+      }
+
+      // Постоянная ручка переноса (Phase 63) — раньше только в
+      // отдельном "режиме переноса" на весь список (см. PLAN.md), теперь
+      // прямо здесь: хватание сразу тащит, список на время жеста
+      // поднимается в затемнённое окно (elevate: true, см.
+      // setupDragReorder/applyReorderElevation).
+      const grip = document.createElement("span");
+      grip.className = "grip";
+      grip.setAttribute("aria-label", "Перетащить");
+      grip.innerHTML = gripIcon();
+      row.append(grip);
+
+      setupDragReorder({
+        row,
+        trigger: grip,
+        rowSelector: ".task-row",
+        getSortOrder: (el) => parseFloat(el.dataset.sortOrder),
+        persist: (newOrder) => setTaskSortOrder(task, newOrder),
+        elevate: true,
+      });
+
+      // Долгое нажатие ВНЕ ручки/чекбокса/кнопок — форма редактирования
+      // этой задачи (текст, важность, событие, дата, проект, удаление).
+      attachLongPress(row, () => openTaskEditSheet(task), ".checkbox, .grip, .small-btn, input");
+
       return row;
     }
 
-    const SWIPE_MAX_REVEAL = 220; // 5 кнопок по 44px (Phase 19 — добавилась "Проект")
+    // Свайп-шторка (Phase 63 — у задач убрана, используется только
+    // строкой проекта/цели, см. renderEntityRow) — раньше размер считался
+    // под 5 кнопок задачи (важность/событие/дата/проект/архив), теперь
+    // под 1-2 кнопки сущности (архив, для проекта ещё и цвет); само
+    // значение здесь не трогаю — лишний запас на панели сущности не
+    // менялся этой фазой, не хочу задевать не проверенное живьём.
+    const SWIPE_MAX_REVEAL = 220;
     const SWIPE_OPEN_THRESHOLD = SWIPE_MAX_REVEAL * 0.2; // открыть — лёгкий свайп, то же место (зона)
     const SWIPE_CLOSE_THRESHOLD = 28; // закрыть из зоны — хватит совсем лёгкого движения
 
@@ -817,9 +881,6 @@
             openSwipeTaskId = taskId;
           }
         } else {
-          // Через self.close() (не напрямую) — снаружи он переопределён,
-          // чтобы применить отложенную пересортировку после смены
-          // приоритета (см. renderSwipeableTaskRow).
           self.close();
         }
       }
@@ -903,8 +964,6 @@
     // сохраняется один раз на pointerup (см. persist/commitOrder ниже).
     // Деления на события/обычные больше нет (Phase 14) — сортируется всё
     // вместе, соседи ищутся среди ВСЕХ строк списка без фильтра по группе.
-    const REORDER_HOLD_MS = 450;
-    const REORDER_MOVE_THRESHOLD = 8;
 
     function dragSiblings(row, selector) {
       return Array.from(row.parentElement.children).filter((n) => n.matches(selector));
@@ -940,7 +999,13 @@
     // document такой границы просто нет — не важно, где физически
     // находится палец, X-координата в самой логике переноса вообще не
     // участвует, только Y.
-    function setupDragReorder({ row, trigger, rowSelector, getSortOrder, persist }) {
+    // elevate (Phase 63) — задачи/шаблоны поднимают список в затемнённое
+    // плавающее окно на время самого жеста переноса (тот же эффект, что
+    // раньше давал отдельный "режим переноса", теперь включается прямо
+    // хватанием ручки, см. applyReorderElevation ниже); экран ревью
+    // ИИ-задач (attachTaskReviewLongPress) элевацию не запрашивает —
+    // там перенос всегда был "на месте", без затемнения.
+    function setupDragReorder({ row, trigger, rowSelector, getSortOrder, persist, elevate }) {
       let dragging = false;
       let moved = false; // реальный перенос состоялся — подавляет клик по названию
       let pointerId = null;
@@ -1024,11 +1089,11 @@
       function beginDrag() {
         closeOpenSwipeRow();
         if (!row.isConnected) {
-          // Открытая шторка ЭТОЙ ЖЕ строки только что закрылась с
-          // отложенной пересортировкой (needsResortOnClose, см.
-          // renderSwipeableTaskRow) — render() внутри closeOpenSwipeRow уже
-          // пересобрал список и заменил этот DOM-узел новым, продолжать
-          // перенос старым узлом больше некуда, тихо отменяем.
+          // Какой-то сторонний render() (например, свайп-шторка
+          // сущности только что закрылась, или подоспел фоновый ответ
+          // сети) уже пересобрал список и заменил этот DOM-узел новым —
+          // продолжать перенос старым узлом больше некуда, тихо
+          // отменяем.
           cleanupPointer();
           return;
         }
@@ -1049,6 +1114,7 @@
           settleAnim = null;
         }
         row.classList.add("reorder-dragging");
+        if (elevate) applyReorderElevation(row.parentElement, true);
         compensation = 0;
         applyTransform(0);
       }
@@ -1087,6 +1153,7 @@
               settleAnim = null;
               row.classList.remove("reorder-dragging");
               row.style.transform = "";
+              if (elevate) applyReorderElevation(row.parentElement, false);
               if (commit) commitOrder();
             })
             .catch(() => {
@@ -1157,205 +1224,11 @@
       };
     }
 
-    // Строка задачи со свайп-шторкой — Вчера/Сегодня/календарь. Инбокс
-    // держит свой renderTaskRow с всегда видимыми иконками (см. render()) —
-    // там свайп ни к чему, действия там нужны мгновенно, без лишнего жеста.
-    function renderSwipeableTaskRow(task, { showMoveToToday }) {
-      const isPending = pendingIds.has(task.id);
-      let swipeHandle = null; // назначим после setupSwipeDrag ниже
-      // true, если приоритет поменяли, пока шторка была открыта — тогда
-      // полный render() (пересортировка/смена группы) откладываем до
-      // закрытия, см. syncPriorityUI и переопределение swipeHandle.close
-      // ниже.
-      let needsResortOnClose = false;
-
-      const wrap = document.createElement("div");
-      wrap.className = "swipe-wrap" + (isPending ? " pending" : "");
-
-      const actions = document.createElement("div");
-      actions.className = "swipe-actions";
-
-      // Важность и событие — два независимых значка-переключателя вместо
-      // одной кнопки-цикла: нажал один — стал ярким, нажал другой — первый
-      // гаснет (оба значения живут в одном и том же поле priority, поэтому
-      // взаимоисключающие). Повторный тап по уже активному — снятие,
-      // возврат к нейтральному приоритету.
-      const importantBtn = document.createElement("button");
-      importantBtn.className = "swipe-btn" + (task.priority === "высокий" ? " active" : "");
-      importantBtn.disabled = isPending;
-      importantBtn.setAttribute("aria-label", "Важная задача");
-      importantBtn.innerHTML = importantIcon();
-      // Панель специально НЕ закрываем здесь — можно сразу передумать и
-      // тапнуть другой значок, не открывая шторку заново. Полный render()
-      // (который пересортировал бы список и мог унести строку в другую
-      // группу) тоже откладываем — см. syncPriorityUI/needsResortOnClose
-      // ниже: список перестроится только когда шторку закроют, а не прямо
-      // во время работы с ней.
-      importantBtn.onclick = () => {
-        needsResortOnClose = true;
-        setTaskPriority(
-          task,
-          task.priority === "высокий" ? "средний" : "высокий",
-          syncPriorityUI
-        );
-      };
-
-      const eventBtn = document.createElement("button");
-      eventBtn.className = "swipe-btn" + (task.priority === "event" ? " active" : "");
-      eventBtn.disabled = isPending;
-      eventBtn.setAttribute("aria-label", "Событие");
-      eventBtn.innerHTML = eventPinIcon();
-      eventBtn.onclick = () => {
-        needsResortOnClose = true;
-        setTaskPriority(task, task.priority === "event" ? "средний" : "event", syncPriorityUI);
-      };
-
-      const dateBtn = document.createElement("button");
-      dateBtn.className = "swipe-btn";
-      dateBtn.disabled = isPending;
-      dateBtn.setAttribute("aria-label", "Дата и время");
-      dateBtn.innerHTML = calendarIcon();
-      const dateInput = document.createElement("input");
-      // Для события сразу дата+время одним пикером; для обычной задачи —
-      // только дата, как и было, без лишнего поля под редкий случай.
-      dateInput.type = task.priority === "event" ? "datetime-local" : "date";
-      dateInput.onchange = () => {
-        if (!dateInput.value) return;
-        swipeHandle.close();
-        setTaskDueDate(task, dateInput.value);
-      };
-      dateBtn.onclick = () => (dateInput.showPicker ? dateInput.showPicker() : dateInput.click());
-      dateBtn.append(dateInput);
-
-      // Проект (Phase 19) — открывает picker (тот же bottom sheet
-      // паттерн, что шаблоны), активная привязка подсвечена.
-      const projectBtn = document.createElement("button");
-      projectBtn.className = "swipe-btn" + (task.project_id ? " active" : "");
-      projectBtn.disabled = isPending;
-      projectBtn.setAttribute("aria-label", "Проект");
-      projectBtn.innerHTML = projectIcon();
-      projectBtn.onclick = () => {
-        swipeHandle.close();
-        openProjectPicker(task);
-      };
-
-      const archiveBtn = document.createElement("button");
-      archiveBtn.className = "swipe-btn swipe-btn-archive";
-      archiveBtn.disabled = isPending;
-      archiveBtn.setAttribute("aria-label", "Архивировать");
-      archiveBtn.innerHTML = archiveIcon();
-      archiveBtn.onclick = () => archiveTask(task);
-
-      actions.append(importantBtn, eventBtn, dateBtn, projectBtn, archiveBtn);
-
-      const content = document.createElement("div");
-      content.className = "swipe-content";
-
-      const checkbox = renderStatusCircle(task, isPending, () => toggleTaskDone(task));
-      content.append(checkbox);
-
-      // Текст только читается здесь — правка доступна лишь в режиме
-      // переноса (Phase 14, см. renderReorderRow). Тап по нему (как и по
-      // всей остальной строке) переключает статус — см. обработчик клика
-      // на content ниже (Phase 48).
-      const title = document.createElement("span");
-      title.className = titleClass(task);
-      title.textContent = task.title;
-      content.append(title);
-
-      if (task.due_time) {
-        const time = document.createElement("span");
-        time.className = "due-time";
-        time.textContent = task.due_time;
-        content.append(time);
-      }
-
-      if (showMoveToToday && !task.done) {
-        const moveBtn = document.createElement("button");
-        // move-today-btn (Phase 55, БАГ) — .swipe-zone ниже абсолютно
-        // спозиционирована поверх правых 72px строки (см. CSS) и не имеет
-        // z-index, поэтому по умолчанию перекрывает любую обычную кнопку
-        // потока, оказавшуюся в этой полосе — а эта кнопка, приклеенная
-        // flex'ом к правому краю прямо перед .swipe-handle/.swipe-zone,
-        // туда как раз попадает. Реальный тап по ней на самом деле бил в
-        // .swipe-zone (подтверждено live: document.elementFromPoint по
-        // центру кнопки возвращал SPAN.swipe-zone, не саму кнопку) —
-        // свайп не начинался (движения нет), а клик просто терялся,
-        // визуально "кнопка не работает". z-index здесь поднимает её
-        // выше зоны/ручки.
-        moveBtn.className = "small-btn move-today-btn";
-        moveBtn.disabled = isPending;
-        moveBtn.setAttribute("aria-label", "Перенести на сегодня");
-        moveBtn.innerHTML = moveToTodayIcon();
-        moveBtn.onclick = () => setTaskDueDate(task, boardState.days.today.date);
-        content.append(moveBtn);
-      }
-
-      const handle = document.createElement("span");
-      handle.className = "swipe-handle";
-      content.append(handle);
-
-      // Узкая зона у правого края — единственное место, откуда стартует
-      // свайп этой задачи (см. .swipe-zone в CSS). Вне её палец отдаём
-      // внешней карусели вчера/сегодня/неделя, как везде на странице.
-      const zone = document.createElement("span");
-      zone.className = "swipe-zone";
-      content.append(zone);
-
-      // Тап в любом месте строки переключает статус (Phase 48) — та же
-      // логика и тот же список исключений, что у renderTaskRow
-      // (ROW_TAP_IGNORE_SELECTOR уже покрывает .checkbox/.swipe-zone/
-      // .small-btn/input, так что кружок и кнопки шторки не задвоят
-      // переключение). Пока открыта сама шторка действий — клик до сюда
-      // не доходит вообще (гасится перехватчиком на document, см.
-      // closeOpenSwipeRow выше), так что дополнительной проверки не нужно.
-      content.addEventListener("click", (e) => {
-        if (isPending || e.target.closest(ROW_TAP_IGNORE_SELECTOR)) return;
-        toggleTaskDone(task);
-      });
-
-      // Обновляет активность значков важности/события, тип пикера даты
-      // (для события — сразу с временем), содержимое кружка статуса и
-      // жирность заголовка — без пересборки всей строки и без изменения
-      // её позиции в списке. Вызывается вместо render() из
-      // importantBtn/eventBtn, пока шторка открыта (см. needsResortOnClose
-      // ниже).
-      function syncPriorityUI() {
-        importantBtn.classList.toggle("active", task.priority === "высокий");
-        eventBtn.classList.toggle("active", task.priority === "event");
-        const stillPending = pendingIds.has(task.id);
-        importantBtn.disabled = stillPending;
-        eventBtn.disabled = stillPending;
-        dateInput.type = task.priority === "event" ? "datetime-local" : "date";
-
-        checkbox.innerHTML = task.done ? checkIcon() : task.priority === "event" ? eventPinIcon() : "";
-        title.className = titleClass(task);
-      }
-
-      wrap.append(actions, content);
-      swipeHandle = setupSwipeDrag(zone, actions, task.id);
-
-      // Если приоритет меняли при открытой шторке, список пересортируем и
-      // перегруппируем только сейчас, в момент закрытия — не посреди
-      // работы с панелью (вдруг следом ещё и дату хотели выбрать).
-      const baseClose = swipeHandle.close;
-      swipeHandle.close = () => {
-        baseClose();
-        if (needsResortOnClose) {
-          needsResortOnClose = false;
-          render();
-        }
-      };
-
-      if (task.id === openSwipeTaskId) {
-        // Эту же задачу только что пересобрал render() (например, после
-        // закрытия шторки с изменённым приоритетом) — её шторка была
-        // открыта, восстанавливаем без анимации.
-        swipeHandle.reopenInstant();
-        openSwipeRow = swipeHandle;
-      }
-      return wrap;
-    }
+    // renderSwipeableTaskRow (свайп-шторка Вчера/Сегодня/Календарь/окно
+    // проекта) удалена в Phase 63 — весь набор действий (важность/
+    // событие/дата/проект/архив) переехал в форму редактирования по
+    // долгому нажатию (см. openTaskEditSheet), список задач теперь
+    // везде рисуется одним renderTaskRow.
 
     function renderEmpty(container) {
       const empty = document.createElement("div");
@@ -1430,128 +1303,50 @@
       input.addEventListener("dblclick", onDblClick);
     }
 
-    // Строка в режиме переноса (Phase 14) — общая и для Вчера/Сегодня/
-    // календаря, и для Инбокса: слева ручка вместо кружка статуса, текст
-    // целиком без усечения и без жирности/зачёркивания (никакого
-    // статуса/приоритета в этом режиме не показываем), справа — отложенное
-    // удаление (архивируется пачкой при выходе из режима, см.
-    // toggleReorderArchive/exitReorderMode).
-    function renderReorderRow(task, ctx) {
-      const isPending = pendingIds.has(task.id);
-      const markedForArchive = pendingArchiveIds.has(task.id);
+    // renderReorderRow/renderTemplateReorderRow (режим переноса на весь
+    // список) удалены в Phase 63 — перенос теперь прямо на постоянной
+    // ручке обычной строки (см. renderTaskRow/renderTemplateRow), текст
+    // правится в форме редактирования по долгому нажатию, не инлайн —
+    // startReorderInlineEdit выше остаётся жить только ради экрана
+    // ревью ИИ-задач (см. attachTaskReviewLongPress), у него отдельный,
+    // не завязанный на общий перенос режим правки.
 
-      const row = document.createElement("div");
-      row.className =
-        "row reorder-row" + (isPending ? " pending" : "") + (markedForArchive ? " pending-archive" : "");
-      row.dataset.sortOrder = String(task.sort_order);
-
-      const grip = document.createElement("span");
-      grip.className = "grip";
-      grip.setAttribute("aria-label", "Перетащить");
-      grip.innerHTML = gripIcon();
-      row.append(grip);
-
-      // Зачёркивание выполненных видно и в режиме переноса (item 3,
-      // Phase 33) — раньше строка не показывала done вообще (Phase 14 —
-      // "текст показывается полностью без статуса/приоритета", но
-      // зачёркивание это не статус-кружок/приоритет, а как раз то, что
-      // помогает не перепутать задачи, пока их двигаешь).
-      const title = document.createElement("span");
-      title.className = "title title-full" + (task.done ? " done" : "");
-      title.textContent = task.title;
-      row.append(title);
-
-      const dragCtl = setupDragReorder({
-        row,
-        trigger: grip,
-        rowSelector: ".reorder-row",
-        getSortOrder: (el) => parseFloat(el.dataset.sortOrder),
-        persist: (newOrder) => setTaskSortOrder(task, newOrder),
-      });
-
-      title.onclick = (e) => {
-        if (isPending || markedForArchive || dragCtl.wasDragged()) return;
-        startReorderInlineEdit(row, title, task, e.clientX);
-      };
-
-      const archiveBtn = document.createElement("button");
-      archiveBtn.className = "small-btn reorder-archive-btn" + (markedForArchive ? " marked" : "");
-      archiveBtn.disabled = isPending;
-      archiveBtn.setAttribute("aria-label", markedForArchive ? "Отменить удаление" : "Удалить задачу");
-      archiveBtn.innerHTML = markedForArchive ? undoIcon() : archiveIcon();
-      archiveBtn.onclick = () => toggleReorderArchive(task);
-      row.append(archiveBtn);
-
-      return row;
-    }
-
-    // Строка шаблона в режиме переноса (Phase 18) — двойник renderReorderRow
-    // выше, с поправкой на источник данных (шаблоны, не задачи) и своим
-    // набором эндпоинтов. Не обобщаю в одну общую функцию с
-    // renderReorderRow — риск задеть уже отлаженный путь для задач выше
-    // пользы; дублирование тут ровно то, что почистит будущая разбивка
-    // index.html на модули (SPEC.md §5), не стоит делать это попутно здесь.
-    function renderTemplateReorderRow(template) {
-      const isPending = pendingTemplateIds.has(template.id);
-      const markedForArchive = pendingArchiveIds.has(template.id);
-
-      const row = document.createElement("div");
-      row.className =
-        "row reorder-row" + (isPending ? " pending" : "") + (markedForArchive ? " pending-archive" : "");
-      row.dataset.sortOrder = String(template.sort_order);
-
-      const grip = document.createElement("span");
-      grip.className = "grip";
-      grip.setAttribute("aria-label", "Перетащить");
-      grip.innerHTML = gripIcon();
-      row.append(grip);
-
-      const title = document.createElement("span");
-      title.className = "title title-full";
-      title.textContent = template.title;
-      row.append(title);
-
-      const dragCtl = setupDragReorder({
-        row,
-        trigger: grip,
-        rowSelector: ".reorder-row",
-        getSortOrder: (el) => parseFloat(el.dataset.sortOrder),
-        persist: (newOrder) => setTemplateSortOrder(template, newOrder),
-      });
-
-      title.onclick = (e) => {
-        if (isPending || markedForArchive || dragCtl.wasDragged()) return;
-        startReorderInlineEdit(row, title, template, e.clientX, renameTemplate);
-      };
-
-      const archiveBtn = document.createElement("button");
-      archiveBtn.className = "small-btn reorder-archive-btn" + (markedForArchive ? " marked" : "");
-      archiveBtn.disabled = isPending;
-      archiveBtn.setAttribute("aria-label", markedForArchive ? "Отменить удаление" : "Удалить шаблон");
-      archiveBtn.innerHTML = markedForArchive ? undoIcon() : archiveIcon();
-      archiveBtn.onclick = () => toggleReorderArchive(template);
-      row.append(archiveBtn);
-
-      return row;
-    }
-
-    // Строка шаблона в обычном режиме (Phase 18) — только текст, тап
-    // мгновенно создаёт задачу (см. useTemplate). Никакого кружка статуса
-    // или даты — пункт 1 требований прямо это исключает.
+    // Строка шаблона в обычном режиме (Phase 18) — текст, постоянная
+    // ручка переноса и долгое нажатие открывает форму редактирования
+    // (Phase 63, см. openTemplateEditSheet) — у шаблона нет ни статуса,
+    // ни даты, только текст и удаление.
     function renderTemplateRow(template) {
       const isPending = pendingTemplateIds.has(template.id);
       const row = document.createElement("div");
       row.className = "row template-row" + (isPending ? " pending" : "");
+      row.dataset.sortOrder = String(template.sort_order);
 
       const title = document.createElement("span");
       title.className = "title title-full";
       title.textContent = template.title;
       row.append(title);
 
-      row.onclick = () => {
-        if (isPending) return;
+      const grip = document.createElement("span");
+      grip.className = "grip";
+      grip.setAttribute("aria-label", "Перетащить");
+      grip.innerHTML = gripIcon();
+      row.append(grip);
+
+      setupDragReorder({
+        row,
+        trigger: grip,
+        rowSelector: ".template-row",
+        getSortOrder: (el) => parseFloat(el.dataset.sortOrder),
+        persist: (newOrder) => setTemplateSortOrder(template, newOrder),
+        elevate: true,
+      });
+
+      attachLongPress(row, () => openTemplateEditSheet(template), ".grip");
+
+      row.addEventListener("click", (e) => {
+        if (isPending || e.target.closest(".grip")) return;
         useTemplate(template);
-      };
+      });
 
       return row;
     }
@@ -1595,21 +1390,17 @@
     }
 
     // Рендерит #templates-list — вызывается из общего render(), как
-    // остальные списки. Тот же переключатель обычный/reorder режим, что и
-    // renderList, но своя реализация: коллекция шаблонов не участвует в
-    // группировке по дням/событиям, ей это не нужно.
+    // остальные списки (Phase 63 — раньше был свой переключатель
+    // обычный/reorder режим, как у renderList, теперь один путь, ручка
+    // переноса и форма редактирования всегда доступны прямо в строке).
     function renderTemplatesList() {
       const container = document.getElementById("templates-list");
-      const reorderMode = isReorderActive("templates");
-      container.classList.toggle("reorder-active-list", reorderMode);
       container.innerHTML = "";
       const sorted = [...templatesData].sort((a, b) => a.sort_order - b.sort_order);
       if (sorted.length === 0) {
         renderEmpty(container);
       } else {
-        sorted.forEach((t) => {
-          container.append(reorderMode ? renderTemplateReorderRow(t) : renderTemplateRow(t));
-        });
+        sorted.forEach((t) => container.append(renderTemplateRow(t)));
       }
       container.append(renderAddTemplateRow());
     }
@@ -1666,9 +1457,14 @@
     // Долгое нажатие по строке проекта/цели — открывает форму правки,
     // предзаполненную текущими значениями (Phase 28). Тот же паттерн
     // "таймер + отмена по сдвигу/отпусканию", что и у остальных
-    // long-press жестов приложения (см. attachReorderEntry) — слушатели
-    // движения/отпускания на document, не на самом элементе.
-    function attachEntityLongPress(el, entity, kind) {
+    // Общее долгое нажатие (~450мс, порог сдвига 8px) — открывает форму
+    // редактирования того, что под пальцем: сущность (проект/цель, см.
+    // ниже), задача или шаблон (Phase 63, см. renderTaskRow/
+    // renderTemplateRow) — колбэк решает, какую именно форму открыть.
+    // Слушатели движения/отпускания на document, не на самом элементе —
+    // тот же приём, что у setupDragReorder (надёжнее в Telegram WebView,
+    // чем setPointerCapture, если палец уходит за пределы узла).
+    function attachLongPress(el, onTrigger, ignoreSelector) {
       const HOLD_MS = 450;
       const MOVE_THRESHOLD = 8;
       let timer = null;
@@ -1682,7 +1478,7 @@
       }
 
       el.addEventListener("pointerdown", (e) => {
-        if (e.target.closest(".checkbox, .swipe-zone, .swipe-handle")) return;
+        if (ignoreSelector && e.target.closest(ignoreSelector)) return;
         startX = e.clientX;
         startY = e.clientY;
         pointerId = e.pointerId;
@@ -1690,7 +1486,7 @@
         timer = setTimeout(() => {
           timer = null;
           tg?.HapticFeedback?.impactOccurred("medium");
-          openEditEntitySheet(entity, kind);
+          onTrigger();
         }, HOLD_MS);
       });
       document.addEventListener("pointermove", (e) => {
@@ -1779,7 +1575,7 @@
 
       wrap.append(actions, content);
       const swipeHandle = setupSwipeDrag(zone, actions, (kind === "project" ? "project-" : "goal-") + entity.id);
-      attachEntityLongPress(content, entity, kind);
+      attachLongPress(content, () => openEditEntitySheet(entity, kind), ".checkbox, .swipe-zone, .swipe-handle");
       // Обычный тап — открывает окно проекта/цели (Phase 56). Долгое
       // нажатие (attachEntityLongPress выше) по-прежнему сразу ведёт в
       // форму правки — гонки нет: render() внутри неё (см.
@@ -1867,9 +1663,7 @@
     // остальными шторками, эта функция только заполняет содержимое.
     // #project-detail-list — статический узел (см. разметку), никогда
     // не пересоздаётся, поэтому просто перерисовываем его как обычный
-    // список (attachReorderEntry навешан один раз при загрузке, см.
-    // ниже по файлу, с динамическим ключом — рядом с остальными
-    // attachReorderEntry).
+    // список.
     function renderProjectDetailSheet() {
       const entity = getProjectDetailEntity();
       if (!entity) return;
@@ -1877,7 +1671,6 @@
       document.getElementById("project-detail-description").textContent = entity.description || "";
       renderList(document.getElementById("project-detail-list"), tasksForProject(entity.id), {
         listKey: "project:" + projectDetailKind + ":" + entity.id,
-        style: "swipe",
         showMoveToToday: true,
         showTemplatesPicker: false,
         dateFor: () => null,
@@ -2161,6 +1954,14 @@
     // строку через translateY и сравнивает getBoundingClientRect (уже
     // viewport-relative, скролл контейнера учтён автоматически).
     function applyReorderElevation(container, active) {
+      // .reorder-active-list (z-index/тень) и сама .reorder-scrim —
+      // раньше выставлялись отдельно, реактивно внутри render() (по
+      // reorderActiveKey), теперь элевация — побочный эффект живого
+      // жеста переноса (см. setupDragReorder), а не отдельного
+      // "режима", так что render() между началом и концом жеста вообще
+      // не участвует — обе вещи выставляем прямо здесь.
+      container.classList.toggle("reorder-active-list", active);
+      document.getElementById("reorder-scrim").classList.toggle("visible", active);
       if (active && !container._reorderPlaceholder) {
         const placeholder = document.createComment("reorder-anchor");
         container.parentNode.insertBefore(placeholder, container);
@@ -2176,91 +1977,35 @@
       }
     }
 
+    // Один путь на все списки задач (Phase 63 — раньше здесь же
+    // различались обычный/свайп/режим-переноса рендеры строки, см.
+    // историю выше renderTaskRow/renderReorderRow); элевация в
+    // затемнённое окно теперь запускается самим жестом переноса
+    // (setupDragReorder/applyReorderElevation), не рендером списка.
     function renderList(container, tasks, ctx) {
-      const reorderMode = isReorderActive(ctx.listKey);
-      // Список в режиме переноса рисуется выше затемняющего фона (см.
-      // .reorder-active-list в CSS) — тем самым и выглядит "на переднем
-      // плане", а всё остальное на странице просто перекрыто .reorder-scrim.
-      container.classList.toggle("reorder-active-list", reorderMode);
-      applyReorderElevation(container, reorderMode);
-      // Значок шаблонов доступен и внутри открытого окна переноса (см.
-      // renderAddTaskRow ниже) — пока поверх него открыта шторка
-      // шаблонов, само окно переноса тоже должно выглядеть неактивным
-      // (item, Phase 38), а не чётким вторым "передним планом".
-      container.classList.toggle("reorder-dimmed", reorderMode && templatesPickerOpen);
       container.innerHTML = "";
       const sorted = sortByOrder(tasks);
       if (sorted.length === 0) {
         renderEmpty(container);
       } else {
-        sorted.forEach((t) => {
-          if (reorderMode) {
-            container.append(renderReorderRow(t, ctx));
-          } else if (ctx.style === "swipe") {
-            container.append(renderSwipeableTaskRow(t, ctx));
-          } else {
-            container.append(renderTaskRow(t, ctx));
-          }
-        });
+        sorted.forEach((t) => container.append(renderTaskRow(t, ctx)));
       }
       container.append(renderAddTaskRow(ctx));
     }
 
     // Элементы с собственной, уже занятой семантикой жеста — чекбокс/
-    // кнопки/свайп-зона/шторка/поля ввода. Общий список исключений и для
-    // долгого нажатия (attachReorderEntry — иначе оно бы отбирало жест у
-    // обычного тапа/свайпа этих элементов), и для тапа по всей строке,
-    // переключающего статус (Phase 48, см. renderTaskRow/
-    // renderSwipeableTaskRow) — иначе тап по кнопке даты/архива/etc.
+    // ручка переноса/кнопки/поля ввода. Общий список исключений для
+    // тапа по всей строке, переключающего статус (Phase 48, см.
+    // renderTaskRow) — иначе тап по ручке/кнопке даты/архива/etc.
     // попутно ещё и переключил бы задачу выполненной.
-    const ROW_TAP_IGNORE_SELECTOR = ".checkbox, .small-btn, .icon-btn, .swipe-zone, .swipe-actions, input";
+    const ROW_TAP_IGNORE_SELECTOR = ".checkbox, .grip, .small-btn, .icon-btn, .swipe-zone, .swipe-actions, input";
 
-    // Долгое нажатие где угодно в поле списка (500мс без сдвига > 8px)
-    // включает режим переноса для этого списка (см. enterReorderMode).
-    // listKey — строка либо функция-геттер (для недельного дня, у
-    // которого выбранная дата может смениться, см. renderWeekDetail):
-    // резолвим на каждое использование, а не один раз при вызове, иначе
-    // долгое нажатие, начатое на одной дате, могло бы отработать по
-    // уже неактуальному ключу.
-    function attachReorderEntry(container, listKey) {
-      const resolveKey = () => (typeof listKey === "function" ? listKey() : listKey);
-      let timer = null;
-      let startX = 0;
-      let startY = 0;
-      let pointerId = null;
-      function clear() {
-        clearTimeout(timer);
-        timer = null;
-        pointerId = null;
-      }
-      container.addEventListener("pointerdown", (e) => {
-        if (isReorderActive(resolveKey())) return;
-        if (e.target.closest(ROW_TAP_IGNORE_SELECTOR)) return;
-        startX = e.clientX;
-        startY = e.clientY;
-        pointerId = e.pointerId;
-        clearTimeout(timer);
-        timer = setTimeout(() => enterReorderMode(resolveKey()), REORDER_HOLD_MS);
-      });
-      // pointermove/up/cancel — на document, а не на container: тот же
-      // приём, что и у остальных жестов переноса в приложении (см.
-      // setupDragReorder/attachSheetOverswipeClose) — реальное движение
-      // пальца в Telegram WebView не всегда продолжает попадать именно в
-      // исходный контейнер, значит и таймер долгого нажатия рискует не
-      // очиститься движением, если слушать только на нём самом.
-      document.addEventListener("pointermove", (e) => {
-        if (!timer || e.pointerId !== pointerId) return;
-        if (Math.abs(e.clientX - startX) > REORDER_MOVE_THRESHOLD || Math.abs(e.clientY - startY) > REORDER_MOVE_THRESHOLD) {
-          clear();
-        }
-      });
-      document.addEventListener("pointerup", (e) => {
-        if (e.pointerId === pointerId) clear();
-      });
-      document.addEventListener("pointercancel", (e) => {
-        if (e.pointerId === pointerId) clear();
-      });
-    }
+    // attachReorderEntry (долгое нажатие по пустому месту списка,
+    // включавшее режим переноса на весь список) удалена в Phase 63 —
+    // перенос теперь стартует прямо с постоянной ручки каждой строки
+    // (см. setupDragReorder/renderTaskRow), долгое нажатие по строке
+    // открывает форму редактирования именно этой задачи/шаблона (см.
+    // attachLongPress).
 
     // Оверсвайп списка внутри bottom sheet — докрутил список до края
     // (верх или низ), продолжаешь тянуть — вся шторка следует за пальцем;
@@ -2549,14 +2294,12 @@
     const _dayOpts = {
       yesterday: {
         listKey: "yesterday",
-        style: "swipe",
         showMoveToToday: true,
         showTemplatesPicker: true,
         dateFor: () => boardState.days.yesterday?.date,
       },
       today: {
         listKey: "today",
-        style: "swipe",
         showMoveToToday: false,
         showTemplatesPicker: true,
         dateFor: () => boardState.days.today?.date,
@@ -2568,7 +2311,6 @@
       // нужен.
       tomorrow: {
         listKey: "tomorrow",
-        style: "swipe",
         showMoveToToday: false,
         showTemplatesPicker: true,
         dateFor: () => (boardState.days.today ? addDaysIso(boardState.days.today.date, 1) : null),
@@ -2677,31 +2419,25 @@
         return;
       }
 
-      const listKey = "cal:" + selectedWeekDate;
       if (!weekDetailListEl) {
         // БАГ (Phase 33): раньше тут ещё проверялось !el.contains(...) —
-        // но пока активен режим переноса, элемент ЗАКОНОМЕРНО не лежит
-        // в el (он в <body>, см. applyReorderElevation), и это условие
-        // ошибочно пересоздавало список заново. Новый узел создавался,
-        // рендерился в el, а СТАРЫЙ (настоящий, элевированный) так и
-        // оставался висеть в body — applyReorderElevation(false) на нём
-        // никогда не вызывался, потому что renderList теперь работал
-        // с другим объектом. Тап по фону закрывал режим переноса
-        // (scrim гас), но осиротевшее окно оставалось на экране до
-        // перезахода в приложение. Проверяем только на null.
+        // но пока идёт перенос задачи (см. setupDragReorder/
+        // applyReorderElevation), элемент ЗАКОНОМЕРНО не лежит в el (он
+        // в <body>), и это условие ошибочно пересоздавало список заново.
+        // Новый узел создавался, рендерился в el, а СТАРЫЙ (настоящий,
+        // элевированный) так и оставался висеть в body —
+        // applyReorderElevation(false) на нём никогда не вызывался,
+        // потому что renderList теперь работал с другим объектом. Тап
+        // по фону закрывал перенос (scrim гас), но осиротевшее окно
+        // оставалось на экране до перезахода в приложение. Проверяем
+        // только на null.
         weekDetailListEl = document.createElement("div");
         weekDetailListEl.className = "list";
-        // Геттер, не фиксированная строка — selectedWeekDate может
-        // смениться позже, а attachReorderEntry вызывается только один
-        // раз для этого персистентного узла (см. объявление
-        // weekDetailListEl выше).
-        attachReorderEntry(weekDetailListEl, () => "cal:" + selectedWeekDate);
         el.innerHTML = "";
         el.append(weekDetailListEl);
       }
       renderList(weekDetailListEl, tasksForDate(selectedWeekDate), {
-        listKey,
-        style: "swipe",
+        listKey: "cal:" + selectedWeekDate,
         showMoveToToday: false,
         showTemplatesPicker: true,
         dateFor: () => selectedWeekDate,
@@ -2727,7 +2463,6 @@
       }
       renderList(document.getElementById("inbox-list"), boardState.inbox, {
         listKey: "inbox",
-        style: "plain",
         showDateButton: true,
         showTrashButton: true,
         showMoveToToday: true,
@@ -2753,6 +2488,8 @@
         projectDetailKind = null;
       }
       renderProjectDetailSheet();
+      renderTaskEditSheet();
+      renderTemplateEditSheet();
       const anySheetOpen =
         templatesPickerOpen ||
         projectPickerOpen ||
@@ -2764,10 +2501,14 @@
         widgetSettingsOpen ||
         dayViewSettingsOpen ||
         taskReviewOpen ||
-        projectDetailId !== null;
-      document
-        .getElementById("reorder-scrim")
-        .classList.toggle("visible", reorderActiveKey !== null || anySheetOpen);
+        projectDetailId !== null ||
+        editingTaskId != null ||
+        editingTemplateId != null;
+      // reorderActiveKey — больше не источник видимости шторки (Phase
+      // 63): пока идёт перенос, элевация сама показывает/прячет
+      // .reorder-scrim напрямую (см. applyReorderElevation), render() в
+      // это время не выполняется.
+      document.getElementById("reorder-scrim").classList.toggle("visible", anySheetOpen);
       document.getElementById("templates-sheet").classList.toggle("visible", templatesPickerOpen);
       document
         .getElementById("project-picker-sheet")
@@ -2791,6 +2532,10 @@
       document
         .getElementById("project-detail-sheet")
         .classList.toggle("visible", projectDetailId !== null);
+      document.getElementById("task-edit-sheet").classList.toggle("visible", editingTaskId != null);
+      document
+        .getElementById("template-edit-sheet")
+        .classList.toggle("visible", editingTemplateId != null);
     }
 
     function addDaysIso(iso, days) {
@@ -2888,12 +2633,7 @@
       }
     }
 
-    async function setTaskPriority(task, newPriority, onUpdate) {
-      // onUpdate — необязательный "лёгкий" рендер вместо полного render():
-      // пока свайп-шторка открыта, importantBtn/eventBtn передают сюда
-      // syncPriorityUI, чтобы список не пересортировался прямо во время
-      // работы с панелью (см. renderSwipeableTaskRow).
-      const update = onUpdate || render;
+    async function setTaskPriority(task, newPriority) {
       const id = task.id;
       const prevPriority = task.priority;
       const prevSortOrder = task.sort_order;
@@ -2903,7 +2643,7 @@
       // она уходит в конец новой группы, тем же правилом "новая — в конец".
       task.sort_order = Date.now();
       pendingIds.add(id);
-      update();
+      render();
       try {
         await api(`/miniapp/api/tasks/${encodeURIComponent(id)}/priority`, {
           method: "POST",
@@ -2912,11 +2652,11 @@
       } catch (e) {
         task.priority = prevPriority;
         task.sort_order = prevSortOrder;
-        update();
+        render();
         alert("Не удалось изменить приоритет.");
       } finally {
         pendingIds.delete(id);
-        update();
+        render();
       }
     }
 
@@ -3376,6 +3116,123 @@
       render();
     }
 
+    // Форма редактирования задачи по долгому нажатию (Phase 63) —
+    // заменяет собой прежнюю свайп-шторку (важность/событие/дата/
+    // проект/архив) и правку текста, доступную только в старом режиме
+    // переноса. Держим id, не саму задачу — findTaskById достаёт
+    // актуальный объект на каждый render(), так что форма не
+    // разъезжается со свежими данными (тот же принцип, что projectDetailId).
+    let editingTaskId = null;
+
+    function openTaskEditSheet(task) {
+      editingTaskId = task.id;
+      render();
+    }
+
+    // Единая точка сохранения текста — тот же принцип, что
+    // commitEntityForm: что бы ни закрыло форму (крестик, тап по фону),
+    // попытка сохранить одна и та же. save=false — только при удалении
+    // задачи изнутри формы, сохранять уже нечего.
+    function closeTaskEditSheet(save) {
+      const task = editingTaskId != null ? findTaskById(editingTaskId) : null;
+      if (save && task) {
+        const text = document.getElementById("task-edit-title").value.trim();
+        if (text && text !== task.title) renameTask(task, text);
+      }
+      editingTaskId = null;
+      render();
+    }
+
+    // Заполняет статичную разметку формы текущими значениями задачи —
+    // вызывается из общего render() каждый раз, как и
+    // renderCreateEntityForm (видимость самой шторки переключается там
+    // же отдельной строкой). Кнопки/переключатели навешаны один раз при
+    // загрузке (см. ниже по файлу), эта функция только обновляет их
+    // состояние и текст.
+    function renderTaskEditSheet() {
+      if (editingTaskId == null) return;
+      const task = findTaskById(editingTaskId);
+      if (!task) {
+        // Задачу успели удалить/архивировать откуда-то ещё, пока форма
+        // была открыта (тот же принцип, что у projectDetailId в render()).
+        editingTaskId = null;
+        return;
+      }
+
+      const titleEl = document.getElementById("task-edit-title");
+      // Не перезаписываем поле, пока в нём реально печатают — иначе
+      // курсор скакал бы в конец на каждый фоновый render() (тот же
+      // класс защиты, что title-edit у инлайн-правки в других местах).
+      if (document.activeElement !== titleEl) titleEl.value = task.title;
+
+      const importantBtn = document.getElementById("task-edit-important");
+      importantBtn.classList.toggle("on", task.priority === "высокий");
+      importantBtn.innerHTML = importantIcon() + "<span>Важная</span>";
+
+      const eventBtn = document.getElementById("task-edit-event");
+      eventBtn.classList.toggle("on", task.priority === "event");
+      eventBtn.innerHTML = eventPinIcon() + "<span>Событие</span>";
+
+      // Дата — тот же приём, что был в убранной свайп-шторке (Phase 19):
+      // невидимый input поверх кнопки, тап по кнопке открывает нативный
+      // пикер. Для события сразу дата+время одним пикером, для обычной
+      // задачи — только дата.
+      const dateBtn = document.getElementById("task-edit-date");
+      const dateLabel = task.due_date
+        ? formatShortDate(task.due_date) + (task.due_time ? ", " + task.due_time : "")
+        : "Дата не задана";
+      dateBtn.className = "entity-date-btn" + (task.due_date ? " date-set" : "");
+      dateBtn.innerHTML = calendarIcon() + `<span>${dateLabel}</span>`;
+      const dateInput = document.createElement("input");
+      dateInput.type = task.priority === "event" ? "datetime-local" : "date";
+      dateInput.className = "entity-date-input";
+      dateInput.onchange = () => {
+        if (!dateInput.value) return;
+        setTaskDueDate(task, dateInput.value);
+      };
+      dateBtn.append(dateInput);
+      dateBtn.onclick = () => (dateInput.showPicker ? dateInput.showPicker() : dateInput.click());
+
+      const projectBtn = document.getElementById("task-edit-project");
+      const project = task.project_id ? projectsData.find((p) => p.id === task.project_id) : null;
+      projectBtn.className = "entity-date-btn" + (project ? " date-set" : "");
+      projectBtn.innerHTML = projectIcon() + `<span>${project ? project.title : "Без проекта"}</span>`;
+      projectBtn.onclick = () => openProjectPicker(task);
+    }
+
+    // Форма редактирования шаблона по долгому нажатию (Phase 63) —
+    // двойник openTaskEditSheet/closeTaskEditSheet/renderTaskEditSheet
+    // выше, но с одним полем (текст) и без остальных: у шаблона нет ни
+    // важности/события, ни даты, ни проекта.
+    let editingTemplateId = null;
+
+    function openTemplateEditSheet(template) {
+      editingTemplateId = template.id;
+      render();
+    }
+
+    function closeTemplateEditSheet(save) {
+      const template =
+        editingTemplateId != null ? templatesData.find((t) => t.id === editingTemplateId) : null;
+      if (save && template) {
+        const text = document.getElementById("template-edit-title").value.trim();
+        if (text && text !== template.title) renameTemplate(template, text);
+      }
+      editingTemplateId = null;
+      render();
+    }
+
+    function renderTemplateEditSheet() {
+      if (editingTemplateId == null) return;
+      const template = templatesData.find((t) => t.id === editingTemplateId);
+      if (!template) {
+        editingTemplateId = null;
+        return;
+      }
+      const titleEl = document.getElementById("template-edit-title");
+      if (document.activeElement !== titleEl) titleEl.value = template.title;
+    }
+
     // Подсказка сферы(-ей) проекта/цели (Phase 51) — вызывается один раз
     // после того, как пользователь проставил дату/период в форме
     // создания (см. колбэки openDatePicker ниже), не на каждое нажатие
@@ -3480,11 +3337,13 @@
 
     // Долгое нажатие где угодно в списке (кроме самого чекбокса —
     // у него уже есть тап) включает режим правки. Тот же приём таймер +
-    // отмена по сдвигу пальца, что и attachReorderEntry/
-    // attachEntityLongPress, но не переиспользует их напрямую: те
-    // завязаны на общий reorderActiveKey/isReorderActive, рассчитанный
-    // на настоящие персистентные списки задач, а не на этот
-    // одноразовый черновик в памяти.
+    // отмена по сдвигу пальца, что и attachLongPress, но не
+    // переиспользует его напрямую: тут отдельный локальный
+    // taskReviewEditMode, переключающий рендер ВСЕГО списка разом
+    // (правится порядок/текст черновика), а не форма редактирования
+    // одной строки — другая семантика, рассчитанная на этот
+    // одноразовый черновик в памяти, а не на настоящий персистентный
+    // список задач.
     function attachTaskReviewLongPress(container) {
       const HOLD_MS = 500;
       const MOVE_THRESHOLD = 8;
@@ -4111,17 +3970,19 @@
       el.innerHTML =
         '<div class="help-section"><h4>Задачи</h4>' +
         helpRow(tapGestureIcon(), "<b>Отметить выполненной</b> — тап в любом месте строки (не только по кружку).") +
-        helpRow(swipeGestureIcon(), "<b>Важность, событие, дата, архив</b> — свайп влево по строке открывает кнопки действий.") +
-        helpRow(swipeGestureIcon(), "<b>Перенести на сегодня</b> — у вчерашней задачи в свайпе есть отдельная кнопка.") +
+        helpRow(
+          dragGestureIcon(),
+          "<b>Изменить порядок</b> — ручка справа у каждой строки, потяни пальцем вверх/вниз."
+        ) +
         helpRow(
           longPressGestureIcon(),
-          "<b>Изменить порядок или текст</b> — долгое нажатие на строку (около секунды), список превращается в отдельное окно; там же тап по тексту ставит курсор для правки, дальше перетаскивай пальцем за ручку."
+          "<b>Текст, важность, событие, дата, проект, удаление</b> — долгое нажатие на строку открывает форму редактирования."
         ) +
         helpRow(null, "<b>Частые шаблоны</b> — значок звезды у поля добавления: тап по шаблону сразу создаёт задачу.") +
         "</div>" +
         '<div class="help-section"><h4>Инбокс</h4>' +
         helpRow(tapGestureIcon(), "Задачи без даты. Тап по заголовку разворачивает список.") +
-        helpRow(swipeGestureIcon(), "Свайп по задаче — поставить дату или удалить.") +
+        helpRow(null, "Кнопки прямо в строке — перенести на сегодня, поставить дату, удалить.") +
         "</div>" +
         '<div class="help-section"><h4>Календарь</h4>' +
         helpRow(swipeGestureIcon(), "Сетка месяца — свайп влево/вправо между месяцами, или стрелки ‹ ›.") +
@@ -4616,13 +4477,11 @@
       if (!monthDetailListEl) {
         monthDetailListEl = document.createElement("div");
         monthDetailListEl.className = "list";
-        attachReorderEntry(monthDetailListEl, () => "month:" + calSelectedDay);
         el.innerHTML = "";
         el.append(monthDetailListEl);
       }
       renderList(monthDetailListEl, tasksForDate(iso), {
         listKey,
-        style: "swipe",
         showMoveToToday: false,
         showTemplatesPicker: true,
         dateFor: () => calSelectedDay,
@@ -4702,29 +4561,10 @@
       document.getElementById("inbox-chevron").classList.toggle("expanded", inboxExpanded);
     };
 
-    // Долгое нажатие включает режим переноса в каждом из статических
-    // списков (Вчера/Сегодня/Инбокс) — контейнеры переживают render()
-    // (чистится только их innerHTML), так что слушатель достаточно
-    // навесить один раз при загрузке. У календаря список пересоздаётся
-    // заново на каждый выбранный день — там attachReorderEntry вызывается
-    // прямо в renderWeekDetail().
-    attachReorderEntry(document.getElementById("yesterday-list"), "yesterday");
-    attachReorderEntry(document.getElementById("today-list"), "today");
-    attachReorderEntry(document.getElementById("tomorrow-list"), "tomorrow");
-    attachReorderEntry(document.getElementById("inbox-list"), "inbox");
-    attachReorderEntry(document.getElementById("templates-list"), "templates");
-    // Окно проекта/цели (Phase 56) — тоже статический, никогда не
-    // пересоздаётся, так что и здесь один вызов на загрузку хватает; ключ
-    // — функция, а не строка, потому что projectDetailId/Kind меняются,
-    // пока сам DOM-узел живёт (тот же приём, что у "cal:"+selectedWeekDate
-    // в renderWeekDetail).
-    attachReorderEntry(document.getElementById("project-detail-list"), () => "project:" + projectDetailKind + ":" + projectDetailId);
-
     attachSheetOverswipeClose(
       document.getElementById("templates-sheet"),
       document.getElementById("templates-list"),
-      closeTemplatesPicker,
-      () => isReorderActive("templates")
+      closeTemplatesPicker
     );
     attachSheetOverswipeClose(
       document.getElementById("project-picker-sheet"),
@@ -4751,6 +4591,33 @@
     // свайпа (см. .entity-window в CSS и комментарий там же).
     document.getElementById("create-entity-close").addEventListener("click", closeCreateEntitySheet);
 
+    // Форма редактирования задачи/шаблона по долгому нажатию (Phase 63)
+    // — тот же паттерн закрытия, что у create-entity-sheet выше;
+    // важность/событие/удаление навешаны один раз здесь же —
+    // renderTaskEditSheet только обновляет их текст/состояние, не
+    // пересобирает узлы, так что обработчик не теряется между рендерами.
+    document.getElementById("task-edit-close").addEventListener("click", () => closeTaskEditSheet(true));
+    document.getElementById("task-edit-important").addEventListener("click", () => {
+      const task = editingTaskId != null ? findTaskById(editingTaskId) : null;
+      if (task) setTaskPriority(task, task.priority === "высокий" ? "средний" : "высокий");
+    });
+    document.getElementById("task-edit-event").addEventListener("click", () => {
+      const task = editingTaskId != null ? findTaskById(editingTaskId) : null;
+      if (task) setTaskPriority(task, task.priority === "event" ? "средний" : "event");
+    });
+    document.getElementById("task-edit-delete").addEventListener("click", () => {
+      const task = editingTaskId != null ? findTaskById(editingTaskId) : null;
+      closeTaskEditSheet(false);
+      if (task) archiveTask(task);
+    });
+    document.getElementById("template-edit-close").addEventListener("click", () => closeTemplateEditSheet(true));
+    document.getElementById("template-edit-delete").addEventListener("click", () => {
+      const template =
+        editingTemplateId != null ? templatesData.find((t) => t.id === editingTemplateId) : null;
+      closeTemplateEditSheet(false);
+      if (template) archiveTemplateNow(template);
+    });
+
     // Ревью-экран предложенных задач (Phase 52) — тот же паттерн, что
     // create-entity-sheet: крестик/тап по фону закрывают без сохранения
     // (discard), отдельная кнопка "Готово" внутри — commitTaskReview.
@@ -4774,13 +4641,15 @@
     // "Готово" больше нет): список рисуется выше .reorder-scrim (см. CSS),
     // так что клики внутри него сюда не долетают — только клики "мимо".
     document.getElementById("reorder-scrim").addEventListener("click", () => {
-      // Тап по затемнению: если в этот момент активен режим переноса
-      // (в т.ч. для шаблонов) — обычный выход из него (архивирует
-      // отмеченное). Иначе, если просто открыт picker шаблонов без
-      // режима переноса — закрывает его без побочных эффектов.
-      if (reorderActiveKey !== null) {
-        exitReorderMode();
-      } else if (templatesPickerOpen) {
+      // Тап по затемнению — единственный выход из каждой шторки/формы,
+      // проверяем от самой "вложенной" к самой "внешней" (та же
+      // логика, что уже была нужна ниже для projectDetailId/
+      // taskReviewEditMode — тап должен закрыть только ближайший
+      // открытый слой, не всё разом). Перенос задачи (Phase 63) сюда
+      // больше не попадает — пока он идёт, элевация сама показывает и
+      // прячет .reorder-scrim напрямую (см. applyReorderElevation),
+      // никакого отдельного "выхода из режима" тапом больше нет.
+      if (templatesPickerOpen) {
         closeTemplatesPicker();
       } else if (projectPickerOpen) {
         closeProjectPicker();
@@ -4793,6 +4662,14 @@
         closeDatePickerSheet();
       } else if (createEntityKind !== null) {
         closeCreateEntitySheet();
+      } else if (editingTaskId != null) {
+        // Форма задачи (Phase 63) может быть открыта поверх окна
+        // проекта (долгое нажатие на задачу внутри него) — проверяем
+        // раньше projectDetailId по той же причине, что и
+        // createEntityKind выше.
+        closeTaskEditSheet(true);
+      } else if (editingTemplateId != null) {
+        closeTemplateEditSheet(true);
       } else if (projectDetailId !== null) {
         // Проверяем после createEntityKind (Phase 56) — форма правки
         // открывается ПОВЕРХ окна проекта (шестерёнка), тап по фону

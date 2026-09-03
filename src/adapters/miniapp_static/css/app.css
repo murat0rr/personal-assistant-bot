@@ -397,10 +397,12 @@
       padding: 0;
     }
     .archive-btn { color: var(--accent); }
-    /* Свайп-шторка на строке задачи (Вчера/Сегодня/календарь — не Инбокс,
-       там действия и так всегда на виду). Сама строка (.swipe-content)
-       неподвижна; шторка с кнопками (.swipe-actions) наезжает поверх
-       справа при перетаскивании, фон чуть светлее самой строки. */
+    /* Свайп-шторка (Phase 63 — у задач убрана, действия переехали в
+       форму редактирования по долгому нажатию; используется только
+       строкой проекта/цели, см. renderEntityRow). Сама строка
+       (.swipe-content) неподвижна; шторка с кнопками (.swipe-actions)
+       наезжает поверх справа при перетаскивании, фон чуть светлее самой
+       строки. */
     .swipe-wrap {
       position: relative;
       overflow: hidden;
@@ -476,17 +478,6 @@
       bottom: 0;
       width: 72px;
       touch-action: pan-y;
-    }
-    /* "Перенести на сегодня" в свайпаемой строке (Phase 55, БАГ) — flex
-       прижимает эту кнопку к правому краю .swipe-content, прямо под
-       .swipe-zone выше (та 72px и без z-index, так что по умолчанию
-       перекрывает любой обычный поток-элемент в этой полосе). Поднимаем
-       кнопку над зоной, иначе реальный тап по ней ловит зона, не кнопку
-       (свайпа не происходит — палец не двигался, — и клик просто
-       пропадает без вида ошибки). */
-    .move-today-btn {
-      position: relative;
-      z-index: 1;
     }
     .swipe-handle {
       position: absolute;
@@ -1004,37 +995,76 @@
     .week-dot.medium { background: var(--accent); opacity: 0.65; }
     .week-dot.bright { background: var(--accent); opacity: 1; }
     #week-day-detail { margin-top: 8px; }
-    /* Режим переноса (Phase 14) — вместо кружка статуса слева ручка,
-       текст показывается полностью (см. .title-full выше), справа —
-       отложенное удаление (архивируется пачкой при выходе из режима).
-       Чувствительная зона зажатия (item 2, Phase 32) — заметно шире
+    /* Постоянная ручка переноса (Phase 63 — раньше видна только в
+       отдельном режиме переноса, слева; теперь всегда, справа, в
+       обычной строке задачи/шаблона). Чувствительная зона зажатия
+       (item 2, Phase 32, тот же приём, только зеркально) — заметно шире
        видимой иконки: ручка растянута на всю высоту строки и заезжает
-       в левый padding строки (margin-left отрицательный, до самого
-       края), а сама иконка прижата вправо (justify-content: flex-end),
-       поэтому визуально ничего не сдвинулось — просто у пальца больше
-       места, чтобы попасть по ней. */
+       в правый padding строки (margin-right отрицательный, до самого
+       края), а сама иконка прижата влево, ближе к тексту
+       (justify-content: flex-start), поэтому визуально ничего не
+       сдвинулось — просто у пальца больше места, чтобы попасть по ней. */
     .grip {
       width: 40px;
       align-self: stretch;
-      margin: -12px 0 -12px -14px;
-      padding-right: 4px;
+      margin: -12px -14px -12px 0;
+      padding-left: 4px;
       box-sizing: border-box;
       display: flex;
       align-items: center;
-      justify-content: flex-end;
+      justify-content: flex-start;
       color: var(--text-muted);
       flex-shrink: 0;
       touch-action: none;
       cursor: grab;
     }
-    .row.pending-archive {
-      opacity: 0.45;
+    /* Переключатели важности/события в форме редактирования задачи
+       (Phase 63, #task-edit-sheet) — те же значения task.priority, что
+       раньше выставляли кнопки убранной свайп-шторки, просто в виде
+       двух прямоугольных чипов вместо иконок в ряд. */
+    .toggle-chip-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
     }
-    .reorder-archive-btn {
+    .toggle-chip {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      background: transparent;
       color: var(--text-muted);
+      font-size: 13px;
+      padding: 9px 0;
     }
-    .reorder-archive-btn.marked {
+    .toggle-chip.on {
+      border-color: var(--accent);
       color: var(--accent);
+      background: var(--pending-bg);
+    }
+    /* Невидимый нативный input поверх кнопки даты в форме задачи —
+       тот же приём, что раньше был у .swipe-btn input[type="date"]
+       (см. историю), только на .entity-date-btn: position:relative
+       добавлен только этому классу, остальные его использования
+       (форма проекта/цели) без детей — на них не влияет. */
+    .entity-date-btn {
+      position: relative;
+    }
+    .entity-date-input {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+      padding: 0;
+    }
+    .task-edit-delete {
+      background: color-mix(in srgb, var(--neutral-red) 16%, transparent);
+      color: var(--neutral-red);
     }
     /* Затемняющий фон на весь экран (Phase 14) — активный список рисуется
        выше него (см. .reorder-active-list), поэтому визуально оказывается
@@ -1300,6 +1330,18 @@
        правки — #date-picker-sheet, тоже 27, при равенстве побеждает
        порядок в разметке (он объявлен позже) — ничего не меняется. */
     #create-entity-sheet { z-index: 27; }
+    /* Форма задачи/шаблона по долгому нажатию (Phase 63) — тот же
+       приём: задача внутри окна проекта (z-index 26) должна открыться
+       поверх него. project-picker-sheet (обычно z-index 26, как
+       обычный .bottom-sheet) открывается ИЗ формы задачи — поднимаем
+       его ещё на шаг выше, до 28, иначе при равенстве 26 против 27
+       он оказался бы под формой (тот же класс бага, что уже решён для
+       #templates-sheet выше). */
+    #task-edit-sheet,
+    #template-edit-sheet {
+      z-index: 27;
+    }
+    #project-picker-sheet { z-index: 28; }
     /* Плашка "Генерируем задачи…" (Phase 52) — левый верхний угол, тот
        же safe-area-приём, что и .entity-window-body выше, но сверху. */
     .task-suggest-pill {
