@@ -17,9 +17,8 @@
          содержимое собирает rebuildDayCarousel() из DAY_VIEWS/настройки
          "Отображения задач". Сами страницы ("day-page") лежат в скрытом
          пуле ниже и физически ПЕРЕНОСЯТСЯ (appendChild, не пересоздаются)
-         в #day-carousel в нужном порядке — тот же приём, что уже
-         используется для reorder-режима (см. applyReorderElevation),
-         поэтому все внутренние id (#week-carousel и т.п.) остаются
+         в #day-carousel в нужном порядке, поэтому все внутренние id
+         (#week-carousel и т.п.) остаются
          рабочими независимо от того, где физически сейчас лежит страница. -->
     <div class="day-carousel" id="day-carousel"></div>
     <div class="day-dots" id="day-dots"></div>
@@ -134,10 +133,10 @@
 
   <!-- Нижняя панель вкладок (Phase 35) — вне .screen-content, обычный
        flex-сосед в колонке .app-screen, поэтому остаётся на месте, пока
-       .screen-content скроллится сама по себе (никакого position:fixed —
-       и, значит, никакой ловушки со stacking context, см. комментарий
-       у applyReorderElevation). "Основной экран" — не панель, а тот же
-       самый жест/тап, что раньше делала #pill-extended (см. setupPill в
+       .screen-content скроллится сама по себе (никакого position:fixed
+       — и, значит, никакой ловушки со stacking context). "Основной
+       экран" — не панель, а тот же самый жест/тап, что раньше делала
+       #pill-extended (см. setupPill в
        attachScreenTransition) — просто теперь выглядит как более крупная
        кнопка по центру панели, а не отдельная плашка внизу экрана. -->
   <div class="ext-tabbar">
@@ -721,9 +720,9 @@
 
       // Постоянная ручка переноса (Phase 63) — раньше только в
       // отдельном "режиме переноса" на весь список (см. PLAN.md), теперь
-      // прямо здесь: хватание сразу тащит, список на время жеста
-      // поднимается в затемнённое окно (elevate: true, см.
-      // setupDragReorder/applyReorderElevation).
+      // прямо здесь: хватание сразу тащит, прямо на месте в списке, без
+      // отдельного окна/затемнения (было в первой версии Phase 63,
+      // убрано по живой обратной связи — мешало, не нужно).
       const grip = document.createElement("span");
       grip.className = "grip";
       grip.setAttribute("aria-label", "Перетащить");
@@ -736,7 +735,6 @@
         rowSelector: ".task-row",
         getSortOrder: (el) => parseFloat(el.dataset.sortOrder),
         persist: (newOrder) => setTaskSortOrder(task, newOrder),
-        elevate: true,
       });
 
       // Долгое нажатие ВНЕ ручки/чекбокса/кнопок — форма редактирования
@@ -999,13 +997,7 @@
     // document такой границы просто нет — не важно, где физически
     // находится палец, X-координата в самой логике переноса вообще не
     // участвует, только Y.
-    // elevate (Phase 63) — задачи/шаблоны поднимают список в затемнённое
-    // плавающее окно на время самого жеста переноса (тот же эффект, что
-    // раньше давал отдельный "режим переноса", теперь включается прямо
-    // хватанием ручки, см. applyReorderElevation ниже); экран ревью
-    // ИИ-задач (attachTaskReviewLongPress) элевацию не запрашивает —
-    // там перенос всегда был "на месте", без затемнения.
-    function setupDragReorder({ row, trigger, rowSelector, getSortOrder, persist, elevate }) {
+    function setupDragReorder({ row, trigger, rowSelector, getSortOrder, persist }) {
       let dragging = false;
       let moved = false; // реальный перенос состоялся — подавляет клик по названию
       let pointerId = null;
@@ -1114,7 +1106,6 @@
           settleAnim = null;
         }
         row.classList.add("reorder-dragging");
-        if (elevate) applyReorderElevation(row.parentElement, true);
         compensation = 0;
         applyTransform(0);
       }
@@ -1153,7 +1144,6 @@
               settleAnim = null;
               row.classList.remove("reorder-dragging");
               row.style.transform = "";
-              if (elevate) applyReorderElevation(row.parentElement, false);
               if (commit) commitOrder();
             })
             .catch(() => {
@@ -1338,7 +1328,6 @@
         rowSelector: ".template-row",
         getSortOrder: (el) => parseFloat(el.dataset.sortOrder),
         persist: (newOrder) => setTemplateSortOrder(template, newOrder),
-        elevate: true,
       });
 
       attachLongPress(row, () => openTemplateEditSheet(template), ".grip");
@@ -1929,59 +1918,15 @@
       return row;
     }
 
-    // Список в режиме переноса должен рисоваться выше затемняющего фона
-    // .reorder-scrim (см. .reorder-active-list в CSS) — но yesterday-list/
-    // today-list/inbox-list живут внутри #screen-stack, а он
-    // position:fixed, что per спецификации CSS безусловно создаёт
-    // собственный stacking context (независимо от z-index/transform) —
-    // никакой z-index внутри #screen-stack не способен подняться выше
-    // .reorder-scrim, который сам position:fixed и находится СНАРУЖИ
-    // #screen-stack: список навсегда заперт в контексте предка (БАГ,
-    // тихо сломался с появлением #screen-stack в Phase 25, всплыл только
-    // сейчас). Единственный настоящий выход — физически вынести DOM-узел
-    // списка за пределы #screen-stack на время режима переноса,
-    // оставив вместо него comment-маркер, чтобы вернуть на место при
-    // выходе. templates-list эта проблема не касается — он живёт в
-    // #templates-sheet, который сам уже верхнеуровневый position:fixed
-    // сосед .reorder-scrim, а не потомок #screen-stack.
-    // "Окно" режима переноса (item 2, Phase 32) — раньше элевация просто
-    // фиксировала список на его исходных координатах без ограничения
-    // высоты: если задач было больше, чем помещалось на экран, конец
-    // списка был физически недостижим (не скроллился). Теперь при входе
-    // список превращается в плавающее окно по центру экрана, максимум
-    // 80vh, скроллится сам (.reorder-window в CSS) — перетаскивание
-    // строк (setupDragReorder) на это не влияет: оно двигает саму
-    // строку через translateY и сравнивает getBoundingClientRect (уже
-    // viewport-relative, скролл контейнера учтён автоматически).
-    function applyReorderElevation(container, active) {
-      // .reorder-active-list (z-index/тень) и сама .reorder-scrim —
-      // раньше выставлялись отдельно, реактивно внутри render() (по
-      // reorderActiveKey), теперь элевация — побочный эффект живого
-      // жеста переноса (см. setupDragReorder), а не отдельного
-      // "режима", так что render() между началом и концом жеста вообще
-      // не участвует — обе вещи выставляем прямо здесь.
-      container.classList.toggle("reorder-active-list", active);
-      document.getElementById("reorder-scrim").classList.toggle("visible", active);
-      if (active && !container._reorderPlaceholder) {
-        const placeholder = document.createComment("reorder-anchor");
-        container.parentNode.insertBefore(placeholder, container);
-        container._reorderPlaceholder = placeholder;
-        document.body.appendChild(container);
-        container.classList.add("reorder-window");
-      } else if (!active && container._reorderPlaceholder) {
-        container._reorderPlaceholder.parentNode.insertBefore(container, container._reorderPlaceholder);
-        container._reorderPlaceholder.remove();
-        container._reorderPlaceholder = null;
-        container.classList.remove("reorder-window");
-        container.scrollTop = 0;
-      }
-    }
+    // applyReorderElevation (поднятие списка в затемнённое плавающее
+    // окно на время переноса) — была в первой версии Phase 63, убрана
+    // по живой обратной связи: мешала, перенос теперь просто двигает
+    // строку translateY прямо на месте, в обычном потоке списка (см.
+    // setupDragReorder), никакого отдельного окна/затемнения.
 
     // Один путь на все списки задач (Phase 63 — раньше здесь же
     // различались обычный/свайп/режим-переноса рендеры строки, см.
-    // историю выше renderTaskRow/renderReorderRow); элевация в
-    // затемнённое окно теперь запускается самим жестом переноса
-    // (setupDragReorder/applyReorderElevation), не рендером списка.
+    // историю выше renderTaskRow/renderReorderRow).
     function renderList(container, tasks, ctx) {
       container.innerHTML = "";
       const sorted = sortByOrder(tasks);
@@ -2411,26 +2356,19 @@
         // settleWeekCarousel) — прячем список и роняем ссылку, чтобы
         // при следующем выборе дня создать чистый узел заново, а не
         // держать закрытый предположениями про его текущее состояние.
-        // Не может случиться, пока активен режим переноса для него
-        // (см. weekDetailListEl выше) — переключение недели физически
-        // недостижимо, пока открыт .reorder-scrim.
         el.innerHTML = "";
         weekDetailListEl = null;
         return;
       }
 
       if (!weekDetailListEl) {
-        // БАГ (Phase 33): раньше тут ещё проверялось !el.contains(...) —
-        // но пока идёт перенос задачи (см. setupDragReorder/
-        // applyReorderElevation), элемент ЗАКОНОМЕРНО не лежит в el (он
-        // в <body>), и это условие ошибочно пересоздавало список заново.
-        // Новый узел создавался, рендерился в el, а СТАРЫЙ (настоящий,
-        // элевированный) так и оставался висеть в body —
-        // applyReorderElevation(false) на нём никогда не вызывался,
-        // потому что renderList теперь работал с другим объектом. Тап
-        // по фону закрывал перенос (scrim гас), но осиротевшее окно
-        // оставалось на экране до перезахода в приложение. Проверяем
-        // только на null.
+        // БАГ (Phase 33, историческая причина держать этот узел
+        // персистентным, а не проверять !el.contains(...) на каждый
+        // рендер) — раньше здесь была ещё одна элевация в отдельное
+        // окно на время переноса (убрана позже, см. историю
+        // setupDragReorder), из-за которой такая проверка иногда
+        // ошибочно пересоздавала список заново. Проверяем только на
+        // null — дешевле и без этого класса гонок.
         weekDetailListEl = document.createElement("div");
         weekDetailListEl.className = "list";
         el.innerHTML = "";
@@ -2504,10 +2442,6 @@
         projectDetailId !== null ||
         editingTaskId != null ||
         editingTemplateId != null;
-      // reorderActiveKey — больше не источник видимости шторки (Phase
-      // 63): пока идёт перенос, элевация сама показывает/прячет
-      // .reorder-scrim напрямую (см. applyReorderElevation), render() в
-      // это время не выполняется.
       document.getElementById("reorder-scrim").classList.toggle("visible", anySheetOpen);
       document.getElementById("templates-sheet").classList.toggle("visible", templatesPickerOpen);
       document
@@ -4460,10 +4394,9 @@
 
     // Список задач выбранного дня в месячном календаре (item 3, Phase 35)
     // — тот же компонент и тот же персистентный-узел паттерн, что уже
-    // отработан у недельного вида (см. подробный комментарий у
-    // weekDetailListEl/renderWeekDetail выше): пересоздание узла на
-    // каждый render() ломает applyReorderElevation, поэтому узел создаётся
-    // один раз и живёт, пока в месячном календаре вообще что-то выбрано.
+    // отработан у недельного вида (см. weekDetailListEl/renderWeekDetail
+    // выше) — узел создаётся один раз и живёт, пока в месячном
+    // календаре вообще что-то выбрано.
     let monthDetailListEl = null;
 
     function renderMonthDayDetail(iso) {
@@ -4645,10 +4578,9 @@
       // проверяем от самой "вложенной" к самой "внешней" (та же
       // логика, что уже была нужна ниже для projectDetailId/
       // taskReviewEditMode — тап должен закрыть только ближайший
-      // открытый слой, не всё разом). Перенос задачи (Phase 63) сюда
-      // больше не попадает — пока он идёт, элевация сама показывает и
-      // прячет .reorder-scrim напрямую (см. applyReorderElevation),
-      // никакого отдельного "выхода из режима" тапом больше нет.
+      // открытый слой, не всё разом). Перенос задачи (Phase 63) сюда не
+      // попадает вообще — он не показывает затемнение, только двигает
+      // строку на месте (см. setupDragReorder).
       if (templatesPickerOpen) {
         closeTemplatesPicker();
       } else if (projectPickerOpen) {
@@ -4879,12 +4811,11 @@
     }
 
     // Физически переносит .day-page узлы между пулом и каруселью
-    // (appendChild перемещает существующий узел, не пересоздаёт — тот
-    // же приём, что applyReorderElevation уже использует для
-    // reorder-режима) — все внутренние id страниц (#week-carousel и
-    // т.п.) остаются рабочими независимо от того, куда физически сейчас
-    // подвешен узел. Точки-индикаторы, в отличие от страниц, ничего не
-    // хранят и не помнят — их проще каждый раз пересоздавать целиком.
+    // (appendChild перемещает существующий узел, не пересоздаёт) — все
+    // внутренние id страниц (#week-carousel и т.п.) остаются рабочими
+    // независимо от того, куда физически сейчас подвешен узел.
+    // Точки-индикаторы, в отличие от страниц, ничего не хранят и не
+    // помнят — их проще каждый раз пересоздавать целиком.
     function rebuildDayCarousel() {
       currentDayViewIds = getEnabledDayViewIds();
       const enabledSet = new Set(currentDayViewIds);
@@ -4894,9 +4825,7 @@
       // что там ещё остались. Сначала выключенные (в т.ч. уже
       // отрисованные ранее) — обратно в пул, чтобы не залипали в
       // карусели молча; потом включённые — в карусель по порядку
-      // реестра. reorder-режим на это не влияет (см. applyReorderElevation
-      // выше — она двигает только сам .list-узел, а не .day-page-обёртку,
-      // comment-плейсхолдер просто едет вместе с обёрткой).
+      // реестра.
       DAY_VIEWS.forEach((v) => {
         if (enabledSet.has(v.id)) return;
         const page = document.querySelector(`.day-page[data-day="${v.id}"]`);
