@@ -285,6 +285,18 @@
       </div>
       <button type="button" class="entity-date-btn" id="task-edit-date"></button>
       <button type="button" class="entity-date-btn" id="task-edit-project"></button>
+      <!-- Описание (Phase 65) — свободный текст, видимый только здесь.
+           Кнопка справа снизу внутри поля — та же ИИ-генерация, что и
+           при создании задачи, но с учётом уже написанного текста. -->
+      <div class="entity-form-field-wrap">
+        <textarea class="entity-form-field" id="task-edit-description" rows="3"
+                  placeholder="Описание (необязательно)"></textarea>
+        <button type="button" class="description-generate-btn" id="task-edit-generate-description"
+                aria-label="Сгенерировать описание">
+          <span class="description-generate-spinner"></span>
+          <span class="description-generate-icon" aria-hidden="true">✨</span>
+        </button>
+      </div>
       <button type="button" class="entity-form-submit task-edit-delete" id="task-edit-delete">Удалить задачу</button>
     </div>
   </div>
@@ -2654,6 +2666,27 @@
       }
     }
 
+    // Описание (Phase 65) — тот же паттерн, что renameTask, но пустая
+    // строка валидна (очистка описания), в отличие от заголовка, где
+    // пустой ввод игнорируется.
+    async function setTaskDescription(task, newText) {
+      const trimmed = newText.trim();
+      if (trimmed === (task.description || "")) return;
+      const id = task.id;
+      const prevDescription = task.description;
+      task.description = trimmed || null;
+      try {
+        await api(`/miniapp/api/tasks/${encodeURIComponent(id)}/description`, {
+          method: "POST",
+          body: JSON.stringify({ description: trimmed || null }),
+        });
+      } catch (e) {
+        task.description = prevDescription;
+        render();
+        alert("Не удалось сохранить описание.");
+      }
+    }
+
     async function archiveTask(task) {
       const id = task.id;
       pendingIds.add(id);
@@ -3084,6 +3117,8 @@
       if (save && task) {
         const text = document.getElementById("task-edit-title").value.trim();
         if (text && text !== task.title) renameTask(task, text);
+        const descText = document.getElementById("task-edit-description").value;
+        setTaskDescription(task, descText);
       }
       editingTaskId = null;
       render();
@@ -3110,6 +3145,9 @@
       // курсор скакал бы в конец на каждый фоновый render() (тот же
       // класс защиты, что title-edit у инлайн-правки в других местах).
       if (document.activeElement !== titleEl) titleEl.value = task.title;
+
+      const descriptionEl = document.getElementById("task-edit-description");
+      if (document.activeElement !== descriptionEl) descriptionEl.value = task.description || "";
 
       const importantBtn = document.getElementById("task-edit-important");
       importantBtn.classList.toggle("on", task.priority === "высокий");
@@ -4549,6 +4587,31 @@
     document.getElementById("task-edit-event").addEventListener("click", () => {
       const task = editingTaskId != null ? findTaskById(editingTaskId) : null;
       if (task) setTaskPriority(task, task.priority === "event" ? "средний" : "event");
+    });
+    // Кнопка ИИ-генерации описания (Phase 65) — не сохраняет сама, только
+    // подставляет текст в поле (реальное сохранение — обычным путём при
+    // закрытии формы, см. closeTaskEditSheet). Текущее содержимое поля
+    // (может быть пусто) идёт в контекст запроса как черновик пользователя.
+    document.getElementById("task-edit-generate-description").addEventListener("click", async () => {
+      const task = editingTaskId != null ? findTaskById(editingTaskId) : null;
+      if (!task) return;
+      const btn = document.getElementById("task-edit-generate-description");
+      const descEl = document.getElementById("task-edit-description");
+      btn.classList.add("generating");
+      btn.disabled = true;
+      try {
+        const result = await api(`/miniapp/api/tasks/${encodeURIComponent(task.id)}/generate-description`, {
+          method: "POST",
+          body: JSON.stringify({ existing_text: descEl.value.trim() || null }),
+        });
+        if (result.description) descEl.value = result.description;
+      } catch (e) {
+        // Тихо — форма и так рабочая без сгенерированного текста, тот же
+        // принцип, что у maybeSuggestSpheres.
+      } finally {
+        btn.classList.remove("generating");
+        btn.disabled = false;
+      }
     });
     document.getElementById("task-edit-delete").addEventListener("click", () => {
       const task = editingTaskId != null ? findTaskById(editingTaskId) : null;

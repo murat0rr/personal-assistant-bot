@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -33,11 +34,22 @@ from src.core.web_session import SESSION_COOKIE_NAME, verify_session_token
 from src.handlers.f8_habits import check_habit
 from src.handlers.f_task_nag import record_task_completion
 from src.handlers.miniapp_tasks import build_task_board
-from src.integrations.claude_client import suggest_entity_spheres, suggest_tasks_for_entity
+from src.integrations.claude_client import (
+    generate_task_description,
+    maybe_generate_task_description,
+    suggest_entity_spheres,
+    suggest_tasks_for_entity,
+)
 from src.integrations.weather import get_weather_summary
 from src.models.task import Task
 
 _DEFAULT_PRIORITY = "средний"
+
+# Автоописание задачи при быстром добавлении в Mini App (Phase 65) идёт
+# фоном через asyncio.create_task — без сильной ссылки на сам Task
+# сборщик мусора вправе прервать его на полпути (официальная оговорка
+# asyncio.create_task, реально воспроизводилась при живой проверке).
+_background_tasks: set[asyncio.Task] = set()
 
 # Тот же закрытый список, что и SPHERES на фронтенде (index.html) — там
 # это просто набор кнопок выбора, но само API до ревизии безопасности
@@ -189,6 +201,14 @@ class SetTitleRequest(BaseModel):
     title: str
 
 
+class SetDescriptionRequest(BaseModel):
+    description: str | None = None
+
+
+class GenerateDescriptionRequest(BaseModel):
+    existing_text: str | None = None
+
+
 class SetSortOrderRequest(BaseModel):
     sort_order: float
 
@@ -332,7 +352,36 @@ async def create_task_endpoint(
         await session.commit()
         await session.refresh(task)
 
+    # Автоописание (Phase 65) — фоном, не блокируя ответ "+": описание
+    # видно только в форме редактирования, которую открывают отдельным
+    # явным действием позже, так что задержка похода в Claude здесь
+    # никогда не заметна (в отличие от Google Calendar в Phase 64, где
+    # тот же fire-and-forget приём создавал видимую гонку с самим
+    # чтением задач). _background_tasks держит сильную ссылку — без неё
+    # asyncio вправе собрать Task сборщиком мусора до завершения (задача
+    # реально прерывалась на полпути при проверке живьём, официальная
+    # оговорка asyncio.create_task про "храните ссылку сами").
+    bg_task = asyncio.create_task(_fill_task_description(task.id, payload.title, due_date))
+    _background_tasks.add(bg_task)
+    bg_task.add_done_callback(_background_tasks.discard)
+
     return {"status": "ok", "id": task.id}
+
+
+async def _fill_task_description(task_id: int, title: str, due_date: datetime | None) -> None:
+    try:
+        description = await maybe_generate_task_description(
+            title, due_date.date() if due_date else None
+        )
+        if description is None:
+            return
+        async with async_session() as session:
+            task = await session.get(Task, task_id)
+            if task is not None:
+                task.description = description
+                await session.commit()
+    except Exception:
+        logger.exception("Не удалось сгенерировать описание для задачи %s", task_id)
 
 
 @app.post("/miniapp/api/tasks/{task_id}/done")
@@ -411,6 +460,39 @@ async def set_task_title(
         await session.commit()
 
     return {"status": "ok"}
+
+
+@app.post("/miniapp/api/tasks/{task_id}/description")
+async def set_task_description(
+    task_id: int, payload: SetDescriptionRequest, user: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    async with async_session() as session:
+        task = await _get_owned_task(session, task_id, user["id"])
+        task.description = payload.description.strip() if payload.description else None
+        await session.commit()
+
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/tasks/{task_id}/generate-description")
+async def generate_task_description_endpoint(
+    task_id: int, payload: GenerateDescriptionRequest, user: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    # Не пишет в БД сама — фронтенд подставляет текст в поле, реальное
+    # сохранение происходит обычным путём при закрытии формы (тот же
+    # принцип, что уже работает у заголовка): "сгенерировал, не
+    # понравилось — стёр/поправил" без лишнего отката в БД.
+    async with async_session() as session:
+        task = await _get_owned_task(session, task_id, user["id"])
+        title = task.title
+        due_date = task.due_date.date() if task.due_date else None
+
+    description = await generate_task_description(
+        title,
+        due_date,
+        payload.existing_text.strip() if payload.existing_text else None,
+    )
+    return {"description": description}
 
 
 @app.post("/miniapp/api/tasks/{task_id}/project")

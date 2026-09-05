@@ -34,6 +34,7 @@ async def handle_task_note(message: Message, text: str) -> None:
                     else None,
                     priority=fields.priority,
                     sphere=fields.sphere,
+                    description=fields.description,
                     source="F1",
                 )
                 session.add(task)

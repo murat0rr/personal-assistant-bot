@@ -110,3 +110,24 @@ def test_due_time_shown_only_when_not_midnight():
     assert by_title["встреча"]["due_time"] == "14:30"
     assert by_title["встреча"]["due_date"] == "2026-08-29"
     assert by_title["обычная"]["due_time"] is None
+
+
+def test_description_included_in_serialized_task():
+    # Phase 65 — свободный текст, видимый только в форме редактирования,
+    # но всё равно приходит в общей сериализации доски.
+    with_description = Task(
+        title="найти реферат",
+        due_date=None,
+        priority="средний",
+        done=False,
+        sort_order=1,
+        description="Попробуй Википедию и школьную библиотеку.",
+    )
+    without_description = Task(
+        title="купить хлеб", due_date=None, priority="средний", done=False, sort_order=2
+    )
+
+    board = build_task_board([with_description, without_description], _TODAY)
+    by_title = {t["title"]: t for t in board["inbox"]}
+    assert by_title["найти реферат"]["description"] == "Попробуй Википедию и школьную библиотеку."
+    assert by_title["купить хлеб"]["description"] is None

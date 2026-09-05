@@ -819,6 +819,44 @@
        (item 1, Phase 34): единообразно по всем текстовым полям
        приложения, не только в этой форме. */
     .entity-form-field:focus { outline: none; }
+    /* Описание задачи (Phase 65) — то же поле, но с кнопкой ИИ-генерации
+       внутри самого прямоугольника (справа снизу), не рядом с ним:
+       обёртка задаёт точку отсчёта для position: absolute кнопки, сам
+       textarea ничем не отличается от остальных .entity-form-field. */
+    .entity-form-field-wrap { position: relative; margin-bottom: 10px; }
+    .entity-form-field-wrap .entity-form-field { margin-bottom: 0; }
+    .description-generate-btn {
+      position: absolute;
+      right: 8px;
+      bottom: 8px;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: none;
+      background: color-mix(in srgb, var(--card-bg) 70%, transparent);
+      backdrop-filter: blur(3px);
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .description-generate-btn .description-generate-spinner {
+      display: none;
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid var(--hairline);
+      border-top-color: var(--accent);
+      animation: task-suggest-spin 0.8s linear infinite;
+    }
+    /* Эмодзи-иконка рендерится своим цветом независимо от CSS color
+       (не тускнеет от color: transparent) — на время генерации прячем
+       её явно через display, не через цвет. */
+    .description-generate-btn.generating .description-generate-icon { display: none; }
+    .description-generate-btn.generating .description-generate-spinner { display: block; }
     .entity-form-dates { display: flex; gap: 8px; margin-bottom: 10px; }
     /* Кнопки дат в форме создания/правки (Phase 28) — открывают
        всплывающий календарь (#date-picker-sheet) вместо нативного

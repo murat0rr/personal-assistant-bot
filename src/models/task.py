@@ -59,6 +59,13 @@ class Task(Base):
     # core/google_calendar_sync.py). NULL у всех задач, не связанных с
     # календарём — тот же принцип, что у legacy_notion_id.
     google_event_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Phase 65 — свободный текст, видимый только в форме редактирования
+    # (Mini App). Заполняется ИИ при создании (если решит, что задаче
+    # реально можно помочь конкретным советом — см.
+    # integrations/claude_client.py), человеком вручную, или кнопкой
+    # "сгенерировать" в самой форме. NULL — обычный случай для задач без
+    # описания, тот же принцип, что у остальных nullable-полей.
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

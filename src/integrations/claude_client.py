@@ -57,6 +57,19 @@ _EXTRACT_TASKS_TOOL = {
                                 "уверен, иначе null. Не гадай ради заполнения поля."
                             ),
                         },
+                        "description": {
+                            "type": ["string", "null"],
+                            "description": (
+                                "Полезная подсказка к задаче — конкретный совет, куда "
+                                "обратиться или что учесть при выполнении (по своим знаниям, "
+                                "без реального веб-поиска — если для точности нужны самые "
+                                "свежие данные, коротко оговори это). Заполняй, только если "
+                                "задаче реально можно помочь чем-то конкретным ('найти реферат "
+                                "по теме X' — подсказать тему и куда обычно обращаются; "
+                                "'собеседование' — как подготовиться). Для обычных бытовых дел "
+                                "('купить хлеб') — null, не выдумывай описание ради галочки."
+                            ),
+                        },
                     },
                     "required": ["title", "priority"],
                 },
@@ -77,6 +90,7 @@ class TaskFields(BaseModel):
     due_date: date | None = None
     priority: Literal["низкий", "средний", "высокий"]
     sphere: Literal["учёба", "работа", "спорт", "развитие", "отношения"] | None = None
+    description: str | None = None
 
 
 class ExtractedTasks(BaseModel):
@@ -91,14 +105,18 @@ async def extract_tasks_fields(text: str, today: date) -> list[TaskFields]:
     поведение не меняется по сравнению с прежним extract_task_fields."""
     response = await client.messages.create(
         model=settings.claude_model_haiku,
-        max_tokens=800,
+        # 1200, не 800 (Phase 65) — описание может добавить пару
+        # предложений на каждую задачу, а сообщение может называть
+        # несколько сразу.
+        max_tokens=1200,
         system=(
             f"Сегодняшняя дата: {today.isoformat()}. Извлеки из сообщения "
             "пользователя одну или несколько задач: если в тексте перечислено "
             "несколько самостоятельных дел (через запятую, союз 'и' и т.п.) — "
             "верни отдельный объект на каждое, не объединяй их в одну задачу. "
             "Для каждой — название, срок (переведи относительные даты вроде "
-            "'завтра'/'послезавтра' в конкретную дату YYYY-MM-DD) и приоритет."
+            "'завтра'/'послезавтра' в конкретную дату YYYY-MM-DD), приоритет и, "
+            "если применимо, описание (см. схему поля description)."
         ),
         tools=[_EXTRACT_TASKS_TOOL],
         tool_choice={"type": "tool", "name": "extract_tasks"},
@@ -111,6 +129,96 @@ async def extract_tasks_fields(text: str, today: date) -> list[TaskFields]:
     if not parsed.tasks:
         raise ValueError(f"Claude не нашёл ни одной задачи в тексте: {text!r}")
     return parsed.tasks
+
+
+_MAYBE_DESCRIPTION_TOOL = {
+    "name": "maybe_describe_task",
+    "description": "Решить, нужна ли задаче полезная подсказка-описание, и если да — написать её.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "description": {
+                "type": ["string", "null"],
+                "description": (
+                    "Конкретный совет, куда обратиться или что учесть при "
+                    "выполнении (по своим знаниям, без реального веб-поиска — "
+                    "если для точности нужны самые свежие данные, коротко "
+                    "оговори это). Null, если задача обычная бытовая и помочь "
+                    "конкретным советом нечем — не выдумывай ради галочки."
+                ),
+            },
+        },
+        "required": ["description"],
+    },
+}
+
+
+class MaybeDescription(BaseModel):
+    description: str | None = None
+
+
+async def maybe_generate_task_description(title: str, due_date: date | None) -> str | None:
+    """Быстрое добавление задачи в Mini App (Phase 65) не проходит через
+    extract_tasks_fields (там нет ни одного похода в ИИ вообще — просто
+    заголовок+дата) — здесь та же логика "добавить описание, только если
+    реально есть чем помочь", что и в _EXTRACT_TASKS_TOOL, но отдельным
+    вызовом, вызывается фоном (adapters/api.py::create_task_endpoint), не
+    блокируя ответ. Sonnet, не Haiku — тут важнее качество совета, чем
+    задержка, которую всё равно никто не увидит вживую."""
+    due_text = f" Срок: {due_date.isoformat()}." if due_date else ""
+    response = await client.messages.create(
+        model=settings.claude_model_sonnet,
+        max_tokens=400,
+        system=(
+            "Пользователь завёл задачу в личном планировщике. Реши, можно ли "
+            "конкретно помочь её выполнению советом или подсказкой (например "
+            "'найти реферат по теме X' — подсказать тему и куда обычно "
+            "обращаются за материалом; 'сходить на собеседование' — как "
+            "подготовиться). Для обычных бытовых дел ('купить хлеб', "
+            "'позвонить маме') — просто null, помогать нечем."
+        ),
+        tools=[_MAYBE_DESCRIPTION_TOOL],
+        tool_choice={"type": "tool", "name": "maybe_describe_task"},
+        messages=[{"role": "user", "content": f"Задача: {title}.{due_text}"}],
+    )
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+    if tool_use is None:
+        return None
+    return MaybeDescription.model_validate(tool_use.input).description
+
+
+async def generate_task_description(
+    title: str, due_date: date | None, existing_text: str | None
+) -> str:
+    """Кнопка "сгенерировать описание" в форме редактирования задачи
+    (Phase 65) — в отличие от maybe_generate_task_description выше,
+    вызвана явным действием пользователя, поэтому всегда пишет что-то
+    полезное (не решает "не надо" — пустой ответ на явный клик выглядел
+    бы как поломка). existing_text — то, что уже написано в поле (может
+    быть пусто) — идёт в контекст, чтобы модель дополняла/переписывала
+    осмысленно, а не игнорировала черновик пользователя. Обычный
+    текстовый ответ, без forced tool-use — как summarize_diary."""
+    due_text = f" Срок: {due_date.isoformat()}." if due_date else ""
+    draft_text = (
+        f" Пользователь уже начал писать в описании: «{existing_text}» — "
+        "дополни или перепиши осмысленнее, не игнорируй."
+        if existing_text
+        else ""
+    )
+    response = await client.messages.create(
+        model=settings.claude_model_sonnet,
+        max_tokens=400,
+        system=(
+            "Напиши полезное описание-подсказку к задаче пользователя в "
+            "личном планировщике — конкретный совет, куда обратиться или что "
+            "учесть при выполнении (по своим знаниям, без реального "
+            "веб-поиска — если для точности нужны самые свежие данные, "
+            "коротко оговори это). Компактно, 1-3 предложения, на русском, "
+            "без вступлений вроде 'вот описание'."
+        ),
+        messages=[{"role": "user", "content": f"Задача: {title}.{due_text}{draft_text}"}],
+    )
+    return "".join(block.text for block in response.content if block.type == "text").strip()
 
 
 _SUGGEST_SPHERES_TOOL = {
