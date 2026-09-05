@@ -17,6 +17,7 @@ from src.core.auth import list_authorized_user_ids
 from src.core.config import settings
 from src.core.db import async_session
 from src.core.goals import GOAL_TIER_BOUNDS
+from src.core.google_calendar_sync import sync_user_calendar
 from src.core.habits import list_habits
 from src.core.recurring_tasks import materialize_due_rules
 from src.core.task_templates import create_ai_template, list_templates
@@ -99,6 +100,14 @@ async def _task_nag_sweep(bot: Bot, user_id: int) -> None:
     # остальных джобов ниже (IntervalTrigger, не CronTrigger) — см.
     # register_jobs_for_user.
     await check_and_nudge(bot, user_id)
+
+
+async def _google_calendar_sync_job(bot: Bot, user_id: int) -> None:
+    # Google Calendar (Phase 59-style — тонкий wrapper, вся логика в
+    # sync_user_calendar) — тихо выходит, если аккаунт не подключён, так
+    # что регистрируем безусловно для каждого пользователя, как
+    # _task_nag_sweep, без предварительной проверки.
+    await sync_user_calendar(bot, user_id)
 
 
 async def _evening_diary(bot: Bot, storage: BaseStorage) -> None:
@@ -427,6 +436,19 @@ async def register_jobs_for_user(
         IntervalTrigger(minutes=15),
         args=[bot, user_id],
         id=f"task_nag_sweep:{user_id}",
+        replace_existing=True,
+    )
+    # Google Calendar (Phase 64) — тот же приём, что task_nag_sweep выше:
+    # единственный, кто физически привязан к внешнему опросу, не к
+    # тихому часу/расписанию дня, поэтому IntervalTrigger, не CronTrigger
+    # из _job_specs. Доступно любому пользователю (не только владельцу,
+    # см. _job_specs выше) — у каждого свой Google-аккаунт, это не
+    # физически единственный ресурс вроде экранного времени.
+    scheduler.add_job(
+        _google_calendar_sync_job,
+        IntervalTrigger(minutes=20),
+        args=[bot, user_id],
+        id=f"google_calendar_sync:{user_id}",
         replace_existing=True,
     )
 

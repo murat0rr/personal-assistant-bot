@@ -3176,6 +3176,102 @@ Dev-харнесс, живой прогон через синтетически�
 убрано в тот же день, перенос свёлся к чистому `translateY` в
 основном списке без побочных визуальных эффектов.
 
+## Phase 64 — интеграция с Google Calendar: события как задачи
+
+События из Google Calendar появляются в задачах (Вчера/Сегодня/
+Календарь — те же экраны, что и обычные задачи, никаких изменений в
+Mini App не потребовалось) со временем, как задачи-события
+(`priority="event"`, тот же концепт, что у ручных событий, Phase 19).
+Подтверждено с пользователем: **живая синхронизация** (событие в
+календаре меняется — задача обновляется следом; ручная правка
+title/даты такой задачи в приложении переживёт до следующего опроса —
+календарь всегда главный источник для синхронизированных задач, явное
+ограничение) и **только основной календарь** (`primary`, без выбора).
+
+**Данные** — `tasks.google_event_id` (nullable, тот же принцип, что
+`legacy_notion_id`) + существующее поле `source="google_calendar"`
+вместе дают ключ "какая задача отвечает этому событию". Новая модель
+`GoogleCalendarAccount` (`user_id` PK — одна строка на пользователя,
+тот же паттерн, что `TaskNagSettings`): `refresh_token`, `calendar_id`
+(default `"primary"`, уже готово под будущий выбор календаря без новой
+миграции), `connected_at`.
+
+**OAuth** — `/google_calendar` (`handlers/f_google_calendar.py`)
+генерирует одноразовый `state` (`core/google_oauth_state.py` — тот же
+Redis TTL-приём, что `login_codes.py` у входа в веб-версию: код рождается
+в процессе `bot`, проверяется в процессе `api`, общей памяти между ними
+нет) и шлёт ссылку на согласие Google (`access_type=offline&
+prompt=consent` — иначе не отдаст `refresh_token` при повторном
+согласии). `GET /google/oauth/callback` (`adapters/google_oauth.py`,
+подключён в `api.py` тем же приёмом, что `web_auth_router`) достаёт
+`user_id` по `state`, меняет `code` на токены
+(`integrations/google_calendar.py::exchange_code`), сохраняет
+`refresh_token` (upsert). `/google_calendar_off` удаляет запись — уже
+созданные из календаря задачи остаются обычными независимыми, столбцы
+`source`/`google_event_id` не чистятся (переподключение подхватит их
+снова по тем же id).
+
+**Интеграция** (`integrations/google_calendar.py`) — только `httpx`,
+без `google-api-python-client`/`google-auth` (тот же стиль, что
+`weather.py`, `httpx` уже в зависимостях): `build_auth_url`,
+`exchange_code`, `refresh_access_token` (кидает `GoogleAuthError` на
+`invalid_grant` — отозванный/просроченный токен), `list_events`
+(`singleEvents=true&orderBy=startTime`, пагинация по `nextPageToken`).
+
+**Синхронизация** (`core/google_calendar_sync.py::sync_user_calendar`)
+— окно от вчера до +60 дней в часовом поясе пользователя. Чистая
+функция `_event_to_task_fields` (вынесена ради pytest, тот же приём,
+что `_is_due`/`_should_send_nudge`) конвертирует `dateTime` (с
+оффсетом) в naive datetime пользователя, `date` (весь день) — в
+полночь без `priority="event"`; `status="cancelled"` и события без
+`start` — пропускаются. Создание/обновление по `google_event_id`;
+`done`/`archived`/`sphere`/`project_id` синхронизация не трогает
+никогда. Задачи в том же окне, чей `google_event_id` пропал из ответа
+(удалено/отменено в календаре) — архивируются, тот же soft-delete
+принцип, что и везде в приложении. `GoogleAuthError` при обновлении
+токена — аккаунт удаляется, пользователю уходит сообщение с просьбой
+переподключиться.
+
+**Планировщик** — `_google_calendar_sync_job`, `IntervalTrigger(minutes=20)`,
+тот же паттерн, что `_task_nag_sweep` (единственный нецикличный джоб,
+регистрируется отдельно от `_job_specs`): безусловно для каждого
+авторизованного пользователя (не только владельца — в отличие от
+экранного времени/финансов, здесь у каждого свой Google-аккаунт, не
+физически единственный ресурс), сама `sync_user_calendar` дёшево
+выходит, если аккаунт не подключён.
+
+Что пользователь настраивает сам (не автоматизируется): OAuth Client
+ID/Secret в Google Cloud Console (тип Web application, Calendar API
+включён, redirect URI добавлен в список authorized), собственный
+аккаунт — в Test users на экране OAuth consent screen (приложение не
+проходит верификацию Google), `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/
+`GOOGLE_OAUTH_REDIRECT_URI` — в `.env`.
+
+### Живая проверка
+
+`pytest` (140, +6) — `_event_to_task_fields` на синтетических
+Google-событиях (с временем, весь день, конвертация часового пояса,
+без `summary`, `status=cancelled`, без `start`). Докер + реальный
+Postgres + реальный Redis, `sync_user_calendar` с подменёнными
+`refresh_access_token`/`list_events`: создание задач из событий (timed
++ all-day), обновление title/даты при изменившемся событии между
+опросами, архивация при исчезновении события из окна, `done` (локальное
+поле) переживает синхронизацию без изменений. Отдельно —
+`GoogleAuthError` при обновлении токена: аккаунт удаляется, уходит
+сообщение пользователю. `/google/oauth/callback` целиком через ASGI
+(`httpx.ASGITransport`, один event loop — реальный `TestClient`
+пересекается с asyncio-клиентом Redis по разным loop'ам, поймано
+живьём): нет настройки → "не настроено", нет code/state →
+"некорректный запрос", `error=access_denied` → понятная страница,
+просроченный/чужой `state` → "ссылка устарела", полный цикл
+(state → code → exchange_code → БД) — запись `GoogleCalendarAccount`
+реально создаётся, `state` одноразовый (повторный `consume_state`
+возвращает `None`). Оба модуля (`bot`/`api`) импортированы целиком без
+polling — 13 роутеров у бота (было 12), новый роутер подключён и
+отвечает на реальный HTTP-запрос. `ruff check`/`ruff format --check` —
+чисто. Реальный OAuth-обмен с настоящим Google-аккаунтом проверяется
+пользователем после деплоя — команда `/google_calendar` в боте.
+
 ## 3. Нефункциональные требования
 
 ### 3.1 Безопасность

@@ -53,6 +53,12 @@ class Task(Base):
     project_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("projects.id"), nullable=True
     )
+    # Google Calendar (Phase 64) — id события в Google, вместе с
+    # source="google_calendar" (поле выше) это ключ поиска "какая задача
+    # отвечает этому событию" при повторном опросе (см.
+    # core/google_calendar_sync.py). NULL у всех задач, не связанных с
+    # календарём — тот же принцип, что у legacy_notion_id.
+    google_event_id: Mapped[str | None] = mapped_column(String, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

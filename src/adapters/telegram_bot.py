@@ -25,6 +25,7 @@ from src.handlers.f9_finance import router as finance_router
 from src.handlers.f_auth import AuthStates
 from src.handlers.f_auth import router as auth_router
 from src.handlers.f_goals import router as goals_router
+from src.handlers.f_google_calendar import router as google_calendar_router
 from src.handlers.f_morning_advice import router as morning_advice_router
 from src.handlers.f_reminders import router as reminders_router
 from src.handlers.f_schedule import router as schedule_router
@@ -49,6 +50,7 @@ dp.message.outer_middleware(track_incoming)
 dp.include_router(auth_router)
 dp.include_router(diary_router)
 dp.include_router(goals_router)
+dp.include_router(google_calendar_router)
 dp.include_router(morning_advice_router)
 dp.include_router(mode_buttons_router)
 dp.include_router(reminders_router)
@@ -125,6 +127,8 @@ async def main() -> None:
             BotCommand(command="morning", description="Час утренней рассылки"),
             BotCommand(command="evening", description="Час вечерней рефлексии"),
             BotCommand(command="timezone", description="Определить часовой пояс по геопозиции"),
+            BotCommand(command="google_calendar", description="Подключить Google Calendar"),
+            BotCommand(command="google_calendar_off", description="Отключить Google Calendar"),
             BotCommand(command="staging", description="Открыть staging Mini App"),
         ]
     )

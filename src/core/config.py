@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     # web_auth.py::login_page).
     session_secret: str = ""
     telegram_bot_username: str = ""
+    # Google Calendar (Phase 64, команда /google_calendar) — OAuth2
+    # клиент из Google Cloud Console (тип Web application), redirect
+    # URI должен быть добавлен там же и совпадать с этим значением
+    # буква в букву. Пусто = фича выключена — тот же принцип, что у
+    # session_secret выше (см. handlers/f_google_calendar.py).
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_oauth_redirect_uri: str = ""
 
 
 settings = Settings()
