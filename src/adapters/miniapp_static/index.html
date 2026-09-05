@@ -403,6 +403,18 @@
           "X-Telegram-Init-Data": initData,
         },
       });
+      // Вне Telegram (initData всегда пустая строка снаружи — tg сам
+      // по себе не признак, см. комментарий у btn-logout ниже) 401
+      // значит: сервер уже проверил сессионную куку
+      // (get_authorized_user) и она невалидна/отсутствует. Раньше
+      // страница просто показывала "не удалось загрузить" — если
+      // открыть /miniapp/ напрямую в браузере без входа, вместо
+      // сломанного интерфейса сразу ведём на /auth/login (внутри
+      // Telegram initData всегда есть, сюда не попадает).
+      if (res.status === 401 && !initData) {
+        location.href = "/auth/login";
+        throw new Error("unauthorized");
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     }
