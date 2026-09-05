@@ -2292,8 +2292,12 @@
     const _dayOpts = {
       yesterday: {
         listKey: "yesterday",
-        showMoveToToday: true,
+        // Веерное меню (Phase 67, довесок) заменило отдельную кнопку
+        // "на сегодня" — то же действие теперь доступно там же, где и
+        // "на завтра"/"в инбокс"/"удалить", одним и тем же жестом.
+        showMoveToToday: false,
         showTemplatesPicker: true,
+        showFanMenu: true,
         dateFor: () => boardState.days.yesterday?.date,
       },
       today: {
@@ -2883,7 +2887,15 @@
       fanOriginEl.style.top = oy + "px";
       fanOriginEl.classList.add("open");
 
-      let arrowsSvg = "";
+      // Стрелочки, не просто линии (по фидбеку — чтобы было понятно,
+      // что нужно свайпнуть) — та же кривая, что и раньше, только с
+      // маркером-наконечником на конце. <defs> пересоздаётся при
+      // каждом открытии вместе с путями (fanArrowsEl.innerHTML
+      // целиком перезаписывается) — статика, дёшево.
+      let arrowsSvg =
+        '<defs><marker id="fan-arrowhead" viewBox="0 0 10 10" refX="8" refY="5" ' +
+        'markerWidth="6" markerHeight="6" orient="auto-start-reverse">' +
+        '<path d="M0,0 L10,5 L0,10 Z"/></marker></defs>';
       fanSatEls.forEach((el, i) => {
         const p = positions[i];
         const sx = ox + p.dx;
@@ -2892,7 +2904,7 @@
         el.style.top = sy + "px";
         el.innerHTML = `${actions[i].icon}<span>${actions[i].label}</span>`;
         requestAnimationFrame(() => el.classList.add("open"));
-        arrowsSvg += `<path d="${fanCurvedPath(ox, oy, sx, sy)}"/>`;
+        arrowsSvg += `<path d="${fanCurvedPath(ox, oy, sx, sy)}" marker-end="url(#fan-arrowhead)"/>`;
       });
       fanArrowsEl.innerHTML = arrowsSvg;
 
@@ -2913,6 +2925,12 @@
       if (nearest !== fanState.armed) {
         fanSatEls.forEach((el, i) => el.classList.toggle("armed", i === nearest));
         fanState.armed = nearest;
+        // Лёгкая вибрация и при наведении (nearest не null), и при
+        // соскальзывании обратно (nearest снова null) — оба направления
+        // смены "выбрано/не выбрано", как просил живой фидбек.
+        // selectionChanged(), не impactOccurred — это и есть API
+        // Telegram специально под смену выбранного варианта.
+        tg?.HapticFeedback?.selectionChanged();
       }
     }
 

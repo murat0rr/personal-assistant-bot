@@ -242,6 +242,16 @@
       padding: 12px 14px;
       border-bottom: 0.5px solid var(--hairline);
       transition: background-color 0.15s ease;
+      /* БАГ (Phase 67, довесок) — выполненные задачи не получают
+         showDateButton/showMoveToToday/showFanMenu кнопки (30px), из-за
+         чего строка ужималась до высоты одного .checkbox (22px) —
+         заметно ниже соседних невыполненных строк. box-sizing: border-box
+         (общий сброс) — min-height считается по ВСЕЙ строке, значит
+         число должно уже включать padding (12px+12px), а не только
+         высоту кнопки: 30px (.small-btn) + 24px (padding) = 54px.
+         Строки с длинным (переносящимся) текстом это не трогает, они и
+         так растут выше 54px по контенту. */
+      min-height: 54px;
     }
     .row:last-child { border-bottom: none; }
     .row.pending { background: var(--pending-bg); }
@@ -1109,6 +1119,12 @@
       stroke: rgba(255, 255, 255, 0.55);
       stroke-width: 1.5;
       stroke-linecap: round;
+    }
+    /* Наконечник стрелки (Phase 67, довесок) — тот же цвет, что линия,
+       но заливкой (marker живёт вне stroke/fill родительского path). */
+    #fan-arrows marker path {
+      fill: rgba(255, 255, 255, 0.55);
+      stroke: none;
     }
     #fan-origin {
       position: fixed;
