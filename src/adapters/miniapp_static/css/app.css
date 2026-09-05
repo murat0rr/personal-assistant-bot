@@ -825,6 +825,19 @@
        textarea ничем не отличается от остальных .entity-form-field. */
     .entity-form-field-wrap { position: relative; margin-bottom: 10px; }
     .entity-form-field-wrap .entity-form-field { margin-bottom: 0; }
+    /* Описание растёт под содержимое (Phase 65, довесок) — JS
+       (autoResizeTextarea) подставляет inline height по scrollHeight,
+       вместо фиксированных 3 строк со своим внутренним скроллом. Сама
+       карточка (.entity-window) и так ограничена 80dvh — с overflow-y:
+       auto здесь это просто аккуратный предел на случай совсем длинного
+       текста (внутренний скролл поля, а не растягивание карточки сверх
+       лимита); в норме текст помещается целиком без него. */
+    #task-edit-description {
+      overflow-y: auto;
+      max-height: 45vh;
+      max-height: 45dvh;
+      transition: height 0.1s ease;
+    }
     .description-generate-btn {
       position: absolute;
       right: 8px;

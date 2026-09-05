@@ -3114,6 +3114,17 @@
       render();
     }
 
+    // Описание растёт под содержимое (Phase 65, довесок) — вместо
+    // фиксированных 3 строк со своим внутренним скроллом, где длинный
+    // текст был виден только частично. max-height/overflow всё равно
+    // страхуют в CSS (#task-edit-description) — сама .entity-window и
+    // так ограничена 80dvh, здесь просто убираем лишний скролл ВНУТРИ
+    // маленького поля, когда снаружи ещё есть место расти.
+    function autoResizeTextarea(el) {
+      el.style.height = "auto";
+      el.style.height = el.scrollHeight + "px";
+    }
+
     // Форма редактирования задачи по долгому нажатию (Phase 63) —
     // заменяет собой прежнюю свайп-шторку (важность/событие/дата/
     // проект/архив) и правку текста, доступную только в старом режиме
@@ -3175,7 +3186,16 @@
       if (document.activeElement !== titleEl) titleEl.value = task.title;
 
       const descriptionEl = document.getElementById("task-edit-description");
-      if (document.activeElement !== descriptionEl) descriptionEl.value = task.description || "";
+      if (document.activeElement !== descriptionEl) {
+        descriptionEl.value = task.description || "";
+        // requestAnimationFrame, не сразу — при первом открытии формы
+        // этот же render() ещё не навесил .visible на #task-edit-sheet
+        // (см. ниже по функции render()), textarea ещё display:none и
+        // scrollHeight читается как 0 (реально воспроизводилось при
+        // живой проверке — карточка не росла на первом открытии).
+        // Кадром позже элемент уже видим и размер измеряется верно.
+        requestAnimationFrame(() => autoResizeTextarea(descriptionEl));
+      }
 
       const importantBtn = document.getElementById("task-edit-important");
       importantBtn.classList.toggle("on", task.priority === "высокий");
@@ -4616,6 +4636,11 @@
       const task = editingTaskId != null ? findTaskById(editingTaskId) : null;
       if (task) setTaskPriority(task, task.priority === "event" ? "средний" : "event");
     });
+    // Растёт под ввод вживую, тем же приёмом, что при заполнении из
+    // задачи/генерации (см. autoResizeTextarea выше).
+    document.getElementById("task-edit-description").addEventListener("input", (e) => {
+      autoResizeTextarea(e.target);
+    });
     // Кнопка ИИ-генерации описания (Phase 65) — не сохраняет сама, только
     // подставляет текст в поле (реальное сохранение — обычным путём при
     // закрытии формы, см. closeTaskEditSheet). Текущее содержимое поля
@@ -4632,7 +4657,10 @@
           method: "POST",
           body: JSON.stringify({ existing_text: descEl.value.trim() || null }),
         });
-        if (result.description) descEl.value = result.description;
+        if (result.description) {
+          descEl.value = result.description;
+          autoResizeTextarea(descEl);
+        }
       } catch (e) {
         // Тихо — форма и так рабочая без сгенерированного текста, тот же
         // принцип, что у maybeSuggestSpheres.
