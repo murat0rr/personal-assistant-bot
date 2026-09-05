@@ -267,6 +267,20 @@
     <div id="create-entity-form" class="entity-window-body"></div>
   </div>
 
+  <!-- Веерное меню задачи (Phase 67) — один общий (singleton) оверлей,
+       JS позиционирует под конкретную задачу/кнопку при каждом жесте
+       (attachFanMenu). position: fixed — координаты всегда от вьюпорта,
+       без рамки-обёртки (в отличие от прототипа-макета). Макет,
+       одобренный живьём: https://claude.ai/code/artifact/82d27043-a6d7-493f-915c-ce90e283d0f6 -->
+  <div id="fan-backdrop"></div>
+  <div id="fan-layer">
+    <svg id="fan-arrows"></svg>
+    <div id="fan-origin"></div>
+    <button type="button" class="fan-satellite" id="fan-sat0"></button>
+    <button type="button" class="fan-satellite" id="fan-sat1"></button>
+    <button type="button" class="fan-satellite fan-sat-delete" id="fan-sat2"></button>
+  </div>
+
   <!-- Форма редактирования задачи по долгому нажатию (Phase 63) — тот
        же .entity-window, что у формы проекта/цели: текст, важность/
        событие, дата, проект/цель, удаление. Может открываться поверх
@@ -664,7 +678,7 @@
     // этим необязательным флагам да к due-time). Постоянная ручка
     // справа (перенос) и долгое нажатие по остальной части строки
     // (форма редактирования) — теперь на каждом списке задач одинаково.
-    function renderTaskRow(task, { showDateButton, showTrashButton, showMoveToToday }) {
+    function renderTaskRow(task, { showDateButton, showTrashButton, showMoveToToday, showFanMenu }) {
       const row = document.createElement("div");
       row.className = "row task-row" + (pendingIds.has(task.id) ? " pending" : "");
       row.dataset.sortOrder = String(task.sort_order);
@@ -740,6 +754,21 @@
         time.className = "due-time";
         time.textContent = task.due_time;
         row.append(time);
+      }
+
+      // Веерное меню (Phase 67, пока только "Сегодня" — showFanMenu) —
+      // на завтра/в инбокс/удалить одним касанием+свайпом, без похода в
+      // форму редактирования. .small-btn — уже в ROW_TAP_IGNORE_SELECTOR
+      // и в исключениях attachLongPress ниже, переиспользуем класс,
+      // ничего там трогать не надо.
+      if (showFanMenu && !task.done) {
+        const fanBtn = document.createElement("button");
+        fanBtn.className = "small-btn fan-trigger";
+        fanBtn.disabled = isPending;
+        fanBtn.setAttribute("aria-label", "Действия с задачей");
+        fanBtn.innerHTML = fanTriggerIcon();
+        attachFanMenu(fanBtn, task);
+        row.append(fanBtn);
       }
 
       // Постоянная ручка переноса (Phase 63) — раньше только в
@@ -2271,6 +2300,7 @@
         listKey: "today",
         showMoveToToday: false,
         showTemplatesPicker: true,
+        showFanMenu: true,
         dateFor: () => boardState.days.today?.date,
       },
       // "Завтра" (Phase 50) — в отличие от вчера/сегодня, не приходит
@@ -2607,6 +2637,38 @@
       }
     }
 
+    // "В инбокс" в веерном меню (Phase 67) — тот же /due-date, что
+    // setTaskDueDate выше, но с null (см. api.py::set_task_due_date):
+    // отдельная функция, не переиспользуем setTaskDueDate саму — там
+    // value.slice(0, 10) упал бы на null.
+    async function sendTaskToInbox(task) {
+      const id = task.id;
+      const prevDate = task.due_date;
+      const prevTime = task.due_time;
+      const prevSortOrder = task.sort_order;
+      task.due_date = null;
+      task.due_time = null;
+      task.sort_order = Date.now();
+      pendingIds.add(id);
+      rebucketTask(task);
+      render();
+      try {
+        await api(`/miniapp/api/tasks/${encodeURIComponent(id)}/due-date`, {
+          method: "POST",
+          body: JSON.stringify({ due_date: null }),
+        });
+      } catch (e) {
+        task.due_date = prevDate;
+        task.due_time = prevTime;
+        task.sort_order = prevSortOrder;
+        rebucketTask(task);
+        alert("Не удалось перенести в инбокс.");
+      } finally {
+        pendingIds.delete(id);
+        render();
+      }
+    }
+
     async function setTaskPriority(task, newPriority) {
       const id = task.id;
       const prevPriority = task.priority;
@@ -2742,6 +2804,142 @@
         pendingIds.delete(id);
         render();
       }
+    }
+
+    // ---- Веерное меню задачи (Phase 67) — одобренный вживую макет:
+    // https://claude.ai/code/artifact/82d27043-a6d7-493f-915c-ce90e283d0f6
+    // Один общий (singleton) оверлей на всё приложение (#fan-backdrop/
+    // #fan-layer в разметке) — JS только перепозиционирует его под
+    // нужную кнопку при каждом жесте, отдельного оверлея на задачу нет.
+    const FAN_RADIUS = 74;
+    const FAN_HIT_RADIUS = 34;
+    const FAN_MIRROR_MARGIN = 30;
+
+    const fanBackdropEl = document.getElementById("fan-backdrop");
+    const fanArrowsEl = document.getElementById("fan-arrows");
+    const fanOriginEl = document.getElementById("fan-origin");
+    const fanSatEls = [
+      document.getElementById("fan-sat0"),
+      document.getElementById("fan-sat1"),
+      document.getElementById("fan-sat2"),
+    ];
+
+    function fanActionsFor(task) {
+      return [
+        {
+          label: "На завтра",
+          icon: tomorrowIcon(),
+          run: () => {
+            const tomorrowIso = addDaysIso(boardState.days.today.date, 1);
+            setTaskDueDate(task, task.due_time ? `${tomorrowIso}T${task.due_time}` : tomorrowIso);
+          },
+        },
+        { label: "В инбокс", icon: inboxIcon(), run: () => sendTaskToInbox(task) },
+        { label: "Удалить", icon: archiveIcon(), run: () => archiveTask(task) },
+      ];
+    }
+
+    // Позиции сателлитов — дуга слева/по диагонали/снизу от кнопки, как
+    // в макете; sign=-1 зеркалит её вверх (см. openFan ниже) — задачам
+    // ближе к низу экрана некуда открыться вниз.
+    function fanPositionsFor(mirrored) {
+      const sign = mirrored ? -1 : 1;
+      return [
+        { dx: -FAN_RADIUS, dy: 0 },
+        { dx: -FAN_RADIUS * 0.7, dy: sign * FAN_RADIUS * 0.7 },
+        { dx: 0, dy: sign * FAN_RADIUS },
+      ];
+    }
+
+    function fanCurvedPath(x0, y0, x1, y1) {
+      const mx = (x0 + x1) / 2;
+      const my = (y0 + y1) / 2;
+      const nx = -(y1 - y0);
+      const ny = x1 - x0;
+      const len = Math.hypot(nx, ny) || 1;
+      const bend = 10;
+      return `M ${x0} ${y0} Q ${mx + (nx / len) * bend} ${my + (ny / len) * bend} ${x1} ${y1}`;
+    }
+
+    let fanState = null;
+
+    function openFan(triggerBtn, task) {
+      const btnRect = triggerBtn.getBoundingClientRect();
+      const ox = btnRect.left + btnRect.width / 2;
+      const oy = btnRect.top + btnRect.height / 2;
+      // Зеркалирование — от реального видимого вьюпорта (в макете была
+      // условная рамка-телефон, здесь просто window.innerHeight).
+      const mirrored = oy + FAN_RADIUS + FAN_MIRROR_MARGIN > window.innerHeight;
+      const positions = fanPositionsFor(mirrored);
+      const actions = fanActionsFor(task);
+
+      triggerBtn.classList.add("pressed");
+      fanBackdropEl.classList.add("visible");
+      fanOriginEl.style.left = ox + "px";
+      fanOriginEl.style.top = oy + "px";
+      fanOriginEl.classList.add("open");
+
+      let arrowsSvg = "";
+      fanSatEls.forEach((el, i) => {
+        const p = positions[i];
+        const sx = ox + p.dx;
+        const sy = oy + p.dy;
+        el.style.left = sx + "px";
+        el.style.top = sy + "px";
+        el.innerHTML = `${actions[i].icon}<span>${actions[i].label}</span>`;
+        requestAnimationFrame(() => el.classList.add("open"));
+        arrowsSvg += `<path d="${fanCurvedPath(ox, oy, sx, sy)}"/>`;
+      });
+      fanArrowsEl.innerHTML = arrowsSvg;
+
+      fanState = { task, triggerBtn, ox, oy, positions, actions, armed: null };
+    }
+
+    function updateFanArm(clientX, clientY) {
+      if (!fanState) return;
+      let nearest = null;
+      let nearestDist = FAN_HIT_RADIUS;
+      fanState.positions.forEach((p, i) => {
+        const d = Math.hypot(clientX - (fanState.ox + p.dx), clientY - (fanState.oy + p.dy));
+        if (d < nearestDist) {
+          nearestDist = d;
+          nearest = i;
+        }
+      });
+      if (nearest !== fanState.armed) {
+        fanSatEls.forEach((el, i) => el.classList.toggle("armed", i === nearest));
+        fanState.armed = nearest;
+      }
+    }
+
+    function closeFan(execute) {
+      if (!fanState) return;
+      const { actions, armed, triggerBtn } = fanState;
+      triggerBtn.classList.remove("pressed");
+      fanBackdropEl.classList.remove("visible");
+      fanOriginEl.classList.remove("open");
+      fanSatEls.forEach((el) => el.classList.remove("open", "armed"));
+      fanArrowsEl.innerHTML = "";
+      if (execute && armed !== null) actions[armed].run();
+      fanState = null;
+    }
+
+    // Навешивается один раз на кнопку-триггер при рендере строки (см.
+    // renderTaskRow) — сама кнопка не хранит состояние жеста, оно в
+    // общем fanState выше (одновременно жест может идти только один,
+    // как и реальных пальцев на экране в любой момент — одного пользователя).
+    function attachFanMenu(triggerBtn, task) {
+      triggerBtn.addEventListener("pointerdown", (e) => {
+        try {
+          triggerBtn.setPointerCapture(e.pointerId);
+        } catch (err) {
+          // Жест не должен молча ломаться из-за этого — редкий случай.
+        }
+        openFan(triggerBtn, task);
+      });
+      triggerBtn.addEventListener("pointermove", (e) => updateFanArm(e.clientX, e.clientY));
+      triggerBtn.addEventListener("pointerup", () => closeFan(true));
+      triggerBtn.addEventListener("pointercancel", () => closeFan(false));
     }
 
     async function createTaskFor(dueDate, title, projectId) {

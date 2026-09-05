@@ -190,7 +190,10 @@ class MarkDoneRequest(BaseModel):
 
 
 class SetDueDateRequest(BaseModel):
-    due_date: str
+    # Phase 67 — null отправляет задачу в инбокс (веерное меню на
+    # "Сегодня"). Существующие вызовы всегда шлют настоящую дату, для
+    # них поведение не меняется.
+    due_date: str | None = None
 
 
 class SetPriorityRequest(BaseModel):
@@ -412,11 +415,15 @@ async def set_task_due_date(
 ) -> dict[str, str]:
     async with async_session() as session:
         task = await _get_owned_task(session, task_id, user["id"])
-        task.due_date = _parse_due_date(payload.due_date)
-        # Перенос на другой день — та же группа "новая/перенесённая — в
-        # конец", что и при создании (Phase 13): задача уезжает в конец
-        # списка того дня, куда попала, а не остаётся на случайной
-        # позиции среди задач, с которыми теперь физически не соседствует.
+        # None — задача уходит в инбокс (Phase 67, веерное меню на
+        # "Сегодня" — "В инбокс"), тот же смысл, что и у задачи,
+        # заведённой изначально без даты.
+        task.due_date = _parse_due_date(payload.due_date) if payload.due_date else None
+        # Перенос на другой день (или в инбокс) — та же группа "новая/
+        # перенесённая — в конец", что и при создании (Phase 13): задача
+        # уезжает в конец списка того дня/инбокса, куда попала, а не
+        # остаётся на случайной позиции среди задач, с которыми теперь
+        # физически не соседствует.
         task.sort_order = time.time()
         await session.commit()
 

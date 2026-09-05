@@ -37,6 +37,29 @@ function eventPinIcon() {
 function gripIcon() {
   return icon('<line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/>', 18);
 }
+// Триггер веерного меню (Phase 67) — три точки, как у обычной кнопки
+// "ещё действия" в списках.
+function fanTriggerIcon() {
+  return icon(
+    '<circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
+    16
+  );
+}
+// "На завтра" в веерном меню (Phase 67) — календарь с галочкой, не
+// путать с обычным calendarIcon() (тот — "поставить дату", без галочки).
+function tomorrowIcon() {
+  return icon(
+    '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/><path d="m10 14 2 2 3-3"/>',
+    15
+  );
+}
+// "В инбокс" в веерном меню (Phase 67).
+function inboxIcon() {
+  return icon(
+    '<path d="M3 12h4l2 3h6l2-3h4"/><path d="M5 12 3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2l-2 5"/><path d="M5 12v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/>',
+    15
+  );
+}
 // Кнопка "важная задача" в шторке — само поле теперь показывает
 // важность жирным шрифтом (Phase 14), не флажком, но кнопке-тумблеру
 // в панели всё равно нужен свой значок.

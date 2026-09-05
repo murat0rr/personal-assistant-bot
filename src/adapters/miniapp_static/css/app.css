@@ -1069,6 +1069,87 @@
       touch-action: none;
       cursor: grab;
     }
+    /* Веерное меню (Phase 67, только список "Сегодня" — showFanMenu в
+       _dayOpts.today) — .fan-trigger сама уже .small-btn (30x30, тот же
+       вид, что у соседних кнопок даты/архива/на сегодня), здесь только
+       touch-action: чтобы браузер не пытался проскроллить страницу
+       пальцем, который на самом деле уже держит веер. */
+    .fan-trigger { touch-action: none; }
+    .fan-trigger.pressed { background: var(--accent); color: var(--accent-text); }
+    /* Один общий (singleton) оверлей на всё приложение — JS позиционирует
+       под конкретную кнопку при каждом жесте (attachFanMenu). z-index 50
+       — выше всех существующих слоёв (максимум был 30, task-suggest-pill). */
+    #fan-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      background: rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(5px);
+      -webkit-backdrop-filter: blur(5px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.14s ease;
+    }
+    #fan-backdrop.visible { opacity: 1; }
+    #fan-layer {
+      position: fixed;
+      inset: 0;
+      z-index: 51;
+      pointer-events: none;
+    }
+    #fan-arrows {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+    #fan-arrows path {
+      fill: none;
+      stroke: rgba(255, 255, 255, 0.55);
+      stroke-width: 1.5;
+      stroke-linecap: round;
+    }
+    #fan-origin {
+      position: fixed;
+      width: 30px;
+      height: 30px;
+      margin-left: -15px;
+      margin-top: -15px;
+      border-radius: 50%;
+      background: var(--accent);
+      opacity: 0;
+      transition: opacity 0.12s ease;
+    }
+    #fan-origin.open { opacity: 1; }
+    .fan-satellite {
+      position: fixed;
+      width: 82px;
+      height: 34px;
+      margin-left: -41px;
+      margin-top: -17px;
+      border-radius: 17px;
+      border: none;
+      background: var(--card-bg);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      transform: scale(0.4);
+      opacity: 0;
+      transition: transform 0.16s cubic-bezier(0.2, 0.8, 0.3, 1.1), opacity 0.12s ease,
+        background 0.08s ease, color 0.08s ease;
+      pointer-events: none;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+    }
+    .fan-satellite.open { transform: scale(1); opacity: 1; }
+    .fan-satellite.armed { background: var(--accent); color: var(--accent-text); }
+    .fan-sat-delete { color: var(--neutral-red); }
+    .fan-sat-delete.armed { color: var(--accent-text); }
+    .fan-satellite svg { width: 15px; height: 15px; flex-shrink: 0; }
     /* Переключатели важности/события в форме редактирования задачи
        (Phase 63, #task-edit-sheet) — те же значения task.priority, что
        раньше выставляли кнопки убранной свайп-шторки, просто в виде
