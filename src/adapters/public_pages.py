@@ -3,12 +3,19 @@
 page / Privacy policy link в разделе Branding), больше ни для чего не
 используются. Тот же минимальный стиль страницы, что у web_auth.py/
 google_oauth.py — не шарим между модулями сознательно, три маленьких
-независимых копии проще, чем один общий импорт ради разметки."""
+независимых копии проще, чем один общий импорт ради разметки.
+
+Название приложения (заголовок обеих страниц) должно быть буквально
+той же строкой, что в поле App name на вкладке Branding в Google Cloud
+Console — Google это сверяет при верификации (первая попытка отклонена
+именно за расхождение названий, см. SPEC.md)."""
 
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
 router = APIRouter()
+
+_APP_NAME = "Личный ассистент chitinez"
 
 _PAGE_STYLE = """
 <style>
@@ -35,8 +42,8 @@ def _page(body: str) -> HTMLResponse:
 
 @router.get("/")
 async def homepage() -> HTMLResponse:
-    return _page("""
-    <h1>Личный ассистент</h1>
+    return _page(f"""
+    <h1>{_APP_NAME}</h1>
     <p>Telegram-бот и мини-приложение для личного управления задачами,
     привычками, дневником и заметками. Голосовые и текстовые сообщения
     боту разбираются автоматически и превращаются в задачи, напоминания
@@ -53,9 +60,9 @@ async def homepage() -> HTMLResponse:
 
 @router.get("/privacy")
 async def privacy_policy() -> HTMLResponse:
-    return _page("""
-    <h1>Политика конфиденциальности</h1>
-    <p>Личный ассистент — Telegram-бот и мини-приложение для одного
+    return _page(f"""
+    <h1>Политика конфиденциальности — {_APP_NAME}</h1>
+    <p>{_APP_NAME} — Telegram-бот и мини-приложение для одного
     владельца и ограниченного круга приглашённых им людей, не публичный
     сервис. Ниже — какие данные обрабатываются и зачем.</p>
 
