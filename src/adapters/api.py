@@ -29,7 +29,12 @@ from src.core.config import settings
 from src.core.db import async_session
 from src.core.google_calendar_sync import maybe_sync_now
 from src.core.telegram_auth import verify_miniapp_init_data
-from src.core.user_location import apply_stored_timezone, user_today
+from src.core.user_location import (
+    apply_stored_timezone,
+    morning_digest_enabled,
+    set_morning_digest_enabled,
+    user_today,
+)
 from src.core.web_session import SESSION_COOKIE_NAME, verify_session_token
 from src.handlers.f8_habits import check_habit
 from src.handlers.f_task_nag import record_task_completion
@@ -1089,6 +1094,26 @@ async def analytics_summary_endpoint(user: dict = Depends(get_authorized_user)) 
 async def analytics_summary_regenerate_endpoint(user: dict = Depends(get_authorized_user)) -> dict:
     text = await ai_analytics.refresh_summary(user["id"])
     return {"text": text}
+
+
+class SetMorningDigestRequest(BaseModel):
+    enabled: bool
+
+
+# Настройка "показывать утренний дайджест" (Phase 67, фидбек) — раньше
+# сводка слалась всем безусловно, без способа выключить. Сама рассылка
+# гасится в scheduler/jobs.py::_morning_digest, здесь только чтение/запись.
+@app.get("/miniapp/api/settings/morning-digest")
+async def get_morning_digest_setting(user: dict = Depends(get_authorized_user)) -> dict:
+    return {"enabled": await morning_digest_enabled(user["id"])}
+
+
+@app.post("/miniapp/api/settings/morning-digest")
+async def set_morning_digest_setting(
+    payload: SetMorningDigestRequest, user: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    await set_morning_digest_enabled(user["id"], payload.enabled)
+    return {"status": "ok"}
 
 
 # Веб-версия вне Telegram-клиента (Phase 45) — /app и /app/ отдают ТОТ ЖЕ

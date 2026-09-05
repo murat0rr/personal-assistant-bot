@@ -226,7 +226,10 @@
     .analytics-panel-header {
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      /* Заголовок "Аналитика" убран (Phase 67, фидбек) — остаётся одна
+         кнопка-шестерёнка, flex-end вместо space-between держит её у
+         правого края, как и раньше при двух элементах. */
+      justify-content: flex-end;
       margin-bottom: 8px;
     }
     .analytics-panel-header .section-label { margin-bottom: 0; }

@@ -84,6 +84,15 @@ async def user_schedule_hours(user_id: int) -> tuple[int, int]:
     return morning, evening
 
 
+async def morning_digest_enabled(user_id: int) -> bool:
+    """Настройка Mini App (Phase 67) — по умолчанию True (см.
+    AuthorizedUser.morning_digest_enabled), отсутствие строки вообще
+    (не должно случаться для авторизованного пользователя, но
+    защищаемся) тоже трактуем как "включено"."""
+    location = await get_user_location(user_id)
+    return location.morning_digest_enabled if location else True
+
+
 async def save_schedule_hour(
     user_id: int, *, morning_hour: int | None = None, evening_hour: int | None = None
 ) -> None:
@@ -104,6 +113,20 @@ async def save_schedule_hour(
             existing.morning_hour = morning_hour
         if evening_hour is not None:
             existing.evening_hour = evening_hour
+        await session.commit()
+
+
+async def set_morning_digest_enabled(user_id: int, enabled: bool) -> None:
+    """Настройка Mini App (Phase 67) — та же защита "строки может не
+    быть", что и save_schedule_hour выше."""
+    async with async_session() as session:
+        existing = await session.get(AuthorizedUser, user_id)
+        if existing is None:
+            existing = AuthorizedUser(
+                telegram_user_id=user_id, added_at=datetime.now(await user_timezone(user_id))
+            )
+            session.add(existing)
+        existing.morning_digest_enabled = enabled
         await session.commit()
 
 

@@ -21,7 +21,12 @@ from src.core.google_calendar_sync import sync_user_calendar
 from src.core.habits import list_habits
 from src.core.recurring_tasks import materialize_due_rules
 from src.core.task_templates import create_ai_template, list_templates
-from src.core.user_location import user_schedule_hours, user_timezone, user_today
+from src.core.user_location import (
+    morning_digest_enabled,
+    user_schedule_hours,
+    user_timezone,
+    user_today,
+)
 from src.handlers.f4_diary import DiaryStates, ask_question
 from src.handlers.f9_finance import FINANCE_GUIDE
 from src.handlers.f11_weekly_review import build_weekly_review
@@ -73,6 +78,11 @@ async def _materialize_recurring_tasks_job(bot: Bot, user_id: int) -> None:
 
 
 async def _morning_digest(bot: Bot, storage: BaseStorage, user_id: int) -> None:
+    # Настройка Mini App (Phase 67, фидбек) — по умолчанию включено для
+    # всех, гасит и саму сводку, и совет по задачам на сегодня разом.
+    if not await morning_digest_enabled(user_id):
+        logger.info("Утренняя сводка выключена настройкой (%s)", user_id)
+        return
     logger.info("Формирую утреннюю сводку (%s)", user_id)
     today = await user_today(user_id)
     text = await build_morning_briefing(user_id, today)

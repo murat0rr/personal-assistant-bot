@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Float, Integer, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.task import Base
@@ -31,3 +31,11 @@ class AuthorizedUser(Base):
     # ввод времени.
     morning_hour: Mapped[int | None] = mapped_column(Integer, nullable=True)
     evening_hour: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Настройка "показывать утренний дайджест" (Phase 67, фидбек) — по
+    # умолчанию True (сохраняет текущее поведение для всех уже
+    # существующих и новых пользователей, пока явно не выключат в Mini
+    # App). Гасит и саму сводку, и совет по задачам на сегодня — оба
+    # шлются вместе одной джобой (см. scheduler/jobs.py::_morning_digest).
+    morning_digest_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true"
+    )

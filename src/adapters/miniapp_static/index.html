@@ -82,8 +82,9 @@
        настроек), а заголовок с шестерёнкой должен остаться на месте. -->
   <div id="ext-panel-analytics">
     <div class="section">
+      <!-- Заголовок экрана убран (Phase 67, фидбек) — вкладка внизу
+           экрана уже называется "Аналитика", дублировать незачем. -->
       <div class="analytics-panel-header">
-        <p class="section-label">Аналитика</p>
         <button type="button" class="small-btn" id="btn-open-widget-settings" aria-label="Настроить графики"></button>
       </div>
     </div>
@@ -92,7 +93,8 @@
 
   <div id="ext-panel-calendar" style="display:none">
     <div class="section" id="month-cal-section">
-      <p class="section-label">Календарь</p>
+      <!-- Заголовок экрана убран (Phase 67, фидбек) — вкладка внизу
+           экрана уже называется "Календарь". -->
       <div class="month-cal-nav">
         <button class="small-btn" id="month-cal-prev" aria-label="Предыдущий месяц">‹</button>
         <span id="month-cal-title"></span>
@@ -112,7 +114,10 @@
 
   <div id="ext-panel-projects" style="display:none">
     <div class="section">
-      <p class="section-label">Проекты</p>
+      <!-- Заголовок экрана убран (Phase 67, фидбек) — вкладка внизу
+           экрана уже называется "Проекты". Подписи ниже
+           ("Недельные/Месячные/Годовые цели") остаются — это не
+           заголовок ЭКРАНА, а подписи РАЗНЫХ секций внутри него. -->
       <div id="pg-projects" class="list"></div>
     </div>
     <div class="section">
@@ -175,6 +180,20 @@
         <button data-theme="light">Светлая</button>
         <button data-theme="dark">Тёмная</button>
       </div>
+    </div>
+    <!-- Вибрация (Phase 67, фидбек) — per-device, localStorage
+         (hapticImpact/hapticSelection выше это читают). -->
+    <div class="settings-row">
+      <span>Вибрация</span>
+      <button type="button" class="entity-form-toggle" id="drawer-haptic-toggle"></button>
+    </div>
+    <!-- Утренний дайджест (Phase 67, фидбек) — серверная настройка
+         (влияет на scheduler/jobs.py::_morning_digest), читается при
+         каждом открытии меню — не кэшируем в JS-переменной, чтобы не
+         разъехаться с реальным значением на сервере. -->
+    <div class="settings-row">
+      <span>Утренний дайджест</span>
+      <button type="button" class="entity-form-toggle" id="drawer-morning-digest-toggle"></button>
     </div>
     <button type="button" class="drawer-link" id="btn-open-help">
       <span>Помощь</span>
@@ -419,6 +438,35 @@
       }
     }
     applyTheme(getStoredTheme());
+
+    // Вибрация (Phase 67, фидбек) — настройка "Вибрация" в ☰-меню,
+    // per-device (localStorage), тот же паттерн, что и тема выше. По
+    // умолчанию включена (raw === null — ничего не сохранено, ни разу
+    // не трогали настройку) — сохраняет текущее поведение.
+    function isHapticEnabled() {
+      try {
+        const raw = localStorage.getItem("hapticEnabled");
+        return raw === null ? true : raw === "1";
+      } catch (e) {
+        return true;
+      }
+    }
+    function setHapticEnabled(enabled) {
+      try {
+        localStorage.setItem("hapticEnabled", enabled ? "1" : "0");
+      } catch (e) {
+        // приватный режим и т.п. — применится, просто не переживёт перезапуск
+      }
+    }
+    // Единая точка входа для вибрации — все места в файле, которым
+    // нужна отдача пальцу, зовут эти обёртки, а не tg.HapticFeedback
+    // напрямую, чтобы настройка выше реально на них влияла.
+    function hapticImpact(style) {
+      if (isHapticEnabled()) tg?.HapticFeedback?.impactOccurred(style);
+    }
+    function hapticSelection() {
+      if (isHapticEnabled()) tg?.HapticFeedback?.selectionChanged();
+    }
 
     async function api(path, options = {}) {
       const res = await fetch(path, {
@@ -1527,7 +1575,7 @@
         clearTimeout(timer);
         timer = setTimeout(() => {
           timer = null;
-          tg?.HapticFeedback?.impactOccurred("medium");
+          hapticImpact("medium");
           onTrigger();
         }, HOLD_MS);
       });
@@ -2160,7 +2208,7 @@
           clearTimeout(hapticTimer);
           hapticTimer = setTimeout(() => {
             if (!dragging) return;
-            tg?.HapticFeedback?.impactOccurred("medium");
+            hapticImpact("medium");
           }, HAPTIC_DELAY_MS);
         });
 
@@ -2249,8 +2297,8 @@
       pillMain.addEventListener("click", (e) => {
         if (e.target.closest("svg, span")) toggleScreen();
       });
-      // "Основной экран" в панели вкладок (item 2, Phase 41) — тап
-      // переключает МГНОВЕННО, без анимации выезда (свайп пальцем
+      // "Основной экран" в панели вкладок (item 2, Phase 41) — долгое
+      // нажатие переключает МГНОВЕННО, без анимации выезда (свайп пальцем
       // по-прежнему плавный, см. setupPill выше — это разные пути,
       // жест не трогали). Тот же приём "мгновенного прыжка", что уже
       // используют settle-шаги ниже: на кадр отключаем transition
@@ -2267,9 +2315,11 @@
         showingMain = true;
         updateHamburgerVisibility();
       }
-      pillExtended.addEventListener("click", (e) => {
-        if (e.target.closest("svg, span")) jumpToMainInstant();
-      });
+      // БАГ-фикс по фидбеку: обычный тап по пилюле раньше тоже мгновенно
+      // уводил на главный экран — слишком легко задеть случайно рядом с
+      // "Календарь"/"Проекты". Теперь только долгое нажатие (attachLongPress,
+      // тот же приём, что и у задач/шаблонов) или свайп (setupPill выше).
+      attachLongPress(pillExtended, jumpToMainInstant);
       function toggleScreen() {
         if (showingMain) {
           resetTargetScroll(false);
@@ -2937,8 +2987,10 @@
         // соскальзывании обратно (nearest снова null) — оба направления
         // смены "выбрано/не выбрано", как просил живой фидбек.
         // selectionChanged(), не impactOccurred — это и есть API
-        // Telegram специально под смену выбранного варианта.
-        tg?.HapticFeedback?.selectionChanged();
+        // Telegram специально под смену выбранного варианта. Через
+        // hapticSelection() — настройка "Вибрация" в ☰-меню тоже на
+        // это влияет (Phase 67, довесок).
+        hapticSelection();
       }
     }
 
@@ -4232,8 +4284,47 @@
     // ---- Глобальное меню (Phase 30) — гамбургер справа сверху, пока
     // только переключатель темы внутри, остальные пункты — следующим
     // инкрементом.
+    // Вибрация (Phase 67) — per-device, читаем/пишем сразу, без похода
+    // в сеть.
+    function renderHapticToggle() {
+      document.getElementById("drawer-haptic-toggle").classList.toggle("on", isHapticEnabled());
+    }
+    document.getElementById("drawer-haptic-toggle").onclick = () => {
+      setHapticEnabled(!isHapticEnabled());
+      renderHapticToggle();
+    };
+
+    // Утренний дайджест (Phase 67) — серверная настройка, читаем при
+    // каждом открытии меню (см. openSideDrawer), не кэшируем локально.
+    async function renderMorningDigestToggle() {
+      const btn = document.getElementById("drawer-morning-digest-toggle");
+      try {
+        const result = await api("/miniapp/api/settings/morning-digest");
+        btn.classList.toggle("on", result.enabled);
+      } catch (e) {
+        // Тихо — открыть меню всё равно можно, просто тумблер покажет
+        // прежнее состояние до следующей успешной попытки.
+      }
+    }
+    document.getElementById("drawer-morning-digest-toggle").onclick = async () => {
+      const btn = document.getElementById("drawer-morning-digest-toggle");
+      const next = !btn.classList.contains("on");
+      btn.classList.toggle("on", next);
+      try {
+        await api("/miniapp/api/settings/morning-digest", {
+          method: "POST",
+          body: JSON.stringify({ enabled: next }),
+        });
+      } catch (e) {
+        btn.classList.toggle("on", !next);
+        alert("Не удалось сохранить настройку.");
+      }
+    };
+
     function openSideDrawer() {
       sideDrawerOpen = true;
+      renderHapticToggle();
+      renderMorningDigestToggle();
       render();
     }
     function closeSideDrawer() {
