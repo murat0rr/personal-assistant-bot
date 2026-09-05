@@ -13,6 +13,7 @@ from pydantic import AfterValidator, BaseModel
 from sqlalchemy import select, update
 
 from src.adapters.google_oauth import router as google_oauth_router
+from src.adapters.public_pages import router as public_pages_router
 from src.adapters.tasker_webhook import router as tasker_webhook_router
 from src.adapters.web_auth import router as web_auth_router
 from src.core import ai_analytics, calendar_view
@@ -116,6 +117,7 @@ app = FastAPI(title="Личный ассистент API", lifespan=_lifespan)
 app.include_router(tasker_webhook_router)
 app.include_router(web_auth_router)
 app.include_router(google_oauth_router)
+app.include_router(public_pages_router)
 
 
 @app.middleware("http")
