@@ -2503,6 +2503,22 @@
       return dt.toISOString().slice(0, 10);
     }
 
+    // Автоописание при создании задачи (Phase 65) генерируется в фоне на
+    // сервере (adapters/api.py::create_task_endpoint не ждёт ответа
+    // Claude, чтобы "+" не тормозил) — поэтому его ещё нет в ответе
+    // POST .../tasks, и optimistic tempTask в createTaskFor остаётся без
+    // description, пока не перезагрузить всю доску: findTaskById читает
+    // только из boardState, а он обновляется целиком лишь через
+    // loadBoard(). Без этого повторного похода описание физически не
+    // могло попасть в уже открытую форму редактирования — баг, найденный
+    // пользователем сразу после первого деплоя фичи. Debounce одним
+    // таймером — несколько "+" подряд просят один общий доклад, не N.
+    let _boardRefreshTimer = null;
+    function scheduleBoardRefresh() {
+      clearTimeout(_boardRefreshTimer);
+      _boardRefreshTimer = setTimeout(loadBoard, 2500);
+    }
+
     async function loadBoard() {
       try {
         boardState = await api("/miniapp/api/tasks");
@@ -2734,6 +2750,9 @@
           body: JSON.stringify({ title, due_date: dueDate }),
         });
         tempTask.id = result.id;
+        // См. scheduleBoardRefresh выше — подхватить описание, которое
+        // сервер ещё дописывает в фоне.
+        scheduleBoardRefresh();
         if (projectId) {
           // POST .../tasks/{id}/project уже существует (используется
           // assignTaskProject для существующих задач) — здесь тот же
