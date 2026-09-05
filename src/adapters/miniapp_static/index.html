@@ -3124,6 +3124,15 @@
 
     function openTaskEditSheet(task) {
       editingTaskId = task.id;
+      // description отсутствует в объекте (не null — сервер всегда
+      // отдаёт ключ, см. handlers/miniapp_tasks.py::_serialize), только
+      // если это optimistic tempTask из createTaskFor, ещё ни разу не
+      // замещённый настоящими данными с сервера (см. scheduleBoardRefresh
+      // выше) — надёжный признак "открыли форму раньше, чем подоспел
+      // фоновый доклад". В этом случае не ждём debounce-таймер — грузим
+      // сразу, render() внутри loadBoard() подставит реальное значение
+      // (или его отсутствие), как только ответ придёт.
+      if (task.description === undefined) loadBoard();
       render();
     }
 
