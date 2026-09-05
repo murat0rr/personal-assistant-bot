@@ -1,6 +1,8 @@
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from src.core import google_calendar_sync as gcs
 from src.core.google_calendar_sync import _event_to_task_fields
 
 _TZ = ZoneInfo("Europe/Moscow")
@@ -57,3 +59,29 @@ def test_missing_summary_gets_placeholder_title():
 def test_event_without_start_is_skipped():
     event = {"id": "v", "summary": "Сломанное событие"}
     assert _event_to_task_fields(event, _TZ) is None
+
+
+def test_maybe_sync_now_skips_second_call_within_cooldown(monkeypatch):
+    scheduled = []
+    monkeypatch.setattr(gcs.asyncio, "create_task", lambda coro: scheduled.append(coro))
+    gcs._last_manual_sync.clear()
+
+    gcs.maybe_sync_now(1)
+    gcs.maybe_sync_now(1)
+
+    assert len(scheduled) == 1
+    for coro in scheduled:
+        coro.close()
+
+
+def test_maybe_sync_now_allows_call_after_cooldown_elapsed(monkeypatch):
+    scheduled = []
+    monkeypatch.setattr(gcs.asyncio, "create_task", lambda coro: scheduled.append(coro))
+    gcs._last_manual_sync.clear()
+    gcs._last_manual_sync[2] = time.time() - gcs._MANUAL_SYNC_COOLDOWN_SECONDS - 1
+
+    gcs.maybe_sync_now(2)
+
+    assert len(scheduled) == 1
+    for coro in scheduled:
+        coro.close()

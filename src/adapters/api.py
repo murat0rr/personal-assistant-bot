@@ -26,6 +26,7 @@ from src.core import task_templates as templates_repo
 from src.core.auth import is_authorized
 from src.core.config import settings
 from src.core.db import async_session
+from src.core.google_calendar_sync import maybe_sync_now
 from src.core.telegram_auth import verify_miniapp_init_data
 from src.core.user_location import apply_stored_timezone, user_today
 from src.core.web_session import SESSION_COOKIE_NAME, verify_session_token
@@ -284,8 +285,15 @@ async def _get_owned_task(session, task_id: int, uid: int) -> Task:
 @app.get("/miniapp/api/tasks")
 async def list_tasks(user: dict = Depends(get_authorized_user)) -> dict:
     uid = user["id"]
-    # Postgres — единственный источник правды для задач (Phase 10), поэтому
-    # это простое чтение без похода куда-либо ещё.
+    # Google Calendar (Phase 64, довесок) — при открытии/обновлении
+    # доски дёргаем внеочередную синхронизацию, не дожидаясь 20-минутного
+    # опроса планировщика (см. core/google_calendar_sync.py::
+    # maybe_sync_now). Fire-and-forget: сам ответ ниже по-прежнему
+    # строится только из уже сохранённого в Postgres — единственный
+    # источник правды для задач (Phase 10) не становится зависимым от
+    # доступности/скорости Google API прямо сейчас, эффект будет виден
+    # только на следующем открытии/обновлении.
+    maybe_sync_now(uid)
     async with async_session() as session:
         result = await session.execute(
             select(Task).where(Task.archived.is_(False), Task.user_id == uid)
