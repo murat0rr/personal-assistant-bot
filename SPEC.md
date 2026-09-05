@@ -3247,9 +3247,22 @@ ID/Secret в Google Cloud Console (тип Web application, Calendar API
 проходит верификацию Google), `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/
 `GOOGLE_OAUTH_REDIRECT_URI` — в `.env`.
 
+**Фикс (в тот же день):** `/google_calendar` до настройки `.env`
+отвечала бесполезным "обратитесь к владельцу бота" — для владельца
+самого себя это пустая фраза. Заменено на пошаговый гайд прямо в
+ответе бота (`_SETUP_GUIDE`, `handlers/f_google_calendar.py`): что
+включить/создать в Google Cloud Console, какие 3 переменные вписать в
+`.env`. Redirect URI в гайде не хардкожен — выводится из уже
+настроенного `MINIAPP_URL` (`_guessed_redirect_uri`, схема+хост, тот же
+источник, что и у боевого Mini App), не дублирует его отдельной
+переменной. Архитектура не менялась — Client ID/Secret по-прежнему
+один на всё приложение в `.env` (осознанно, подтверждено пользователем:
+не по одному на каждого подключающегося).
+
 ### Живая проверка
 
-`pytest` (140, +6) — `_event_to_task_fields` на синтетических
+`pytest` (143, +9 — включая 3 теста на `_guessed_redirect_uri`/
+`_SETUP_GUIDE` из фикса выше) — `_event_to_task_fields` на синтетических
 Google-событиях (с временем, весь день, конвертация часового пояса,
 без `summary`, `status=cancelled`, без `start`). Докер + реальный
 Postgres + реальный Redis, `sync_user_calendar` с подменёнными
