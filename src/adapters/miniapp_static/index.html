@@ -2811,8 +2811,12 @@
     // Один общий (singleton) оверлей на всё приложение (#fan-backdrop/
     // #fan-layer в разметке) — JS только перепозиционирует его под
     // нужную кнопку при каждом жесте, отдельного оверлея на задачу нет.
-    const FAN_RADIUS = 74;
-    const FAN_HIT_RADIUS = 34;
+    // Кнопки и расстояние между ними — 2x/1.5x от исходного макета, по
+    // прямой обратной связи вживую. FAN_HIT_RADIUS растёт вместе с
+    // самой кнопкой (1.5x, как и .fan-satellite в CSS) — иначе кнопки
+    // выглядели бы крупнее, чем реально ловят палец.
+    const FAN_RADIUS = 148;
+    const FAN_HIT_RADIUS = 51;
     const FAN_MIRROR_MARGIN = 30;
 
     const fanBackdropEl = document.getElementById("fan-backdrop");

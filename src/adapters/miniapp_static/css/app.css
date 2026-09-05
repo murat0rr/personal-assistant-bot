@@ -1122,22 +1122,26 @@
       transition: opacity 0.12s ease;
     }
     #fan-origin.open { opacity: 1; }
+    /* Кнопки веера — 1.5x от исходного размера макета (82x34 → 123x51 и
+       т.д.), по прямой обратной связи вживую ("сделай крупнее и
+       расстояние между ними больше"). Дуга — FAN_RADIUS в JS, там же
+       *2. */
     .fan-satellite {
       position: fixed;
-      width: 82px;
-      height: 34px;
-      margin-left: -41px;
-      margin-top: -17px;
-      border-radius: 17px;
+      width: 123px;
+      height: 51px;
+      margin-left: -61.5px;
+      margin-top: -25.5px;
+      border-radius: 25.5px;
       border: none;
       background: var(--card-bg);
       color: var(--text);
-      font-size: 13px;
+      font-size: 19.5px;
       font-weight: 500;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 5px;
+      gap: 7.5px;
       transform: scale(0.4);
       opacity: 0;
       transition: transform 0.16s cubic-bezier(0.2, 0.8, 0.3, 1.1), opacity 0.12s ease,
@@ -1149,7 +1153,7 @@
     .fan-satellite.armed { background: var(--accent); color: var(--accent-text); }
     .fan-sat-delete { color: var(--neutral-red); }
     .fan-sat-delete.armed { color: var(--accent-text); }
-    .fan-satellite svg { width: 15px; height: 15px; flex-shrink: 0; }
+    .fan-satellite svg { width: 22.5px; height: 22.5px; flex-shrink: 0; }
     /* Переключатели важности/события в форме редактирования задачи
        (Phase 63, #task-edit-sheet) — те же значения task.priority, что
        раньше выставляли кнопки убранной свайп-шторки, просто в виде
