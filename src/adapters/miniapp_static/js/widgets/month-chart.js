@@ -30,13 +30,18 @@ export function createMonthChartWidget(ctx) {
     }
 
     const counts = data.all_counts || [];
-    if (counts.every((c) => c === 0)) {
+    // Плановая нагрузка на день (Phase 67, фидбек) — независимо от
+    // done, нужна для серых будущих столбиков и серого "остатка" на
+    // сегодня (см. ниже); без неё "выполнено" на будущий день всегда 0
+    // и график ничего не показывает про уже запланированное.
+    const scheduled = data.scheduled_counts || [];
+    if (counts.every((c) => c === 0) && scheduled.every((c) => c === 0)) {
       container.innerHTML = `${header}<div class="chart-empty">В этом месяце пока ничего не отмечено</div>`;
       attachNav();
       return;
     }
 
-    const max = Math.max(1, ...counts);
+    const max = Math.max(1, ...counts, ...scheduled);
     const w = 300;
     const h = 110;
     const padLeft = 18;
@@ -63,21 +68,64 @@ export function createMonthChartWidget(ctx) {
       })
       .join("");
 
-    const bars = counts
-      .map((c, i) => {
-        const barH = (c / max) * plotH;
-        const x = padLeft + i * barW;
-        const y = padTop + plotH - barH;
-        const opacity = isWeekend(i + 1) ? 0.5 : 1;
-        return `<rect x="${x + 0.5}" y="${y}" width="${Math.max(barW - 1, 1)}" height="${Math.max(barH, c > 0 ? 1 : 0)}" fill="var(--accent)" opacity="${opacity}" rx="1"/>`;
-      })
-      .join("");
-
     const boardState = getBoardState();
     const todayIso = boardState.days.today ? boardState.days.today.date : null;
     const isCurrentMonth =
       todayIso && todayIso.slice(0, 4) == data.year && Number(todayIso.slice(5, 7)) === data.month;
     const todayDay = isCurrentMonth ? Number(todayIso.slice(8, 10)) : null;
+    // Будущее — либо весь месяц позже текущего, либо (в текущем месяце)
+    // день позже сегодняшнего. Прошлое/сегодня — как и раньше, просто
+    // "выполнено" (accent); будущее красим серым по scheduled (плану),
+    // а не по all_counts (там всегда 0 — ещё не наступило).
+    const isFutureDay = (dayNum) => {
+      if (isCurrentMonth) return dayNum > todayDay;
+      if (!todayIso) return false;
+      const todayYear = Number(todayIso.slice(0, 4));
+      const todayMonthNum = Number(todayIso.slice(5, 7));
+      return data.year > todayYear || (data.year === todayYear && data.month > todayMonthNum);
+    };
+
+    const bars = counts
+      .map((c, i) => {
+        const dayNum = i + 1;
+        const x = padLeft + i * barW;
+        const barWidth = Math.max(barW - 1, 1);
+        const opacity = isWeekend(dayNum) ? 0.5 : 1;
+
+        if (isFutureDay(dayNum)) {
+          // Серый — плановая нагрузка, не факт (ничего ещё не могло
+          // "выполниться" наперёд).
+          const s = scheduled[i] || 0;
+          const barH = (s / max) * plotH;
+          const y = padTop + plotH - barH;
+          return `<rect x="${x + 0.5}" y="${y}" width="${barWidth}" height="${Math.max(barH, s > 0 ? 1 : 0)}" fill="var(--text-muted)" opacity="${opacity * 0.6}" rx="1"/>`;
+        }
+
+        if (dayNum === todayDay) {
+          // Сегодня — столбик из двух сегментов: синий "сделано" снизу,
+          // серый "осталось на сегодня" сверху (по фидбогу — видно и
+          // прогресс, и что ещё не закрыто).
+          const done = c;
+          const remaining = Math.max((scheduled[i] || 0) - done, 0);
+          const doneH = (done / max) * plotH;
+          const remainingH = (remaining / max) * plotH;
+          const doneY = padTop + plotH - doneH;
+          const remainingY = doneY - remainingH;
+          const doneRect = `<rect x="${x + 0.5}" y="${doneY}" width="${barWidth}" height="${Math.max(doneH, done > 0 ? 1 : 0)}" fill="var(--accent)" rx="1"/>`;
+          const remainingRect =
+            remaining > 0
+              ? `<rect x="${x + 0.5}" y="${remainingY}" width="${barWidth}" height="${Math.max(remainingH, 1)}" fill="var(--text-muted)" opacity="0.6" rx="1"/>`
+              : "";
+          return doneRect + remainingRect;
+        }
+
+        // Прошлое — как и раньше, просто "выполнено" (accent).
+        const barH = (c / max) * plotH;
+        const y = padTop + plotH - barH;
+        return `<rect x="${x + 0.5}" y="${y}" width="${barWidth}" height="${Math.max(barH, c > 0 ? 1 : 0)}" fill="var(--accent)" opacity="${opacity}" rx="1"/>`;
+      })
+      .join("");
+
     const todayLine =
       todayDay && todayDay <= counts.length
         ? `<line x1="${padLeft + (todayDay - 0.5) * barW}" y1="${padTop}" x2="${padLeft + (todayDay - 0.5) * barW}" y2="${padTop + plotH}" stroke="var(--neutral-blue)" stroke-width="1.5" stroke-dasharray="2 2"/>`

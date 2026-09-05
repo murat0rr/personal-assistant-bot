@@ -1759,6 +1759,13 @@
       }
     }
 
+    // Графики прогресса по целям в аналитике (Phase 67, тот же приём,
+    // что notifyProjectsChanged/Гант — событие в общую шину, не прямой
+    // вызов виджета по имени).
+    function notifyGoalsChanged() {
+      window.__coreBridge.bus?.dispatchEvent(new Event("goals:changed"));
+    }
+
     async function loadGoals() {
       try {
         goalsData = await api("/miniapp/api/goals");
@@ -1766,6 +1773,7 @@
         goalsData = [];
       }
       renderGoalsPages();
+      notifyGoalsChanged();
     }
 
     // Sheet выбора цвета — свой отдельный sheet (не переиспользуем
@@ -4050,6 +4058,11 @@
       adjMonth,
       getBoardState: () => boardState,
       getProjectsData: () => projectsData,
+      // Прогресс по целям (Phase 67) — тот же приём геттера, что и у
+      // getProjectsData: goalsData целиком переприсваивается при каждой
+      // loadGoals(), функция всегда возвращает актуальную ссылку, а не
+      // снимок на момент конструирования этого объекта.
+      getGoalsData: () => goalsData,
       bus: null, // подставится модулем-бутстрапом ниже, до первого реального использования
     };
     // loadAnalytics() зовётся синхронно в самом низу этого скрипта
@@ -4705,6 +4718,16 @@
             calMonth = target.month;
             calSelectedDay = null;
             document.getElementById("month-cal-day-info").classList.remove("visible");
+            // БАГ: панели prev/current/next (monthPanelGrids) — фиксированные
+            // DOM-узлы по индексу, свайп двигает трек, но сами сетки дней
+            // никогда не перерисовывались под новый calMonth/calYear — после
+            // мгновенного recenterMonthCarousel() ниже в позиции "центр"
+            // оставалась старая сетка (дни прошлого месяца), а подпись
+            // (обновлённая ещё в начале жеста, см. выше) уже показывала
+            // новый — визуально "название месяца спешит вперёд". renderMonthCalendar()
+            // перерисовывает все три сетки под актуальный calMonth/calYear
+            // (заодно и подпись — тем же значением, что уже стоит).
+            renderMonthCalendar();
             await loadMonthEvents();
           }
           recenterMonthCarousel();

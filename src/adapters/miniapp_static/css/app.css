@@ -560,6 +560,60 @@
       color: var(--text-muted);
       margin: 0 0 10px;
     }
+    /* Кнопка "перегенерировать" у ИИ-аналитики (Phase 67, фидбек) —
+       .chart-title внутри строки, кнопка справа. */
+    .chart-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 0 0 10px;
+    }
+    .chart-title-row .chart-title { margin: 0; }
+    .chart-title-row .small-btn.spinning svg { animation: task-suggest-spin 0.8s linear infinite; }
+    /* Графики прогресса по целям — неделя/месяц/год (Phase 67, фидбек):
+       список отсортирован от самых успешных к неуспешным, завершённые
+       (100%) слегка подсвечены — не отдельным цветом на каждый ранг,
+       сам порядок уже несёт смысл. */
+    .goal-progress-list { display: flex; flex-direction: column; gap: 12px; }
+    .goal-progress-row-done {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border-radius: 8px;
+      padding: 4px 8px;
+      margin: -4px -8px;
+    }
+    .goal-progress-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .goal-progress-title {
+      font-size: 13px;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    .goal-progress-count {
+      font-size: 12px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+    }
+    .goal-progress-track {
+      height: 6px;
+      border-radius: 3px;
+      background: var(--hairline);
+      overflow: hidden;
+    }
+    .goal-progress-fill {
+      height: 100%;
+      border-radius: 3px;
+      background: var(--accent);
+      transition: width 0.2s ease;
+    }
     .chart-empty {
       font-size: 14px;
       color: var(--text-muted);

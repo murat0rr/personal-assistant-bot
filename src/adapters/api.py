@@ -1081,6 +1081,16 @@ async def analytics_summary_endpoint(user: dict = Depends(get_authorized_user)) 
     return {"text": text}
 
 
+# Кнопка "перегенерировать" в виджете "ИИ-аналитика" (Phase 67, фидбек) —
+# раньше кэш обновлялся только по расписанию (_ai_analytics_refresh_job,
+# раз в день), без ручного способа обновить прямо сейчас. Тот же
+# refresh_summary, что и джоба — просто по явному запросу пользователя.
+@app.post("/miniapp/api/analytics/summary/regenerate")
+async def analytics_summary_regenerate_endpoint(user: dict = Depends(get_authorized_user)) -> dict:
+    text = await ai_analytics.refresh_summary(user["id"])
+    return {"text": text}
+
+
 # Веб-версия вне Telegram-клиента (Phase 45) — /app и /app/ отдают ТОТ ЖЕ
 # файл index.html, что и /miniapp/ (не копию — один и тот же путь на диске,
 # см. _STATIC_DIR ниже), но за отдельным серверным гейтом: кука проверяется

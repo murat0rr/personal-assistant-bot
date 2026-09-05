@@ -59,21 +59,27 @@ async def month_breakdown(user_id: int, month_anchor: date) -> dict:
     отражает реальную продуктивность, а не план), плюс та же разбивка по
     КАЖДОМУ активному проекту — включая те, где в этом месяце ничего не
     выполнено (нулевая строка, не пропущенная — item 1, Phase 41), плюс
-    отдельная строка "Без проекта" для задач без project_id."""
+    отдельная строка "Без проекта" для задач без project_id.
+
+    scheduled_counts (Phase 67, фидбек) — сколько задач вообще стоит на
+    день (независимо от done), не только "выполнено": для будущих дней
+    "выполнено" всегда 0 и само по себе бессмысленно — фронтенд красит
+    их серым по этому полю (плановая нагрузка, не факт), а для
+    сегодняшнего дня складывает синий "сделано" (all_counts) и серый
+    "осталось" (scheduled - all) в один столбик."""
     days_in_month = calendar.monthrange(month_anchor.year, month_anchor.month)[1]
     month_start = month_anchor.replace(day=1)
     month_end = month_anchor.replace(day=days_in_month)
 
     async with async_session() as session:
         result = await session.execute(
-            select(Task.due_date, Task.project_id).where(
+            select(Task.due_date, Task.project_id, Task.done).where(
                 Task.archived.is_(False),
-                Task.done.is_(True),
                 Task.due_date.is_not(None),
                 Task.user_id == user_id,
             )
         )
-        rows = [(due.date(), project_id) for due, project_id in result.all()]
+        rows = [(due.date(), project_id, done) for due, project_id, done in result.all()]
 
         # Все активные проекты — не только те, где в этом месяце что-то
         # выполнено (item 1, Phase 41): проект без прогресса в этом
@@ -82,22 +88,33 @@ async def month_breakdown(user_id: int, month_anchor: date) -> dict:
         active_projects = (
             await session.execute(
                 select(Project.id, Project.title).where(
-                    Project.archived.is_(False), Project.user_id == user_id
+                    Project.archived.is_(False),
+                    Project.user_id == user_id,
+                    # БАГ (Phase 67, фидбек): проекты и цели — одна сущность
+                    # (Phase 54, Project.tier), без этого фильтра сюда
+                    # попадали и цели (tier — не None), разбивка "по
+                    # проектам" в "Выполнено задач" молча показывала цели
+                    # вперемешку с настоящими проектами.
+                    Project.tier.is_(None),
                 )
             )
         ).all()
 
     day_labels = [f"{d:02d}" for d in range(1, days_in_month + 1)]
     all_counts = [0] * days_in_month
+    scheduled_counts = [0] * days_in_month
     per_project: dict[int, list[int]] = {
         pid: [0] * days_in_month for pid, _title in active_projects
     }
     no_project_counts = [0] * days_in_month
 
-    for due_date, project_id in rows:
+    for due_date, project_id, done in rows:
         if not (month_start <= due_date <= month_end):
             continue
         idx = due_date.day - 1
+        scheduled_counts[idx] += 1
+        if not done:
+            continue
         all_counts[idx] += 1
         if project_id is not None and project_id in per_project:
             per_project[project_id][idx] += 1
@@ -128,5 +145,6 @@ async def month_breakdown(user_id: int, month_anchor: date) -> dict:
         "month": month_anchor.month,
         "days": day_labels,
         "all_counts": all_counts,
+        "scheduled_counts": scheduled_counts,
         "projects": projects_out,
     }
