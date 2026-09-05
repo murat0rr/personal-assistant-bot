@@ -29,9 +29,9 @@ class Task(Base):
     legacy_notion_id: Mapped[str | None] = mapped_column(String, nullable=True)
     title: Mapped[str] = mapped_column(String)
     # timestamp, а не date — гибкость для задач-событий со временем начала
-    # (приоритет "event"). Полночь (00:00) = время не указано, обычная
-    # задача на день; ненулевое время — событие с конкретным началом. Без
-    # отдельного булева флага под один частный случай — см. handlers/miniapp_tasks.py.
+    # (is_event, см. ниже). Полночь (00:00) = время не указано, обычная
+    # задача на день; ненулевое время — событие с конкретным началом.
+    # См. handlers/miniapp_tasks.py.
     due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
     priority: Mapped[str | None] = mapped_column(String, nullable=True)
     done: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
@@ -66,6 +66,14 @@ class Task(Base):
     # "сгенерировать" в самой форме. NULL — обычный случай для задач без
     # описания, тот же принцип, что у остальных nullable-полей.
     description: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Phase 66 — независимо от priority (важность — по-прежнему
+    # "низкий"/"средний"/"высокий"). Раньше "событие" было четвёртым
+    # значением priority ("event"), из-за чего важная задача не могла
+    # одновременно быть событием (одно перезаписывало другое) — теперь
+    # это отдельный флаг, оба состояния сочетаются свободно. Старые
+    # строки с priority="event" переведены миграцией в is_event=true,
+    # priority="средний" (см. migrations/).
+    is_event: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

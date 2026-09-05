@@ -1,10 +1,15 @@
 """Синхронизация Google Calendar → задачи (Phase 64). Одностороння и
 "живая" — события остаются источником правды для title/due_date/
-priority синхронизированной задачи (осознанное решение, подтверждено
+is_event синхронизированной задачи (осознанное решение, подтверждено
 пользователем): переименовать/перенести такую задачу вручную в
 приложении можно, но следующий опрос вернёт значение из календаря
-обратно. done/archived/sphere/project_id — полностью в руках
-пользователя, синхронизация их не трогает никогда.
+обратно. done/archived/sphere/project_id/priority — полностью в руках
+пользователя, синхронизация их не трогает никогда (priority — до
+Phase 66 был исключением: событие всегда сбрасывало его на дефолт при
+каждом опросе, из-за чего "важная" отметка на синхронизированной задаче
+не переживала следующий цикл — теперь priority и is_event независимы,
+как и везде в приложении, календарь про важность ничего не знает и не
+должен её трогать).
 
 Раз в 20 минут её вызывает планировщик (см. scheduler/jobs.py) — этого
 хватает для фонового обновления, но при открытии Mini App хочется не
@@ -63,16 +68,20 @@ def _event_to_task_fields(event: dict[str, Any], tz: ZoneInfo) -> dict[str, Any]
         # же конвенция, что и у ручных событий, см. models/task.py).
         raw = start["dateTime"].replace("Z", "+00:00")
         due_date = datetime.fromisoformat(raw).astimezone(tz).replace(tzinfo=None)
-        priority = "event"
+        is_event = True
     elif "date" in start:
         due_date = datetime.combine(
             datetime.fromisoformat(start["date"]).date(), datetime.min.time()
         )
-        priority = None
+        is_event = False
     else:
         return None
 
-    return {"title": title, "due_date": due_date, "priority": priority}
+    # is_event — независимый флаг (Phase 66), не значение priority
+    # (раньше было "event", взаимоисключающее с "высокий"); priority
+    # синхронизированных задач сам по себе не несёт смысла от Google
+    # (у календаря нет понятия важности) — обычный дефолт.
+    return {"title": title, "due_date": due_date, "priority": "средний", "is_event": is_event}
 
 
 async def sync_user_calendar(bot: Bot | None, user_id: int) -> None:
@@ -138,6 +147,7 @@ async def sync_user_calendar(bot: Bot | None, user_id: int) -> None:
                         title=fields["title"],
                         due_date=fields["due_date"],
                         priority=fields["priority"],
+                        is_event=fields["is_event"],
                         source="google_calendar",
                         google_event_id=event_id,
                         sort_order=time.time(),
@@ -146,7 +156,7 @@ async def sync_user_calendar(bot: Bot | None, user_id: int) -> None:
             else:
                 task.title = fields["title"]
                 task.due_date = fields["due_date"]
-                task.priority = fields["priority"]
+                task.is_event = fields["is_event"]
 
         # Синхронизированные задачи в том же окне, чьё событие пропало
         # из ответа (удалено/отменено в календаре) — архивируем, тот же

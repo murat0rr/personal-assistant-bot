@@ -9,10 +9,10 @@ from src.models.task import Task
 
 async def month_events(user_id: int, year: int, month: int) -> dict[str, list[str]]:
     """Для месячного календаря в Mini App (Phase 26) — только задачи-
-    события (priority="event"), не все задачи: требование явно про
-    события, не про общую загрузку дня (для неё есть график месяца в
-    аналитике). Отдаём сами заголовки (Phase 29) — плитка дня показывает
-    текст события, не просто точку/иконку."""
+    события (is_event, до Phase 66 — priority="event"), не все задачи:
+    требование явно про события, не про общую загрузку дня (для неё
+    есть график месяца в аналитике). Отдаём сами заголовки (Phase 29) —
+    плитка дня показывает текст события, не просто точку/иконку."""
     days_in_month = calendar.monthrange(year, month)[1]
     month_start = date(year, month, 1)
     month_end = date(year, month, days_in_month)
@@ -21,7 +21,7 @@ async def month_events(user_id: int, year: int, month: int) -> dict[str, list[st
         result = await session.execute(
             select(Task.due_date, Task.title).where(
                 Task.archived.is_(False),
-                Task.priority == "event",
+                Task.is_event.is_(True),
                 Task.due_date.is_not(None),
                 Task.user_id == user_id,
             )

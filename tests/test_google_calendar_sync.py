@@ -10,7 +10,7 @@ from src.core.google_calendar_sync import _event_to_task_fields
 _TZ = ZoneInfo("Europe/Moscow")
 
 
-def test_timed_event_becomes_event_priority():
+def test_timed_event_becomes_is_event():
     event = {
         "id": "abc123",
         "summary": "Встреча с командой",
@@ -20,7 +20,8 @@ def test_timed_event_becomes_event_priority():
     assert fields == {
         "title": "Встреча с командой",
         "due_date": datetime(2026, 9, 10, 14, 30, 0),
-        "priority": "event",
+        "priority": "средний",
+        "is_event": True,
     }
 
 
@@ -32,13 +33,14 @@ def test_timed_event_converts_across_timezones():
     assert fields["due_date"] == datetime(2026, 9, 10, 13, 0, 0)
 
 
-def test_all_day_event_has_no_time_and_no_event_priority():
+def test_all_day_event_has_no_time_and_is_not_event():
     event = {"id": "y", "summary": "День рождения", "start": {"date": "2026-09-12"}}
     fields = _event_to_task_fields(event, _TZ)
     assert fields == {
         "title": "День рождения",
         "due_date": datetime(2026, 9, 12, 0, 0, 0),
-        "priority": None,
+        "priority": "средний",
+        "is_event": False,
     }
 
 

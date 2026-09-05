@@ -197,6 +197,10 @@ class SetPriorityRequest(BaseModel):
     priority: str
 
 
+class SetTaskEventRequest(BaseModel):
+    is_event: bool
+
+
 class SetTitleRequest(BaseModel):
     title: str
 
@@ -426,8 +430,26 @@ async def set_task_priority(
     async with async_session() as session:
         task = await _get_owned_task(session, task_id, user["id"])
         task.priority = payload.priority
-        # Смена приоритета может переместить задачу между группой событий
-        # и обычных — тоже в конец новой группы, тем же правилом.
+        # Смена важности переносит задачу в конец списка — тот же приём,
+        # что и везде при смене группы/дня.
+        task.sort_order = time.time()
+        await session.commit()
+
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/tasks/{task_id}/event")
+async def set_task_event(
+    task_id: int, payload: SetTaskEventRequest, user: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    # Независимо от priority (Phase 66) — задача может быть одновременно
+    # "важной" (priority) и "событием" (is_event), раньше это было одно и
+    # то же поле, взаимоисключающее.
+    async with async_session() as session:
+        task = await _get_owned_task(session, task_id, user["id"])
+        task.is_event = payload.is_event
+        # Смена группы событие/обычная переносит задачу в конец списка —
+        # тот же приём, что у set_task_priority выше.
         task.sort_order = time.time()
         await session.commit()
 
@@ -952,8 +974,8 @@ def _is_owner(user_id: int) -> bool:
 _NOT_READY_FOR_OTHERS = "Дневник и заметки пока доступны только основному пользователю."
 
 
-# Месячный календарь (Phase 26) — только события (priority="event"), не
-# вся загрузка дня (для этого есть график месяца в аналитике).
+# Месячный календарь (Phase 26) — только события (is_event), не вся
+# загрузка дня (для этого есть график месяца в аналитике).
 @app.get("/miniapp/api/calendar/month")
 async def calendar_month_endpoint(
     month: str, user: dict = Depends(get_authorized_user)

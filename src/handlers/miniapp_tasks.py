@@ -28,6 +28,7 @@ def _serialize(task: Task) -> dict:
         "project_id": task.project_id,
         "sphere": task.sphere,
         "description": task.description,
+        "is_event": task.is_event,
     }
 
 

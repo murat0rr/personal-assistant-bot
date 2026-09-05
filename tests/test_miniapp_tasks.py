@@ -17,6 +17,7 @@ def _task(
     priority: str | None = None,
     done: bool = False,
     sort_order: float | None = None,
+    is_event: bool = False,
 ) -> Task:
     # due_date в модели — timestamp; здесь удобнее задавать в тестах просто
     # день, а на полночь переводим внутри (см. Task.due_date). sort_order по
@@ -28,6 +29,7 @@ def _task(
         priority=priority,
         done=done,
         sort_order=sort_order if sort_order is not None else next(_counter),
+        is_event=is_event,
     )
 
 
@@ -93,7 +95,8 @@ def test_due_time_shown_only_when_not_midnight():
     with_time = Task(
         title="встреча",
         due_date=datetime(2026, 8, 29, 14, 30),
-        priority="event",
+        priority="средний",
+        is_event=True,
         done=False,
         sort_order=1,
     )
@@ -131,3 +134,15 @@ def test_description_included_in_serialized_task():
     by_title = {t["title"]: t for t in board["inbox"]}
     assert by_title["найти реферат"]["description"] == "Попробуй Википедию и школьную библиотеку."
     assert by_title["купить хлеб"]["description"] is None
+
+
+def test_task_can_be_important_and_event_at_the_same_time():
+    # Phase 66 — раньше "событие" было значением priority ("event"),
+    # взаимоисключающим с "высокий". Теперь is_event независим —
+    # задача одновременно важная и событие должна корректно
+    # сериализоваться с обоими признаками включёнными.
+    task = _task("важная встреча", _TODAY, priority="высокий", is_event=True)
+    board = build_task_board([task], _TODAY)
+    serialized = board["days"]["today"]["tasks"][0]
+    assert serialized["priority"] == "высокий"
+    assert serialized["is_event"] is True

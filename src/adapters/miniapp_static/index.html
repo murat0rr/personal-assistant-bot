@@ -554,7 +554,7 @@
       circle.disabled = isPending;
       circle.setAttribute("aria-label", task.done ? "Снять отметку" : "Отметить выполненной");
       if (task.done) circle.innerHTML = checkIcon();
-      else if (task.priority === "event") circle.innerHTML = eventPinIcon();
+      else if (task.is_event) circle.innerHTML = eventPinIcon();
       circle.onclick = onClick;
       return circle;
     }
@@ -2318,7 +2318,7 @@
       // совпадал с общим .empty (плейсхолдер "список пуст") и тянул чужие
       // стили.
       if (tasks.length === 0) return null;
-      const important = tasks.some((t) => t.priority === "высокий" || t.priority === "event");
+      const important = tasks.some((t) => t.priority === "высокий" || t.is_event);
       if (important || tasks.length > 5) return "bright";
       if (tasks.length >= 4) return "medium";
       return "dim";
@@ -2612,9 +2612,8 @@
       const prevPriority = task.priority;
       const prevSortOrder = task.sort_order;
       task.priority = newPriority;
-      // Как и на бэкенде (см. api.py set_task_priority) — смена приоритета
-      // может переместить задачу между группой событий и обычных, поэтому
-      // она уходит в конец новой группы, тем же правилом "новая — в конец".
+      // Смена важности переносит задачу в конец списка — то же правило
+      // "новая/перенесённая — в конец", что и везде.
       task.sort_order = Date.now();
       pendingIds.add(id);
       render();
@@ -2628,6 +2627,33 @@
         task.sort_order = prevSortOrder;
         render();
         alert("Не удалось изменить приоритет.");
+      } finally {
+        pendingIds.delete(id);
+        render();
+      }
+    }
+
+    // Независимо от setTaskPriority (Phase 66) — раньше "событие" было
+    // значением того же priority ("event"), взаимоисключающим с
+    // "высокий". Теперь свой булев флаг, тот же optimistic-паттерн.
+    async function setTaskEvent(task, newIsEvent) {
+      const id = task.id;
+      const prevIsEvent = task.is_event;
+      const prevSortOrder = task.sort_order;
+      task.is_event = newIsEvent;
+      task.sort_order = Date.now();
+      pendingIds.add(id);
+      render();
+      try {
+        await api(`/miniapp/api/tasks/${encodeURIComponent(id)}/event`, {
+          method: "POST",
+          body: JSON.stringify({ is_event: task.is_event }),
+        });
+      } catch (e) {
+        task.is_event = prevIsEvent;
+        task.sort_order = prevSortOrder;
+        render();
+        alert("Не удалось изменить событие.");
       } finally {
         pendingIds.delete(id);
         render();
@@ -3202,7 +3228,7 @@
       importantBtn.innerHTML = importantIcon() + "<span>Важная</span>";
 
       const eventBtn = document.getElementById("task-edit-event");
-      eventBtn.classList.toggle("on", task.priority === "event");
+      eventBtn.classList.toggle("on", task.is_event);
       eventBtn.innerHTML = eventPinIcon() + "<span>Событие</span>";
 
       // Дата — тот же приём, что был в убранной свайп-шторке (Phase 19):
@@ -3216,7 +3242,7 @@
       dateBtn.className = "entity-date-btn" + (task.due_date ? " date-set" : "");
       dateBtn.innerHTML = calendarIcon() + `<span>${dateLabel}</span>`;
       const dateInput = document.createElement("input");
-      dateInput.type = task.priority === "event" ? "datetime-local" : "date";
+      dateInput.type = task.is_event ? "datetime-local" : "date";
       dateInput.className = "entity-date-input";
       dateInput.onchange = () => {
         if (!dateInput.value) return;
@@ -4634,7 +4660,7 @@
     });
     document.getElementById("task-edit-event").addEventListener("click", () => {
       const task = editingTaskId != null ? findTaskById(editingTaskId) : null;
-      if (task) setTaskPriority(task, task.priority === "event" ? "средний" : "event");
+      if (task) setTaskEvent(task, !task.is_event);
     });
     // Растёт под ввод вживую, тем же приёмом, что при заполнении из
     // задачи/генерации (см. autoResizeTextarea выше).
