@@ -2,6 +2,8 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from src.core import google_calendar_sync as gcs
 from src.core.google_calendar_sync import _event_to_task_fields
 
@@ -61,27 +63,49 @@ def test_event_without_start_is_skipped():
     assert _event_to_task_fields(event, _TZ) is None
 
 
-def test_maybe_sync_now_skips_second_call_within_cooldown(monkeypatch):
-    scheduled = []
-    monkeypatch.setattr(gcs.asyncio, "create_task", lambda coro: scheduled.append(coro))
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+async def test_maybe_sync_now_skips_second_call_within_cooldown(monkeypatch):
+    calls = []
+
+    async def fake_sync(bot, user_id):
+        calls.append(user_id)
+
+    monkeypatch.setattr(gcs, "sync_user_calendar", fake_sync)
     gcs._last_manual_sync.clear()
 
-    gcs.maybe_sync_now(1)
-    gcs.maybe_sync_now(1)
+    await gcs.maybe_sync_now(1)
+    await gcs.maybe_sync_now(1)
 
-    assert len(scheduled) == 1
-    for coro in scheduled:
-        coro.close()
+    assert calls == [1]
 
 
-def test_maybe_sync_now_allows_call_after_cooldown_elapsed(monkeypatch):
-    scheduled = []
-    monkeypatch.setattr(gcs.asyncio, "create_task", lambda coro: scheduled.append(coro))
+async def test_maybe_sync_now_allows_call_after_cooldown_elapsed(monkeypatch):
+    calls = []
+
+    async def fake_sync(bot, user_id):
+        calls.append(user_id)
+
+    monkeypatch.setattr(gcs, "sync_user_calendar", fake_sync)
     gcs._last_manual_sync.clear()
     gcs._last_manual_sync[2] = time.time() - gcs._MANUAL_SYNC_COOLDOWN_SECONDS - 1
 
-    gcs.maybe_sync_now(2)
+    await gcs.maybe_sync_now(2)
 
-    assert len(scheduled) == 1
-    for coro in scheduled:
-        coro.close()
+    assert calls == [2]
+
+
+async def test_maybe_sync_now_swallows_sync_errors(monkeypatch):
+    async def failing_sync(bot, user_id):
+        raise RuntimeError("сбой похода в Google")
+
+    monkeypatch.setattr(gcs, "sync_user_calendar", failing_sync)
+    gcs._last_manual_sync.clear()
+
+    await gcs.maybe_sync_now(3)  # не должно бросить исключение наружу

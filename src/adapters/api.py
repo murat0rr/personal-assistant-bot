@@ -285,15 +285,16 @@ async def _get_owned_task(session, task_id: int, uid: int) -> Task:
 @app.get("/miniapp/api/tasks")
 async def list_tasks(user: dict = Depends(get_authorized_user)) -> dict:
     uid = user["id"]
-    # Google Calendar (Phase 64, довесок) — при открытии/обновлении
-    # доски дёргаем внеочередную синхронизацию, не дожидаясь 20-минутного
+    # Google Calendar (Phase 64, довесок) — при открытии/обновлении доски
+    # дожидаемся внеочередной синхронизации, не дожидаясь 20-минутного
     # опроса планировщика (см. core/google_calendar_sync.py::
-    # maybe_sync_now). Fire-and-forget: сам ответ ниже по-прежнему
-    # строится только из уже сохранённого в Postgres — единственный
-    # источник правды для задач (Phase 10) не становится зависимым от
-    # доступности/скорости Google API прямо сейчас, эффект будет виден
-    # только на следующем открытии/обновлении.
-    maybe_sync_now(uid)
+    # maybe_sync_now). Awaited, не fire-and-forget: иначе задачи из
+    # календаря читались бы из Postgres раньше, чем фоновая синхронизация
+    # успевала их туда записать, и появлялись бы только при следующем
+    # открытии (баг, пойманный пользователем на первой версии). Вне
+    # cooldown'а (раз в минуту на пользователя) выходит мгновенно, лишней
+    # задержки почти всегда нет.
+    await maybe_sync_now(uid)
     async with async_session() as session:
         result = await session.execute(
             select(Task).where(Task.archived.is_(False), Task.user_id == uid)

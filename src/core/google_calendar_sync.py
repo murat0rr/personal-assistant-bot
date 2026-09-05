@@ -9,12 +9,20 @@ priority синхронизированной задачи (осознанное
 Раз в 20 минут её вызывает планировщик (см. scheduler/jobs.py) — этого
 хватает для фонового обновления, но при открытии Mini App хочется не
 ждать до 20 минут. maybe_sync_now (довесок) даёт этот же вызов
-"по требованию" из процесса api (см. adapters/api.py::list_tasks) —
-не блокируя ответ (fire-and-forget) и не чаще раза в минуту на
-пользователя, иначе быстрое обновление экрана несколько раз подряд
-било бы Google API впустую."""
+"по требованию" из процесса api (см. adapters/api.py::list_tasks) — не
+чаще раза в минуту на пользователя, иначе быстрое обновление экрана
+несколько раз подряд било бы Google API впустую.
 
-import asyncio
+Первая версия делала это через asyncio.create_task (fire-and-forget) —
+не блокировало ответ list_tasks, но и не успевало ничего: ответ строился
+из Postgres раньше, чем фоновая задача вообще запускалась, поэтому
+новая задача из календаря появлялась только при СЛЕДУЮЩЕМ открытии, не
+при том же самом (баг, найденный пользователем сразу после первого
+деплоя). Раз cooldown и так ограничивает реальный поход в Google одним
+разом в минуту на пользователя, await здесь не создаёт заметной
+задержки в остальное время — дожидаемся синхронизации перед тем, как
+читать задачи, только тогда результат виден сразу."""
+
 import logging
 import time
 from datetime import datetime, timedelta
@@ -167,27 +175,27 @@ _MANUAL_SYNC_COOLDOWN_SECONDS = 60
 _last_manual_sync: dict[int, float] = {}
 
 
-async def _sync_and_log_errors(user_id: int) -> None:
+async def maybe_sync_now(user_id: int) -> None:
+    """Дёргается из GET /miniapp/api/tasks (см. adapters/api.py) при
+    каждом открытии/обновлении доски, ДО чтения задач из Postgres —
+    await, не fire-and-forget (см. объяснение в шапке файла: без этого
+    свежая задача из календаря появлялась только при следующем
+    открытии). Не чаще раза в минуту на пользователя — вне cooldown
+    выходит мгновенно, реального похода в Google не происходит.
+
+    sync_user_calendar сама ловит свои ожидаемые ошибки (протухший
+    токен, сбой запроса к Google) — но не ошибки записи в саму
+    Postgres-сессию (BEGIN/commit); их здесь дополнительно гасим, чтобы
+    временный сбой синхронизации календаря не ронял показ обычных
+    задач, для которого он вызван как побочный эффект."""
+    now = time.time()
+    last = _last_manual_sync.get(user_id, 0)
+    if now - last < _MANUAL_SYNC_COOLDOWN_SECONDS:
+        return
+    _last_manual_sync[user_id] = now
     try:
         await sync_user_calendar(None, user_id)
     except Exception:
         logger.exception(
             "Google Calendar: сбой при синхронизации по открытию Mini App (%s)", user_id
         )
-
-
-def maybe_sync_now(user_id: int) -> None:
-    """Дёргается из GET /miniapp/api/tasks (см. adapters/api.py) при
-    каждом открытии/обновлении доски — не блокирует ответ API
-    (create_task, не await: чтение задач остаётся "простым чтением без
-    похода куда-либо ещё", см. комментарий у list_tasks) и не чаще раза
-    в минуту на пользователя. Если Google Calendar не подключён,
-    sync_user_calendar сама тихо выходит — здесь дополнительная
-    проверка не нужна, лишний cooldown-словарь на неподключённых
-    пользователей не стоит того, чтобы дублировать эту проверку."""
-    now = time.time()
-    last = _last_manual_sync.get(user_id, 0)
-    if now - last < _MANUAL_SYNC_COOLDOWN_SECONDS:
-        return
-    _last_manual_sync[user_id] = now
-    asyncio.create_task(_sync_and_log_errors(user_id))
