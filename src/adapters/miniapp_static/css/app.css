@@ -302,8 +302,7 @@
     }
     .row.pending { background: var(--pending-bg); }
     /* Перетаскивание для ручного порядка (Phase 13) — тень и приподнятый
-       z-index на время жеста, у .swipe-wrap ещё и overflow:visible, иначе
-       тень обрежется его обычным overflow:hidden (см. ниже). */
+       z-index на время жеста. */
     .row.reorder-dragging {
       position: relative;
       z-index: 5;
@@ -453,99 +452,6 @@
       padding: 0;
     }
     .archive-btn { color: var(--accent); }
-    /* Свайп-шторка (Phase 63 — у задач убрана, действия переехали в
-       форму редактирования по долгому нажатию; используется только
-       строкой проекта/цели, см. renderEntityRow). Сама строка
-       (.swipe-content) неподвижна; шторка с кнопками (.swipe-actions)
-       наезжает поверх справа при перетаскивании, фон чуть светлее самой
-       строки. */
-    .swipe-wrap {
-      position: relative;
-      overflow: hidden;
-      border-bottom: 0.5px solid var(--hairline);
-    }
-    .swipe-wrap:last-child { border-bottom: none; }
-    .swipe-actions {
-      position: absolute;
-      top: 0;
-      right: 0;
-      bottom: 0;
-      width: 0;
-      overflow: hidden;
-      display: flex;
-      z-index: 1;
-      background: color-mix(in srgb, var(--card-bg) 85%, white 15%);
-      /* Пока шторка открыта, свайп вправо по всему её полю тоже закрывает —
-         не отдаём горизонтальный жест внешней карусели, вертикальный
-         скролл страницы работает как обычно. */
-      touch-action: pan-y;
-    }
-    .swipe-btn {
-      flex: 0 0 44px;
-      border: none;
-      background: transparent;
-      color: var(--text-muted);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0;
-      position: relative;
-    }
-    .swipe-btn + .swipe-btn::before {
-      content: "";
-      position: absolute;
-      left: 0;
-      top: 25%;
-      bottom: 25%;
-      width: 0.5px;
-      background: var(--hairline);
-    }
-    .swipe-btn input[type="date"],
-    .swipe-btn input[type="datetime-local"] {
-      position: absolute;
-      inset: 0;
-      opacity: 0;
-      width: 100%;
-      height: 100%;
-      border: none;
-      padding: 0;
-    }
-    .swipe-btn-archive { color: var(--accent); }
-    .swipe-btn.active { color: var(--accent); }
-    .swipe-content {
-      position: relative;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 12px 14px;
-      background: var(--card-bg);
-      /* Без pan-y здесь — жест вне зоны (см. .swipe-zone) должен спокойно
-         уходить внешней карусели вчера/сегодня/неделя, как и на любом
-         другом месте страницы. */
-    }
-    .swipe-wrap.pending .swipe-content { background: var(--pending-bg); }
-    /* Единственное место, откуда стартует свайп самой задачи — узкая
-       полоса у правого края (там же едва заметная ручка-подсказка). Только
-       здесь touch-action:pan-y отбирает горизонтальный жест у страницы. */
-    .swipe-zone {
-      position: absolute;
-      top: 0;
-      right: 0;
-      bottom: 0;
-      width: 72px;
-      touch-action: pan-y;
-    }
-    .swipe-handle {
-      position: absolute;
-      right: 4px;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 4px;
-      height: 20px;
-      border-radius: 2px;
-      background: var(--hairline);
-      pointer-events: none;
-    }
     .due-time {
       font-size: 13px;
       color: var(--accent);

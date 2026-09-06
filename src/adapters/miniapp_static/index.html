@@ -1599,212 +1599,6 @@
     document.getElementById("open-recurring-rules-btn").onclick = () => openRecurringRulesSheet();
     document.getElementById("recurring-rules-close").onclick = () => closeRecurringRulesSheet();
 
-    // Свайп-шторка (Phase 63 — у задач убрана, используется только
-    // строкой проекта/цели, см. renderEntityRow) — раньше размер считался
-    // под 5 кнопок задачи (важность/событие/дата/проект/архив), теперь
-    // под одну кнопку сущности (архив — цвет убран целиком, Phase 67);
-    // само значение здесь не трогаю — лишний запас на панели сущности не
-    // менялся этой фазой, не хочу задевать не проверенное живьём.
-    const SWIPE_MAX_REVEAL = 220;
-    const SWIPE_OPEN_THRESHOLD = SWIPE_MAX_REVEAL * 0.2; // открыть — лёгкий свайп, то же место (зона)
-    const SWIPE_CLOSE_THRESHOLD = 28; // закрыть из зоны — хватит совсем лёгкого движения
-
-    // Одна открытая шторка на всё приложение — открытие любой другой её
-    // закрывает (см. setupSwipeDrag), плюс общий обработчик клика ниже.
-    // openSwipeRow — хэндл ТЕКУЩЕГО DOM-инстанса шторки; openSwipeTaskId —
-    // id задачи, чья шторка должна быть открыта, переживает render(). Кнопки
-    // важности/события специально не закрывают шторку, а render() внутри
-    // них пересоздаёт всю строку заново — без этого id открытая шторка
-    // "забывалась" бы на первом же тапе по одной из этих кнопок.
-    let openSwipeRow = null;
-    let openSwipeTaskId = null;
-
-    function closeOpenSwipeRow() {
-      if (openSwipeRow) {
-        openSwipeRow.close();
-        openSwipeRow = null;
-      }
-      openSwipeTaskId = null;
-    }
-
-    // Клик где угодно, пока шторка открыта, закрывает её — включая клик по
-    // левой (неподвижной) части этой же задачи вместо её обычного действия.
-    // Кнопки внутри самой шторки и активный пикер даты/времени — исключение,
-    // у них своя обработка. Слушаем на фазе перехвата и глушим событие, иначе
-    // первый тап и закрыл бы шторку, и дошёл бы до чекбокса/т.п. под ней.
-    document.addEventListener(
-      "click",
-      (e) => {
-        if (!openSwipeRow) return;
-        if (e.target.closest(".swipe-actions")) return;
-        if (e.target.closest(".swipe-zone")) return;
-        if (e.target.matches('input[type="date"], input[type="datetime-local"]')) return;
-        closeOpenSwipeRow();
-        e.stopPropagation();
-        e.preventDefault();
-      },
-      true
-    );
-
-    // Палец двигает не саму строку, а ширину шторки с кнопками — строка
-    // (.swipe-content) неподвижна, шторка (.swipe-actions) наезжает поверх
-    // справа. Жест стартует только в узкой зоне у правого края (.swipe-zone,
-    // см. CSS) — за её пределами палец достаётся внешней карусели
-    // вчера/сегодня/неделя, как и на любом другом месте страницы.
-    function setupSwipeDrag(zone, actions, taskId) {
-      let startX = 0;
-      let startY = 0;
-      let curX = 0;
-      let dragging = false;
-      let open = false;
-
-      function setReveal(px, animate) {
-        actions.style.transition = animate ? "width 180ms ease" : "none";
-        actions.style.width = px + "px";
-      }
-
-      const self = {
-        close: () => {
-          setReveal(0, true);
-          open = false;
-          if (openSwipeRow === self) {
-            openSwipeRow = null;
-            openSwipeTaskId = null;
-          }
-        },
-        // Строка этой задачи только что пересоздана рендером, но её шторка
-        // была открыта до этого (см. openSwipeTaskId) — восстанавливаем без
-        // анимации, будто её никто и не закрывал.
-        reopenInstant: () => {
-          open = true;
-          setReveal(SWIPE_MAX_REVEAL, false);
-        },
-      };
-
-      zone.addEventListener("pointerdown", (e) => {
-        startX = e.clientX;
-        startY = e.clientY;
-        curX = startX;
-        dragging = false;
-      });
-      zone.addEventListener("pointermove", (e) => {
-        // На тачскрине pointermove в принципе не приходит без контакта
-        // пальца, но у мыши он сыплется постоянно просто при наведении —
-        // без этой проверки любое движение курсора над зоной (даже без
-        // клика) читалось бы как начало свайпа: startX ещё нулевой (или
-        // остался от прошлого клика), dx получается большим, dragging
-        // включается, и шторка начинает мигать шириной от каждого
-        // дрожания мыши, а к моменту реального осознанного свайпа
-        // состояние уже "замусорено" — баг, пойманный на живой проверке
-        // с мышью (Phase 42). e.buttons===1 — зажата основная
-        // кнопка/палец касается экрана в обоих случаях.
-        if (e.buttons !== 1) return;
-        const dx = e.clientX - startX;
-        const dy = e.clientY - startY;
-        if (!dragging) {
-          // Жест больше вертикальный, чем горизонтальный — это скролл
-          // страницы, не свайп задачи, не перехватываем.
-          if (Math.abs(dx) < 6 || Math.abs(dy) > Math.abs(dx)) return;
-          dragging = true;
-          try {
-            zone.setPointerCapture(e.pointerId);
-          } catch (err) {
-            // Не критично — жест продолжит работать и без захвата, просто
-            // менее надёжно, если палец уйдёт далеко за пределы зоны.
-          }
-        }
-        curX = e.clientX;
-        let reveal = open ? SWIPE_MAX_REVEAL - dx : -dx;
-        reveal = Math.max(0, Math.min(SWIPE_MAX_REVEAL, reveal));
-        setReveal(reveal, false);
-        e.preventDefault();
-      });
-      function endDrag() {
-        if (!dragging) return;
-        const dx = curX - startX;
-        const wasOpen = open;
-        const shouldOpen = wasOpen ? dx < SWIPE_CLOSE_THRESHOLD : dx < -SWIPE_OPEN_THRESHOLD;
-        dragging = false;
-        if (shouldOpen) {
-          open = true;
-          setReveal(SWIPE_MAX_REVEAL, true);
-          if (openSwipeRow !== self) {
-            closeOpenSwipeRow();
-            openSwipeRow = self;
-            openSwipeTaskId = taskId;
-          }
-        } else {
-          self.close();
-        }
-      }
-      zone.addEventListener("pointerup", endDrag);
-      zone.addEventListener("pointercancel", endDrag);
-
-      // Пока шторка открыта, свайп вправо по всему её полю (не только по
-      // зоне под ней) тоже закрывает — тем же лёгким порогом, что и
-      // открытие. Так же гасим последующий клик по кнопке, если это был
-      // именно свайп, а не тап — иначе после закрытия ещё и сработала бы
-      // кнопка, на которой палец оказался в момент отпускания.
-      let actionsStartX = 0;
-      let actionsDragging = false;
-      let actionsJustDragged = false;
-
-      actions.addEventListener("pointerdown", (e) => {
-        if (!open) return;
-        actionsStartX = e.clientX;
-        actionsDragging = false;
-      });
-      actions.addEventListener("pointermove", (e) => {
-        // Та же причина, что у zone выше: без проверки нажатости мышь,
-        // наведённая на уже открытую шторку, гоняла бы её ширину от
-        // каждого движения курсора.
-        if (!open || e.buttons !== 1) return;
-        const dx = e.clientX - actionsStartX;
-        if (!actionsDragging) {
-          if (dx < 6) return; // движение влево или совсем небольшое — не наш жест
-          actionsDragging = true;
-          try {
-            actions.setPointerCapture(e.pointerId);
-          } catch (err) {
-            // синтетические события в тестах — не критично
-          }
-        }
-        setReveal(Math.max(0, Math.min(SWIPE_MAX_REVEAL, SWIPE_MAX_REVEAL - dx)), false);
-        e.preventDefault();
-      });
-      function endActionsDrag(e) {
-        if (!actionsDragging) return;
-        const dx = e.clientX - actionsStartX;
-        actionsDragging = false;
-        actionsJustDragged = true;
-        // На случай, если браузер вообще не синтезирует click после этого
-        // драга (типично для тач-жестов) — флаг иначе остался бы висеть
-        // true навсегда и глушил бы следующий, уже совсем не связанный тап.
-        setTimeout(() => {
-          actionsJustDragged = false;
-        }, 300);
-        if (dx >= SWIPE_OPEN_THRESHOLD) {
-          self.close();
-        } else {
-          setReveal(SWIPE_MAX_REVEAL, true);
-        }
-      }
-      actions.addEventListener("pointerup", endActionsDrag);
-      actions.addEventListener("pointercancel", endActionsDrag);
-      actions.addEventListener(
-        "click",
-        (e) => {
-          if (!actionsJustDragged) return;
-          actionsJustDragged = false;
-          e.stopPropagation();
-          e.preventDefault();
-        },
-        true
-      );
-
-      return self;
-    }
-
     // Ручной порядок, только внутри режима переноса (Phase 14) — палец
     // двигает саму строку (translateY) через ручку слева, а её DOM-соседи
     // в том же списке уступают место: как только видимый центр
@@ -1934,12 +1728,10 @@
       }
 
       function beginDrag() {
-        closeOpenSwipeRow();
         if (!row.isConnected) {
-          // Какой-то сторонний render() (например, свайп-шторка
-          // сущности только что закрылась, или подоспел фоновый ответ
-          // сети) уже пересобрал список и заменил этот DOM-узел новым —
-          // продолжать перенос старым узлом больше некуда, тихо
+          // Какой-то сторонний render() (например, подоспел фоновый
+          // ответ сети) уже пересобрал список и заменил этот DOM-узел
+          // новым — продолжать перенос старым узлом больше некуда, тихо
           // отменяем.
           cleanupPointer();
           return;
@@ -2354,38 +2146,25 @@
     }
 
     // Общая строка проекта/цели в стиле задачи: кружок статуса слева,
-    // заголовок, краткие данные справа, свайп открывает архивацию
-    // (цвет убран целиком, Phase 67). taskId в setupSwipeDrag
-    // получает строковый префикс — id проекта/цели/задачи не должны
-    // путаться в общем openSwipeTaskId (см. комментарий у переменной).
+    // заголовок, краткие данные справа. Свайп-шторка с кнопкой архива
+    // убрана (Phase 76, фидбек — вместо неё кнопка удаления в самой
+    // форме редактирования, см. renderCreateEntityForm/deleteEditingEntity);
+    // тут теперь ровно тот же .row, что и у обычной задачи.
     function renderEntityRow(entity, kind, hideDates) {
-      const wrap = document.createElement("div");
-      wrap.className = "swipe-wrap";
-
-      const actions = document.createElement("div");
-      actions.className = "swipe-actions";
-
-      const archiveBtn = document.createElement("button");
-      archiveBtn.className = "swipe-btn swipe-btn-archive";
-      archiveBtn.setAttribute("aria-label", "Архивировать");
-      archiveBtn.innerHTML = archiveIcon();
-      archiveBtn.onclick = () => archiveEntity(entity, kind);
-      actions.append(archiveBtn);
-
-      const content = document.createElement("div");
-      content.className = "swipe-content";
+      const row = document.createElement("div");
+      row.className = "row";
 
       const checkbox = document.createElement("button");
       checkbox.className = "checkbox" + (entity.done ? " done" : "");
       checkbox.setAttribute("aria-label", entity.done ? "Снять отметку" : "Отметить выполненным");
       if (entity.done) checkbox.innerHTML = checkIcon();
       checkbox.onclick = () => setEntityDone(entity, kind, !entity.done);
-      content.append(checkbox);
+      row.append(checkbox);
 
       const title = document.createElement("span");
       title.className = "title title-full" + (entity.done ? " done" : "");
       title.textContent = entity.title;
-      content.append(title);
+      row.append(title);
 
       // Сферы больше не показываются на строке (Phase 54 — пункт
       // "убираем отображение сфер") — meta теперь всегда даты+прогресс,
@@ -2394,31 +2173,21 @@
       const meta = document.createElement("span");
       meta.className = "entity-meta";
       meta.textContent = projectMeta(entity, hideDates);
-      content.append(meta);
+      row.append(meta);
 
-      const handle = document.createElement("span");
-      handle.className = "swipe-handle";
-      content.append(handle);
-      const zone = document.createElement("span");
-      zone.className = "swipe-zone";
-      content.append(zone);
-
-      wrap.append(actions, content);
-      const swipeHandle = setupSwipeDrag(zone, actions, (kind === "project" ? "project-" : "goal-") + entity.id);
-      attachLongPress(content, () => openEditEntitySheet(entity, kind), ".checkbox, .swipe-zone, .swipe-handle");
+      attachLongPress(row, () => openEditEntitySheet(entity, kind), ".checkbox");
       // Обычный тап — открывает окно проекта/цели (Phase 56). Долгое
-      // нажатие (attachEntityLongPress выше) по-прежнему сразу ведёт в
-      // форму правки — гонки нет: render() внутри неё (см.
-      // openEditEntitySheet) целиком перестраивает список раньше, чем
-      // нативный click успевает всплыть после отпускания, так что узел
-      // content к этому моменту уже отсоединён от документа. checkbox/
-      // zone/handle исключены — у них свой смысл тапа (отметить
-      // выполненным / начать свайп).
-      content.addEventListener("click", (e) => {
-        if (e.target.closest(".checkbox, .swipe-zone, .swipe-handle")) return;
+      // нажатие по-прежнему сразу ведёт в форму правки — гонки нет:
+      // render() внутри неё (см. openEditEntitySheet) целиком
+      // перестраивает список раньше, чем нативный click успевает
+      // всплыть после отпускания, так что этот узел к этому моменту уже
+      // отсоединён от документа. checkbox исключён — у него свой смысл
+      // тапа (отметить выполненным).
+      row.addEventListener("click", (e) => {
+        if (e.target.closest(".checkbox")) return;
         openProjectDetailSheet(entity, kind);
       });
-      return wrap;
+      return row;
     }
 
     // Строка добавления внизу списка проектов/целей (Phase 28) — тот же
@@ -3010,7 +2779,7 @@
     // тапа по всей строке, переключающего статус (Phase 48, см.
     // renderTaskRow) — иначе тап по ручке/кнопке даты/архива/etc.
     // попутно ещё и переключил бы задачу выполненной.
-    const ROW_TAP_IGNORE_SELECTOR = ".checkbox, .grip, .small-btn, .icon-btn, .swipe-zone, .swipe-actions, input";
+    const ROW_TAP_IGNORE_SELECTOR = ".checkbox, .grip, .small-btn, .icon-btn, input";
 
     // attachReorderEntry (долгое нажатие по пустому месту списка,
     // включавшее режим переноса на весь список) удалена в Phase 63 —
@@ -4521,6 +4290,24 @@
       render();
     }
 
+    // Кнопка "Удалить" в форме редактирования проекта/цели (Phase 76,
+    // фидбек — вместо свайп-шторки с кнопкой архива, см. renderEntityRow)
+    // — тот же принцип, что у task-edit-delete: закрываем форму БЕЗ
+    // обычного сохранения (иначе только что удалённая сущность тут же
+    // пересоздалась бы обратно через commitEntityForm), затем архивируем.
+    function deleteEditingEntity() {
+      if (!createEntityKind || createEntityEditingId == null) return;
+      const kind = createEntityKind;
+      const entity =
+        kind === "project"
+          ? projectsData.find((p) => p.id === createEntityEditingId)
+          : goalsData.find((g) => g.id === createEntityEditingId);
+      createEntityKind = null;
+      createEntityEditingId = null;
+      render();
+      if (entity) archiveEntity(entity, kind);
+    }
+
     // Описание растёт под содержимое (Phase 65, довесок) — вместо
     // фиксированных 3 строк со своим внутренним скроллом, где длинный
     // текст был виден только частично. max-height/overflow всё равно
@@ -5158,6 +4945,19 @@
       // один явный способ закрыть.
       submitBtn.onclick = () => closeCreateEntitySheet();
       container.append(submitBtn);
+
+      // Удаление (Phase 76, фидбек — вместо свайп-шторки с кнопкой
+      // архива, см. renderEntityRow/deleteEditingEntity) — только в
+      // режиме правки уже существующей сущности, при создании удалять
+      // нечего.
+      if (isEditing) {
+        const deleteBtn = document.createElement("button");
+        deleteBtn.type = "button";
+        deleteBtn.className = "entity-form-submit task-edit-delete";
+        deleteBtn.textContent = isProject ? "Удалить проект" : "Удалить цель";
+        deleteBtn.onclick = () => deleteEditingEntity();
+        container.append(deleteBtn);
+      }
     }
 
     // ---- Всплывающий календарь (Phase 28) — общий для дат проекта и

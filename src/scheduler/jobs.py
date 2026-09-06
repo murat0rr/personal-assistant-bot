@@ -476,6 +476,29 @@ async def setup_scheduler(bot: Bot, storage: BaseStorage) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
     for user_id in await list_authorized_user_ids():
         await register_jobs_for_user(scheduler, bot, storage, user_id)
+        # Материализация повторяющихся задач "довеском" при каждом старте
+        # процесса (Phase 76, фидбек: "всё равно не появляются", даже
+        # после того, как create_rule стал материализовывать occurrence
+        # сразу при создании правила — Phase 75). При активной разработке
+        # бот перезапускается по многу раз в день (каждая фаза деплоится
+        # сразу же, см. CLAUDE.md), и суточная джоба materialize_recurring_
+        # tasks в фиксированный час по местному времени пользователя часто
+        # просто не успевает дожить до своего часа между двумя рестартами
+        # подряд — а правило, созданное ДО того, как этот самый фикс
+        # выкатился, вообще пропустило момент своего первого occurrence и
+        # так и осталось ни разу не материализованным. materialize_due_
+        # rules идемпотентна (last_materialized_date не даст создать
+        # дубликат, если на сегодня уже материализовано) — безопасно звать
+        # её здесь ПОВЕРХ той же суточной джобы, а не вместо неё: старт
+        # процесса подворачивается практически каждый день сам по себе,
+        # так что реального "раз в сутки" от этого не станет ни разу
+        # больше, чем нужно.
+        try:
+            await _materialize_recurring_tasks_job(bot, user_id)
+        except Exception:
+            logger.exception(
+                "Не удалось материализовать повторяющиеся задачи при старте (%s)", user_id
+            )
     return scheduler
 
 
