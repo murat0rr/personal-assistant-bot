@@ -110,6 +110,7 @@ async def _run_plan(message: Message, state: FSMContext, conversation: str) -> N
         plan.title,
         plan.schedule_kind,
         value,
+        today,
         period_start=plan.period_start,
         period_end=plan.period_end,
     )

@@ -647,11 +647,13 @@ async def create_recurring_rule_endpoint(
     value = _recurring_request_to_value(payload)
     period_start = date.fromisoformat(payload.period_start) if payload.period_start else None
     period_end = date.fromisoformat(payload.period_end) if payload.period_end else None
+    today = await user_today(user["id"])
     return await recurring_tasks_repo.create_rule(
         user["id"],
         payload.title,
         payload.schedule_kind,
         value,
+        today,
         period_start=period_start,
         period_end=period_end,
     )

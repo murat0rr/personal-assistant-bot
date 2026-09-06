@@ -223,6 +223,10 @@
         <button class="filter-option selected" data-value="all" type="button">Все</button>
         <button class="filter-option" data-value="open" type="button">Невыполненные</button>
         <button class="filter-option" data-value="done" type="button">Выполненные</button>
+        <!-- Phase 75, фидбек: "фильтр только удалённые задачи" — раньше
+             тумблер "Показать удалённые" только подмешивал их к обычному
+             списку, отдельного изолированного режима не было. -->
+        <button class="filter-option" data-value="deleted" type="button">Удалённые</button>
       </div>
       <div class="filter-dropdown" id="tasks-dropdown-sphere">
         <button class="filter-option selected" data-value="all" type="button">Все сферы</button>
@@ -503,6 +507,19 @@
       <button type="button" class="entity-window-close" id="task-edit-close" aria-label="Закрыть">✕</button>
     </div>
     <div class="entity-window-body">
+      <!-- Пометка для occurrence повторяющейся задачи (Phase 75, фидбек:
+           "окно редактирования при зажатии повторяющейся задачи") — сама
+           форма ниже не отличается от обычной задачи (материализованная
+           строка — обычный Task, см. core/recurring_tasks.py), но без
+           этой пометки не очевидно, что правки касаются только сегодняшнего
+           occurrence, а не всего правила (у Task нет обратной ссылки на
+           правило — редактировать "всю серию" отсюда физически нечем,
+           кнопка ведёт в уже существующий список правил). -->
+      <div class="recurring-edit-note" id="task-edit-recurring-note" hidden>
+        <span id="task-edit-recurring-note-icon"></span>
+        <span class="recurring-edit-note-text">Повторяющаяся задача — правки касаются только этого дня</span>
+        <button type="button" class="recurring-edit-note-btn" id="task-edit-open-rules">Правила</button>
+      </div>
       <textarea class="entity-form-field" id="task-edit-title" rows="2"></textarea>
       <div class="toggle-chip-row">
         <button type="button" class="toggle-chip" id="task-edit-important"></button>
@@ -1129,20 +1146,27 @@
     function renderTasksScreen() {
       const listEl = document.getElementById("tasks-screen-list");
       if (!listEl) return; // разметка экрана ещё не отрендерилась (не должно случаться)
-      const items = allNonArchivedTasksFlat().filter(taskPassesScreenFilters);
+      // "Удалённые" в фильтре статуса (Phase 75, фидбек: "фильтр только
+      // удалённые задачи") — изолированный режим: обычные задачи не
+      // показываются вообще, только архив. Отдельно от тумблера
+      // showDeleted ниже (тот подмешивает архив К обычному списку) —
+      // оба контрола независимы, но этот статус, будучи активным,
+      // полностью подменяет собой обычную ветку.
+      const onlyDeleted = tasksScreenFilters.status === "deleted";
+      const items = onlyDeleted ? [] : allNonArchivedTasksFlat().filter(taskPassesScreenFilters);
       items.sort((a, b) => {
         const da = a.due_date || "9999-99-99";
         const db = b.due_date || "9999-99-99";
         if (da !== db) return tasksScreenFilters.sortDir === "asc" ? da.localeCompare(db) : db.localeCompare(da);
         return a.sort_order - b.sort_order;
       });
-      // Удалённые (Phase 74, фидбек) — отдельный тумблер, не пункт
-      // статуса: включил — видно ВСЕ архивные вперемешку с обычными
-      // (независимо от остальных фильтров даты/статуса — архивная
-      // задача уже не "открыта" ни для какого статуса), выключил — их
-      // нет вообще, как сейчас.
+      // Удалённые — либо изолированным статусом выше, либо отдельным
+      // тумблером (Phase 74, фидбек) — включил тумблер видно ВСЕ архивные
+      // вперемешку с обычными (независимо от остальных фильтров
+      // даты/статуса — архивная задача уже не "открыта" ни для какого
+      // статуса), выключил — их нет вообще, как сейчас.
       let archivedItems = [];
-      if (tasksScreenFilters.showDeleted && archivedTasksData) {
+      if ((onlyDeleted || tasksScreenFilters.showDeleted) && archivedTasksData) {
         archivedItems = archivedTasksData.filter(
           (t) => tasksScreenFilters.sphere === "all" || t.sphere === tasksScreenFilters.sphere
         );
@@ -1242,7 +1266,14 @@
           chip.querySelector("span").textContent =
             opt.dataset.value === "all" ? defaultLabel : opt.textContent;
           dropdown.classList.remove("open");
-          renderTasksScreen();
+          // "Удалённые" (Phase 75) — та же ленивая загрузка архива, что у
+          // тумблера showDeleted ниже: сеть только по первому реальному
+          // запросу, не заранее.
+          if (filterKey === "status" && opt.dataset.value === "deleted" && archivedTasksData === null) {
+            loadArchivedTasks();
+          } else {
+            renderTasksScreen();
+          }
         };
       });
     }
@@ -4555,6 +4586,10 @@
         return;
       }
 
+      const recurringNote = document.getElementById("task-edit-recurring-note");
+      recurringNote.hidden = task.source !== "recurring";
+      document.getElementById("task-edit-recurring-note-icon").innerHTML = repeatIcon();
+
       const titleEl = document.getElementById("task-edit-title");
       // Не перезаписываем поле, пока в нём реально печатают — иначе
       // курсор скакал бы в конец на каждый фоновый render() (тот же
@@ -6283,6 +6318,14 @@
       closeTaskEditSheet(false);
       if (task) archiveTask(task);
     });
+    // "Правила" в пометке повторяющейся задачи (Phase 75) — сохраняет
+    // правки этого occurrence как обычное закрытие формы, и сразу
+    // переоткрывает уже существующий список правил повторения (Phase 74),
+    // а не пытается сделать что-то новое поверх открытой формы задачи.
+    document.getElementById("task-edit-open-rules").addEventListener("click", () => {
+      closeTaskEditSheet(true);
+      openRecurringRulesSheet();
+    });
     document.getElementById("template-edit-close").addEventListener("click", () => closeTemplateEditSheet(true));
     document.getElementById("template-edit-delete").addEventListener("click", () => {
       const template =
@@ -6637,15 +6680,28 @@
       }
     }
 
-    loadBoard();
-    loadDigest();
-    loadTemplates();
-    loadProjects();
-    loadAnalytics();
-    loadGoals();
-    loadGoalYearFloor();
-    loadMonthEvents();
-    loadGuideBanner();
+    // Двухэтапная загрузка (Phase 75, фидбек: "приложение слишком долго
+    // загружается, хотя пользователю нужен только основной экран") —
+    // раньше все вызовы ниже стартовали одновременно, и данные для
+    // расширенных вкладок (аналитика/календарь/проекты/цели) конкурировали
+    // за соединения с данными, от которых зависит первая отрисовка
+    // основного экрана, хотя пользователь их в моменте открытия ещё не
+    // видит. Сперва ждём именно то, что рисует основной экран (доска
+    // задач, виджет погоды, шаблоны быстрого добавления, плашка гайда —
+    // все они в разметке #main-screen или открываются с него одним тапом),
+    // и только когда это готово — запускаем остальное. Ничего не убрано и
+    // порядок вызовов внутри каждой группы не изменён, поэтому все
+    // существующие предположения о том, что уже загружено к моменту той
+    // или иной перерисовки, остаются в силе.
+    async function initMiniApp() {
+      await Promise.all([loadBoard(), loadDigest(), loadTemplates(), loadGuideBanner()]);
+      loadProjects();
+      loadAnalytics();
+      loadGoals();
+      loadGoalYearFloor();
+      loadMonthEvents();
+    }
+    initMiniApp();
   </script>
 
   <!-- Виджеты аналитики (Phase 46) — первый пилот ES-модулей в этом

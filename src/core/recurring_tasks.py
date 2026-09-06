@@ -54,14 +54,43 @@ def _is_due(rule: RecurringTaskRule, today: date) -> bool:
     return False
 
 
+def _materialize(rule: RecurringTaskRule, today: date) -> Task:
+    """Общий кирпичик для materialize_due_rules (джоба раз в день) и
+    create_rule (сразу при создании, см. ниже) — одна и та же обычная
+    Task-строка на сегодня, откуда бы материализация ни пришла."""
+    return Task(
+        user_id=rule.user_id,
+        title=rule.title,
+        due_date=datetime.combine(today, datetime.min.time()),
+        priority=_DEFAULT_PRIORITY,
+        source="recurring",
+        sort_order=time.time(),
+        sphere=rule.sphere,
+        project_id=rule.project_id,
+    )
+
+
 async def create_rule(
     user_id: int,
     title: str,
     schedule_kind: str,
     schedule_value: dict,
+    today: date,
     period_start: date | None = None,
     period_end: date | None = None,
 ) -> dict:
+    """today — дата пользователя на момент создания (Phase 75, фидбек:
+    "повторяющиеся задачи не показываются в списках" — правило раньше
+    ждало ближайшего запуска джобы materialize_due_rules в 07:00, то
+    есть первое occurrence появлялось только на СЛЕДУЮЩИЙ день после
+    создания, если правило создано позже 07:00 — а это почти всегда так
+    и для бота, и для формы в Mini App. Другие приложения (см. живое
+    исследование — Todoist и т.п.) показывают ближайшее occurrence сразу
+    же, не дожидаясь фонового пересчёта; здесь для этого достаточно
+    материализовать сегодняшний occurrence синхронно, если паттерн
+    подходит под сегодня — дальше обычный дневной джоб просто увидит
+    last_materialized_date уже проставленным и корректно пропустит
+    повторное создание."""
     async with async_session() as session:
         rule = RecurringTaskRule(
             user_id=user_id,
@@ -72,6 +101,12 @@ async def create_rule(
             period_end=period_end,
         )
         session.add(rule)
+        await session.flush()  # нужен rule.id для ответа, до коммита
+
+        if _is_due(rule, today):
+            session.add(_materialize(rule, today))
+            rule.last_materialized_date = today
+
         await session.commit()
     return {"id": rule.id, "title": rule.title}
 
@@ -95,17 +130,7 @@ async def materialize_due_rules(user_id: int, today: date) -> list[str]:
         due_rules = [r for r in rules if _is_due(r, today)]
 
         for rule in due_rules:
-            task = Task(
-                user_id=user_id,
-                title=rule.title,
-                due_date=datetime.combine(today, datetime.min.time()),
-                priority=_DEFAULT_PRIORITY,
-                source="recurring",
-                sort_order=time.time(),
-                sphere=rule.sphere,
-                project_id=rule.project_id,
-            )
-            session.add(task)
+            session.add(_materialize(rule, today))
             rule.last_materialized_date = today
             created_titles.append(rule.title)
 
