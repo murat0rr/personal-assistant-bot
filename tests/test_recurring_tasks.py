@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from src.core.recurring_tasks import _is_due
+from src.core.recurring_tasks import _is_due, _serialize
 from src.models.recurring_task_rule import RecurringTaskRule
 
 
@@ -93,3 +93,48 @@ def test_no_period_bounds_means_unlimited():
     rule = _rule("monthly_day", {"day": 1})
     assert _is_due(rule, date(2020, 1, 1)) is True
     assert _is_due(rule, date(2099, 1, 1)) is True
+
+
+# _serialize (Phase 74, фидбек — Mini App список/форма правил) — legacy
+# weekly_day (одно число) и новый weekly_days (список) отдаются
+# фронтенду единообразно списком weekdays, фронтенду незачем знать про
+# историческую разницу.
+def test_serialize_weekly_days_passes_list_through():
+    rule = _rule("weekly_days", {"weekdays": [0, 2, 4]})
+    result = _serialize(rule)
+    assert result["schedule_kind"] == "weekly_days"
+    assert result["weekdays"] == [0, 2, 4]
+    assert result["day_of_month"] is None
+    assert result["interval_days"] is None
+
+
+def test_serialize_legacy_weekly_day_normalized_to_list():
+    rule = _rule("weekly_day", {"weekday": 3})
+    result = _serialize(rule)
+    assert result["schedule_kind"] == "weekly_days"
+    assert result["weekdays"] == [3]
+
+
+def test_serialize_monthly_day():
+    rule = _rule("monthly_day", {"day": 32})
+    result = _serialize(rule)
+    assert result["schedule_kind"] == "monthly_day"
+    assert result["day_of_month"] == 32
+    assert result["weekdays"] is None
+
+
+def test_serialize_period_bounds():
+    rule = _rule(
+        "monthly_day", {"day": 1}, period_start=date(2026, 9, 1), period_end=date(2026, 12, 31)
+    )
+    result = _serialize(rule)
+    assert result["period_start"] == "2026-09-01"
+    assert result["period_end"] == "2026-12-31"
+
+
+def test_serialize_no_period_bounds_is_null():
+    rule = _rule("interval_days", {"interval_days": 3})
+    result = _serialize(rule)
+    assert result["period_start"] is None
+    assert result["period_end"] is None
+    assert result["interval_days"] == 3

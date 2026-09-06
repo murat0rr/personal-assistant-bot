@@ -111,3 +111,58 @@ async def materialize_due_rules(user_id: int, today: date) -> list[str]:
 
         await session.commit()
     return created_titles
+
+
+def _serialize(rule: RecurringTaskRule) -> dict:
+    """Mini App (Phase 74) не различает weekly_day (легаси, одно число)
+    и weekly_days (Phase 73, список) — отдаёт оба единообразно списком
+    weekdays, фронтенду незачем знать про историческую разницу."""
+    weekdays = None
+    day_of_month = None
+    interval_days = None
+    if rule.schedule_kind == "weekly_days":
+        weekdays = rule.schedule_value.get("weekdays") or []
+    elif rule.schedule_kind == "weekly_day":
+        w = rule.schedule_value.get("weekday")
+        weekdays = [w] if w is not None else []
+    elif rule.schedule_kind == "monthly_day":
+        day_of_month = rule.schedule_value.get("day")
+    elif rule.schedule_kind == "interval_days":
+        interval_days = rule.schedule_value.get("interval_days")
+
+    return {
+        "id": rule.id,
+        "title": rule.title,
+        "schedule_kind": "weekly_days" if weekdays is not None else rule.schedule_kind,
+        "weekdays": weekdays,
+        "day_of_month": day_of_month,
+        "interval_days": interval_days,
+        "period_start": rule.period_start.isoformat() if rule.period_start else None,
+        "period_end": rule.period_end.isoformat() if rule.period_end else None,
+    }
+
+
+async def list_rules(user_id: int) -> list[dict]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(RecurringTaskRule).where(
+                RecurringTaskRule.archived.is_(False), RecurringTaskRule.user_id == user_id
+            )
+        )
+        rules = result.scalars().all()
+    # Сортировка — по created_at, старые первыми (порядок создания, тот
+    # же принцип, что и у большинства других списков в приложении —
+    # ручного порядка тут никто не просил).
+    return [_serialize(r) for r in sorted(rules, key=lambda r: r.created_at)]
+
+
+async def archive_rule(rule_id: int, user_id: int) -> None:
+    """Удаление ВСЕГО правила (Phase 74, фидбек — свайп в списке
+    Mini App) — не трогает уже материализованные Task-строки, они
+    независимы от правила (см. materialize_due_rules)."""
+    async with async_session() as session:
+        rule = await session.get(RecurringTaskRule, rule_id)
+        if rule is None or rule.user_id != user_id:
+            raise ValueError("recurring rule not found")
+        rule.archived = True
+        await session.commit()

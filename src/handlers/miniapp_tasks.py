@@ -15,7 +15,7 @@ def _task_time(task: Task) -> str | None:
     return task.due_date.strftime("%H:%M")
 
 
-def _serialize(task: Task) -> dict:
+def serialize_task(task: Task) -> dict:
     day = _task_day(task)
     return {
         "id": task.id,
@@ -29,6 +29,10 @@ def _serialize(task: Task) -> dict:
         "sphere": task.sphere,
         "description": task.description,
         "is_event": task.is_event,
+        # Phase 74, фидбек — значок "повторяющаяся" в списках задач:
+        # source="recurring" уже проставлялся материализацией
+        # (core/recurring_tasks.py), просто не отдавался на фронтенд.
+        "source": task.source,
     }
 
 
@@ -37,7 +41,7 @@ def _day_tasks(tasks: list[Task], target: date) -> list[dict]:
     # приоритету, ни по статусу выполнения. sort_order — обычный float,
     # больше значение — ниже в списке.
     return [
-        _serialize(t)
+        serialize_task(t)
         for t in sorted((t for t in tasks if _task_day(t) == target), key=lambda t: t.sort_order)
     ]
 
@@ -65,6 +69,6 @@ def build_task_board(tasks: list[Task], today: date) -> dict:
             "yesterday": {"date": yesterday.isoformat(), "tasks": _day_tasks(tasks, yesterday)},
             "today": {"date": today.isoformat(), "tasks": _day_tasks(tasks, today)},
         },
-        "dated_tasks": [_serialize(t) for t in dated],
-        "inbox": [_serialize(t) for t in inbox],
+        "dated_tasks": [serialize_task(t) for t in dated],
+        "inbox": [serialize_task(t) for t in inbox],
     }

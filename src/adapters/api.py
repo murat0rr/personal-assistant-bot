@@ -23,6 +23,7 @@ from src.core import day_reviews as day_reviews_repo
 from src.core import goals as goals_repo
 from src.core import habits as habits_repo
 from src.core import projects as projects_repo
+from src.core import recurring_tasks as recurring_tasks_repo
 from src.core import task_templates as templates_repo
 from src.core.auth import is_authorized
 from src.core.config import settings
@@ -40,7 +41,7 @@ from src.core.user_location import (
 from src.core.web_session import SESSION_COOKIE_NAME, verify_session_token
 from src.handlers.f8_habits import check_habit
 from src.handlers.f_task_nag import record_task_completion
-from src.handlers.miniapp_tasks import build_task_board
+from src.handlers.miniapp_tasks import build_task_board, serialize_task
 from src.integrations.claude_client import (
     generate_task_description,
     maybe_generate_task_description,
@@ -580,6 +581,90 @@ async def archive_tasks_batch(
         )
         await session.commit()
 
+    return {"status": "ok"}
+
+
+# Удалённые задачи (Phase 74, фидбек: "фильтр включить удалённые
+# задачи, у них кнопка вернуть") — единственное место, где Mini App
+# вообще запрашивает archived=True строки; обычная доска (list_tasks
+# выше) их никогда не видит.
+@app.get("/miniapp/api/tasks/archived")
+async def list_archived_tasks(user: dict = Depends(get_authorized_user)) -> list[dict]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(Task)
+            .where(Task.archived.is_(True), Task.user_id == user["id"])
+            .order_by(Task.id.desc())
+        )
+        tasks = result.scalars().all()
+    return [serialize_task(t) for t in tasks]
+
+
+@app.post("/miniapp/api/tasks/{task_id}/restore")
+async def restore_task_endpoint(
+    task_id: int, user: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    async with async_session() as session:
+        task = await _get_owned_task(session, task_id, user["id"])
+        task.archived = False
+        await session.commit()
+
+    return {"status": "ok"}
+
+
+# Повторяющиеся задачи из Mini App (Phase 74) — раньше правило можно
+# было создать только через Telegram-бота (f_recurring.py, свободный
+# текст + ИИ-уточнение). Здесь — прямой структурированный ввод (форма
+# с чипами тира/дней), тот же core/recurring_tasks.py::create_rule под
+# капотом, ИИ тут не участвует вообще.
+class CreateRecurringRuleRequest(BaseModel):
+    title: str
+    schedule_kind: str  # "weekly_days" | "monthly_day" | "interval_days"
+    weekdays: list[int] | None = None
+    day_of_month: int | None = None
+    interval_days: int | None = None
+    period_start: str | None = None
+    period_end: str | None = None
+
+
+def _recurring_request_to_value(payload: CreateRecurringRuleRequest) -> dict:
+    if payload.schedule_kind == "weekly_days":
+        return {"weekdays": sorted(set(payload.weekdays or []))}
+    if payload.schedule_kind == "monthly_day":
+        return {"day": payload.day_of_month}
+    return {"interval_days": payload.interval_days}
+
+
+@app.get("/miniapp/api/recurring-rules")
+async def list_recurring_rules_endpoint(user: dict = Depends(get_authorized_user)) -> list[dict]:
+    return await recurring_tasks_repo.list_rules(user["id"])
+
+
+@app.post("/miniapp/api/recurring-rules")
+async def create_recurring_rule_endpoint(
+    payload: CreateRecurringRuleRequest, user: dict = Depends(get_authorized_user)
+) -> dict:
+    value = _recurring_request_to_value(payload)
+    period_start = date.fromisoformat(payload.period_start) if payload.period_start else None
+    period_end = date.fromisoformat(payload.period_end) if payload.period_end else None
+    return await recurring_tasks_repo.create_rule(
+        user["id"],
+        payload.title,
+        payload.schedule_kind,
+        value,
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+
+@app.post("/miniapp/api/recurring-rules/{rule_id}/archive")
+async def archive_recurring_rule_endpoint(
+    rule_id: int, user: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    try:
+        await recurring_tasks_repo.archive_rule(rule_id, user["id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="not found") from exc
     return {"status": "ok"}
 
 

@@ -195,15 +195,51 @@
     </div>
   </div>
 
-  <!-- Вкладка "Задачи" (Phase 71, item 6.1) — пока заглушка, вход по
-       вкладке уже работает. Полный экран (список с фильтрами по дате/
-       статусу/сфере, сортировка, повторяющиеся задачи) — макет
-       https://claude.ai/code/artifact/5264c16f-611d-466a-891f-9601adbb56fa
-       отправлен на согласование дизайна, реализация следующим шагом. -->
+  <!-- Вкладка "Задачи" (Phase 74) — плоский список ВСЕХ задач (не по
+       дням), фильтры + сортировка + вход в повторяющиеся. Одобренный
+       макет: https://claude.ai/code/artifact/5264c16f-611d-466a-891f-9601adbb56fa -->
   <div id="ext-panel-tasks" style="display:none">
     <div class="section">
       <p class="section-label">Задачи</p>
-      <p class="empty">Экран в разработке — список задач с фильтрами и повторяющиеся задачи появятся здесь следующим шагом.</p>
+      <div class="filter-bar">
+        <button class="filter-chip" id="tasks-filter-date-btn" type="button">
+          <span>Дата</span><span class="filter-chip-caret">▾</span>
+        </button>
+        <button class="filter-chip" id="tasks-filter-status-btn" type="button">
+          <span>Статус</span><span class="filter-chip-caret">▾</span>
+        </button>
+        <button class="filter-chip" id="tasks-filter-sphere-btn" type="button">
+          <span>Сфера</span><span class="filter-chip-caret">▾</span>
+        </button>
+        <button class="sort-toggle" id="tasks-sort-toggle" type="button" aria-label="Сортировка по дате"></button>
+      </div>
+      <div class="filter-dropdown" id="tasks-dropdown-date">
+        <button class="filter-option selected" data-value="all" type="button">Любая дата</button>
+        <button class="filter-option" data-value="today" type="button">Сегодня</button>
+        <button class="filter-option" data-value="week" type="button">Эта неделя</button>
+        <button class="filter-option" data-value="none" type="button">Без даты</button>
+      </div>
+      <div class="filter-dropdown" id="tasks-dropdown-status">
+        <button class="filter-option selected" data-value="all" type="button">Все</button>
+        <button class="filter-option" data-value="open" type="button">Невыполненные</button>
+        <button class="filter-option" data-value="done" type="button">Выполненные</button>
+      </div>
+      <div class="filter-dropdown" id="tasks-dropdown-sphere">
+        <button class="filter-option selected" data-value="all" type="button">Все сферы</button>
+      </div>
+      <div class="settings-row">
+        <span>Старые задачи (просроченные, невыполненные)</span>
+        <button type="button" class="entity-form-toggle" id="tasks-old-toggle"></button>
+      </div>
+      <div class="settings-row">
+        <span>Показать удалённые задачи</span>
+        <button type="button" class="entity-form-toggle" id="tasks-deleted-toggle"></button>
+      </div>
+      <div id="tasks-screen-list" class="list"></div>
+      <button type="button" class="recurring-entry-btn" id="open-recurring-rules-btn">
+        <span>🔁 Повторяющиеся задачи</span>
+        <span class="drawer-link-chevron">›</span>
+      </button>
     </div>
   </div>
 
@@ -352,6 +388,77 @@
     <div class="bottom-sheet-handle"></div>
     <p class="section-label">Отображения задач</p>
     <div id="day-view-settings-list" class="list"></div>
+  </div>
+
+  <!-- Список правил повторения (Phase 74) — та же .entity-window, что
+       окно проекта/цели, тап по "+" открывает форму создания поверх
+       (#recurring-rule-form-sheet, z-index уже даёт .entity-window
+       корректно всплыть — см. app.css). БАГ, пойманный на живой
+       проверке: изначально эти два .entity-window лежали ВНУТРИ
+       #ext-panel-tasks (и транзитивно — внутри #screen-stack), а тот
+       во время перехода между экранами получает inline
+       transform:translateY(...) — CSS-спека делает такой элемент
+       новым containing block для потомков с position:fixed, и
+       окна улетали за пределы видимой области вместо центра экрана.
+       Все .entity-window в разметке — прямые потомки <body>, вне
+       #screen-stack целиком; здесь — то же самое место, что и у
+       #create-entity-sheet ниже. -->
+  <div id="recurring-rules-sheet" class="entity-window project-detail-window">
+    <div class="entity-window-head">
+      <span class="entity-window-title">Повторяющиеся задачи</span>
+      <div class="project-detail-head-actions">
+        <button type="button" class="entity-window-close" id="open-recurring-rule-form-btn" aria-label="Новое правило">+</button>
+        <button type="button" class="entity-window-close" id="recurring-rules-close" aria-label="Закрыть">✕</button>
+      </div>
+    </div>
+    <div class="entity-window-body">
+      <div id="recurring-rules-list" class="list"></div>
+    </div>
+  </div>
+
+  <!-- Форма создания правила повторения (Phase 74) — поверх списка
+       правил, тот же приём z-index, что у #create-entity-sheet поверх
+       #project-detail-sheet. -->
+  <div id="recurring-rule-form-sheet" class="entity-window">
+    <div class="entity-window-head">
+      <span class="entity-window-title">Новое правило</span>
+      <button type="button" class="entity-window-close" id="recurring-rule-form-close" aria-label="Закрыть">✕</button>
+    </div>
+    <div class="entity-window-body">
+      <input class="entity-form-field" type="text" id="recurring-rule-title" placeholder="Формулировка задачи">
+      <p class="section-label">Повторять</p>
+      <div class="entity-form-tier-row" id="recurring-kind-row">
+        <button type="button" class="sphere-chip selected" data-kind="weekly_day">День недели</button>
+        <button type="button" class="sphere-chip" data-kind="weekdays">Будни</button>
+        <button type="button" class="sphere-chip" data-kind="weekend">Выходные</button>
+        <button type="button" class="sphere-chip" data-kind="monthly_day">День месяца</button>
+      </div>
+      <div id="recurring-weekday-detail">
+        <div class="weekday-picker" id="recurring-weekday-picker">
+          <button type="button" class="weekday-btn selected" data-day="0">Пн</button>
+          <button type="button" class="weekday-btn" data-day="1">Вт</button>
+          <button type="button" class="weekday-btn" data-day="2">Ср</button>
+          <button type="button" class="weekday-btn" data-day="3">Чт</button>
+          <button type="button" class="weekday-btn" data-day="4">Пт</button>
+          <button type="button" class="weekday-btn" data-day="5">Сб</button>
+          <button type="button" class="weekday-btn" data-day="6">Вс</button>
+        </div>
+      </div>
+      <div id="recurring-monthday-detail" style="display:none">
+        <p class="monthday-hint">Если в месяце меньше дней — переносится на последний день</p>
+        <div class="monthday-grid" id="recurring-monthday-picker"></div>
+      </div>
+      <p class="section-label">Период действия</p>
+      <div class="entity-form-dates">
+        <button type="button" class="entity-date-btn" id="recurring-period-start">Начало</button>
+        <button type="button" class="entity-date-btn" id="recurring-period-end">Конец</button>
+      </div>
+      <div class="entity-form-toggle-row">
+        <span>Без окончания</span>
+        <button type="button" class="entity-form-toggle on" id="recurring-no-end-toggle"></button>
+      </div>
+      <button type="button" class="entity-form-submit" id="recurring-rule-submit">Создать правило</button>
+    </div>
   </div>
 
   <!-- Окно создания/правки проекта/цели (Phase 33) — плавающая карточка
@@ -807,7 +914,15 @@
     // (форма редактирования) — теперь на каждом списке задач одинаково.
     function renderTaskRow(
       task,
-      { showDateButton, showTrashButton, showMoveToToday, showFanMenu, tapTogglesDone }
+      {
+        showDateButton,
+        showTrashButton,
+        showMoveToToday,
+        showFanMenu,
+        tapTogglesDone,
+        showGrip = true,
+        showMeta = false,
+      }
     ) {
       const row = document.createElement("div");
       row.className = "row task-row" + (pendingIds.has(task.id) ? " pending" : "");
@@ -821,6 +936,30 @@
       title.textContent = task.title;
 
       row.append(checkbox, title);
+
+      // Значок "повторяющаяся" (Phase 74, фидбек) — задача, материализованная
+      // из правила (core/recurring_tasks.py), у обычных задач source
+      // другой ("MiniApp"/"google_calendar"/т.п.), поле уже приходит с
+      // бэкенда (см. handlers/miniapp_tasks.py::serialize_task).
+      if (task.source === "recurring") {
+        const badge = document.createElement("span");
+        badge.className = "recurring-badge";
+        badge.innerHTML = repeatIcon() + "<span>повторяющаяся</span>";
+        row.append(badge);
+      }
+
+      // Дата + сфера (Phase 74) — только там, где просят явно (экран
+      // "Задачи", список без группировки по дню — в остальных списках
+      // день и так виден по контексту самой секции). Тот же класс, что
+      // .entity-meta у строк проекта/цели — компактный серый текст
+      // справа от заголовка.
+      if (showMeta) {
+        const meta = document.createElement("span");
+        meta.className = "entity-meta";
+        const dateLabel = task.due_date ? formatShortDate(task.due_date) : "без даты";
+        meta.textContent = task.sphere ? `${dateLabel} · ${task.sphere}` : dateLabel;
+        row.append(meta);
+      }
       // Тап в любом месте строки переключает статус (Phase 48) — не
       // только по кружку. Кружок сам уже переключает по своему onclick,
       // поэтому его явно исключаем из общего обработчика — иначе клик по
@@ -912,19 +1051,26 @@
       // прямо здесь: хватание сразу тащит, прямо на месте в списке, без
       // отдельного окна/затемнения (было в первой версии Phase 63,
       // убрано по живой обратной связи — мешало, не нужно).
-      const grip = document.createElement("span");
-      grip.className = "grip";
-      grip.setAttribute("aria-label", "Перетащить");
-      grip.innerHTML = gripIcon();
-      row.append(grip);
+      // showGrip === false (Phase 74) — экран "Задачи": плоский список
+      // БЕЗ группировки по дню, сосед сверху/снизу может быть с любой
+      // другой даты — перетаскивание там пересчитало бы sort_order
+      // между двумя никак не связанными днями, бессмысленно и опасно
+      // для остальных списков, которые от этого поля зависят.
+      if (showGrip) {
+        const grip = document.createElement("span");
+        grip.className = "grip";
+        grip.setAttribute("aria-label", "Перетащить");
+        grip.innerHTML = gripIcon();
+        row.append(grip);
 
-      setupDragReorder({
-        row,
-        trigger: grip,
-        rowSelector: ".task-row",
-        getSortOrder: (el) => parseFloat(el.dataset.sortOrder),
-        persist: (newOrder) => setTaskSortOrder(task, newOrder),
-      });
+        setupDragReorder({
+          row,
+          trigger: grip,
+          rowSelector: ".task-row",
+          getSortOrder: (el) => parseFloat(el.dataset.sortOrder),
+          persist: (newOrder) => setTaskSortOrder(task, newOrder),
+        });
+      }
 
       // Долгое нажатие ВНЕ ручки/чекбокса/кнопок — форма редактирования
       // этой задачи (текст, важность, событие, дата, проект, удаление).
@@ -932,6 +1078,495 @@
 
       return row;
     }
+
+    // ---- Экран "Задачи" (Phase 74) — плоский список ВСЕХ задач (не по
+    // дням, в отличие от остальных списков приложения), с фильтрами по
+    // дате/статусу/сфере, сортировкой и отдельным входом в повторяющиеся
+    // задачи. Одобренный макет:
+    // https://claude.ai/code/artifact/5264c16f-611d-466a-891f-9601adbb56fa
+
+    const tasksScreenFilters = {
+      date: "all",
+      status: "all",
+      sphere: "all",
+      showOld: true,
+      showDeleted: false,
+      sortDir: "asc",
+    };
+    // null — ещё не загружали (ленивая загрузка по первому включению
+    // тумблера "показать удалённые", не на каждом открытии экрана —
+    // архивные задачи нужны редко, не заранее).
+    let archivedTasksData = null;
+
+    // dated_tasks + inbox вместе покрывают ВСЕ неархивированные задачи
+    // пользователя (см. build_task_board в miniapp_tasks.py) — дедуп по
+    // id обязателен, просроченная-невыполненная задача попадает в оба
+    // списка сразу (см. rebucketTask).
+    function allNonArchivedTasksFlat() {
+      const byId = new Map();
+      for (const t of boardState.dated_tasks || []) byId.set(t.id, t);
+      for (const t of boardState.inbox || []) byId.set(t.id, t);
+      return [...byId.values()];
+    }
+
+    function taskPassesScreenFilters(t) {
+      const today = boardState.days.today ? boardState.days.today.date : null;
+      const isOverdue = !!(t.due_date && today && t.due_date < today && !t.done);
+      if (!tasksScreenFilters.showOld && isOverdue) return false;
+      if (tasksScreenFilters.status === "open" && t.done) return false;
+      if (tasksScreenFilters.status === "done" && !t.done) return false;
+      if (tasksScreenFilters.sphere !== "all" && t.sphere !== tasksScreenFilters.sphere) return false;
+      if (tasksScreenFilters.date === "none" && t.due_date) return false;
+      if (tasksScreenFilters.date === "today" && t.due_date !== today) return false;
+      if (tasksScreenFilters.date === "week") {
+        if (!today || !t.due_date) return false;
+        const weekEnd = addDaysIso(today, 6);
+        if (t.due_date < today || t.due_date > weekEnd) return false;
+      }
+      return true;
+    }
+
+    function renderTasksScreen() {
+      const listEl = document.getElementById("tasks-screen-list");
+      if (!listEl) return; // разметка экрана ещё не отрендерилась (не должно случаться)
+      const items = allNonArchivedTasksFlat().filter(taskPassesScreenFilters);
+      items.sort((a, b) => {
+        const da = a.due_date || "9999-99-99";
+        const db = b.due_date || "9999-99-99";
+        if (da !== db) return tasksScreenFilters.sortDir === "asc" ? da.localeCompare(db) : db.localeCompare(da);
+        return a.sort_order - b.sort_order;
+      });
+      // Удалённые (Phase 74, фидбек) — отдельный тумблер, не пункт
+      // статуса: включил — видно ВСЕ архивные вперемешку с обычными
+      // (независимо от остальных фильтров даты/статуса — архивная
+      // задача уже не "открыта" ни для какого статуса), выключил — их
+      // нет вообще, как сейчас.
+      let archivedItems = [];
+      if (tasksScreenFilters.showDeleted && archivedTasksData) {
+        archivedItems = archivedTasksData.filter(
+          (t) => tasksScreenFilters.sphere === "all" || t.sphere === tasksScreenFilters.sphere
+        );
+      }
+      listEl.innerHTML = "";
+      if (!items.length && !archivedItems.length) {
+        renderEmpty(listEl);
+        return;
+      }
+      for (const t of items) {
+        listEl.append(
+          renderTaskRow(t, {
+            showDateButton: true,
+            showTrashButton: true,
+            showGrip: false,
+            showMeta: true,
+          })
+        );
+      }
+      for (const t of archivedItems) listEl.append(renderArchivedTaskRow(t));
+    }
+
+    function renderArchivedTaskRow(task) {
+      const row = document.createElement("div");
+      row.className = "row task-row task-row-archived";
+
+      const dot = document.createElement("span");
+      dot.className = "checkbox";
+      dot.style.opacity = "0.3";
+      row.append(dot);
+
+      const title = document.createElement("span");
+      title.className = titleClass(task);
+      title.textContent = task.title;
+      row.append(title);
+
+      const badge = document.createElement("span");
+      badge.className = "deleted-badge";
+      badge.textContent = "удалена";
+      row.append(badge);
+
+      const meta = document.createElement("span");
+      meta.className = "entity-meta";
+      const dateLabel = task.due_date ? formatShortDate(task.due_date) : "без даты";
+      meta.textContent = task.sphere ? `${dateLabel} · ${task.sphere}` : dateLabel;
+      row.append(meta);
+
+      const restoreBtn = document.createElement("button");
+      restoreBtn.className = "restore-btn";
+      restoreBtn.textContent = "Вернуть";
+      restoreBtn.onclick = () => restoreTask(task);
+      row.append(restoreBtn);
+
+      return row;
+    }
+
+    async function restoreTask(task) {
+      try {
+        await api(`/miniapp/api/tasks/${task.id}/restore`, { method: "POST" });
+        archivedTasksData = (archivedTasksData || []).filter((t) => t.id !== task.id);
+        // loadBoard() перечитывает доску целиком — вернувшаяся задача
+        // корректно разложится по нужному списку (rebucketTask), не
+        // нужно вручную решать, в "инбокс" она попадает или в дату.
+        await loadBoard();
+      } catch (e) {
+        alert("Не удалось вернуть задачу.");
+      }
+    }
+
+    async function loadArchivedTasks() {
+      try {
+        const data = await api("/miniapp/api/tasks/archived");
+        archivedTasksData = data.map((t) => ({ ...t, archived: true }));
+      } catch (e) {
+        archivedTasksData = [];
+      }
+      renderTasksScreen();
+    }
+
+    // Фильтр-дропдауны — общий приём для дата/статус/сфера: один
+    // открыт за раз (открытие любого закрывает остальные), выбор
+    // варианта переписывает и подпись чипа, и активное состояние.
+    function setupTasksFilterDropdown(chipId, dropdownId, filterKey, defaultLabel) {
+      const chip = document.getElementById(chipId);
+      const dropdown = document.getElementById(dropdownId);
+      chip.onclick = () => {
+        const wasOpen = dropdown.classList.contains("open");
+        document.querySelectorAll(".filter-dropdown").forEach((d) => d.classList.remove("open"));
+        if (!wasOpen) dropdown.classList.add("open");
+      };
+      dropdown.querySelectorAll(".filter-option").forEach((opt) => {
+        opt.onclick = () => {
+          tasksScreenFilters[filterKey] = opt.dataset.value;
+          dropdown.querySelectorAll(".filter-option").forEach((o) => o.classList.remove("selected"));
+          opt.classList.add("selected");
+          chip.classList.toggle("active", opt.dataset.value !== "all");
+          chip.querySelector("span").textContent =
+            opt.dataset.value === "all" ? defaultLabel : opt.textContent;
+          dropdown.classList.remove("open");
+          renderTasksScreen();
+        };
+      });
+    }
+
+    // Опции сферы — динамически из общего SPHERES (та же таксономия,
+    // что и везде в приложении), в разметке есть только "Все сферы".
+    const _tasksSphereDropdown = document.getElementById("tasks-dropdown-sphere");
+    for (const sphere of SPHERES) {
+      const opt = document.createElement("button");
+      opt.type = "button";
+      opt.className = "filter-option";
+      opt.dataset.value = sphere;
+      opt.textContent = sphere;
+      _tasksSphereDropdown.append(opt);
+    }
+    setupTasksFilterDropdown("tasks-filter-date-btn", "tasks-dropdown-date", "date", "Дата");
+    setupTasksFilterDropdown("tasks-filter-status-btn", "tasks-dropdown-status", "status", "Статус");
+    setupTasksFilterDropdown("tasks-filter-sphere-btn", "tasks-dropdown-sphere", "sphere", "Сфера");
+
+    document.addEventListener("click", (e) => {
+      if (e.target.closest(".filter-chip") || e.target.closest(".filter-dropdown")) return;
+      document.querySelectorAll(".filter-dropdown.open").forEach((d) => d.classList.remove("open"));
+    });
+
+    const tasksSortToggle = document.getElementById("tasks-sort-toggle");
+    function renderTasksSortIcon() {
+      tasksSortToggle.innerHTML =
+        tasksScreenFilters.sortDir === "asc"
+          ? icon('<path d="M3 6h10M3 12h7M3 18h4"/><path d="M17 18V6M13 10l4-4 4 4"/>', 15)
+          : icon('<path d="M3 6h10M3 12h7M3 18h4"/><path d="M17 6v12M13 14l4 4 4-4"/>', 15);
+    }
+    renderTasksSortIcon();
+    tasksSortToggle.onclick = () => {
+      tasksScreenFilters.sortDir = tasksScreenFilters.sortDir === "asc" ? "desc" : "asc";
+      renderTasksSortIcon();
+      renderTasksScreen();
+    };
+
+    document.getElementById("tasks-old-toggle").classList.add("on"); // showOld=true по умолчанию
+    document.getElementById("tasks-old-toggle").onclick = () => {
+      tasksScreenFilters.showOld = !tasksScreenFilters.showOld;
+      document.getElementById("tasks-old-toggle").classList.toggle("on", tasksScreenFilters.showOld);
+      renderTasksScreen();
+    };
+    document.getElementById("tasks-deleted-toggle").onclick = () => {
+      tasksScreenFilters.showDeleted = !tasksScreenFilters.showDeleted;
+      document
+        .getElementById("tasks-deleted-toggle")
+        .classList.toggle("on", tasksScreenFilters.showDeleted);
+      if (tasksScreenFilters.showDeleted && archivedTasksData === null) loadArchivedTasks();
+      else renderTasksScreen();
+    };
+
+    // ---- Повторяющиеся задачи (Phase 74) — список правил (не
+    // материализованных задач — те обычные Task-строки, см. значок
+    // "повторяющаяся" в renderTaskRow) + форма создания. Тот же бэкенд
+    // (core/recurring_tasks.py), что и у сценария через Telegram-бота
+    // (f_recurring.py, ИИ-уточнение) — здесь прямой структурированный
+    // ввод, без ИИ вообще.
+    let recurringRulesData = [];
+    let recurringRulesSheetOpen = false;
+    let recurringRuleFormOpen = false;
+    const _WEEKDAY_SHORT_JS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+
+    async function loadRecurringRules() {
+      try {
+        recurringRulesData = await api("/miniapp/api/recurring-rules");
+      } catch (e) {
+        recurringRulesData = [];
+      }
+      renderRecurringRulesList();
+    }
+
+    function describeRuleSchedule(rule) {
+      if (rule.schedule_kind === "weekly_days") {
+        const days = [...(rule.weekdays || [])].sort((a, b) => a - b);
+        if (JSON.stringify(days) === JSON.stringify([0, 1, 2, 3, 4])) return "По будням";
+        if (JSON.stringify(days) === JSON.stringify([5, 6])) return "По выходным";
+        return days.length ? `По дням: ${days.map((d) => _WEEKDAY_SHORT_JS[d]).join(", ")}` : "?";
+      }
+      if (rule.schedule_kind === "monthly_day") {
+        return rule.day_of_month === 32
+          ? "Последний день месяца"
+          : `${rule.day_of_month}-го числа каждый месяц`;
+      }
+      return `Раз в ${rule.interval_days} дн.`;
+    }
+
+    function describeRulePeriod(rule) {
+      if (!rule.period_start && !rule.period_end) return "Бессрочно";
+      const start = rule.period_start ? formatShortDate(rule.period_start) : "…";
+      const end = rule.period_end ? formatShortDate(rule.period_end) : "без окончания";
+      return `${start} — ${end}`;
+    }
+
+    function renderRecurringRulesList() {
+      const listEl = document.getElementById("recurring-rules-list");
+      if (!listEl) return;
+      listEl.innerHTML = "";
+      if (!recurringRulesData.length) {
+        renderEmpty(listEl);
+        return;
+      }
+      for (const rule of recurringRulesData) listEl.append(renderRecurringRuleRow(rule));
+    }
+
+    function renderRecurringRuleRow(rule) {
+      const row = document.createElement("div");
+      row.className = "row";
+
+      const main = document.createElement("div");
+      main.className = "rule-row-main";
+      main.innerHTML =
+        `<div class="rule-row-title">${escapeHtml(rule.title)}</div>` +
+        `<div class="rule-row-schedule">${describeRuleSchedule(rule)}</div>` +
+        `<div class="rule-row-period">${describeRulePeriod(rule)}</div>`;
+      row.append(main);
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "small-btn archive-btn";
+      deleteBtn.setAttribute("aria-label", "Удалить правило");
+      deleteBtn.innerHTML = archiveIcon();
+      deleteBtn.onclick = () => deleteRecurringRule(rule);
+      row.append(deleteBtn);
+
+      return row;
+    }
+
+    async function deleteRecurringRule(rule) {
+      try {
+        await api(`/miniapp/api/recurring-rules/${rule.id}/archive`, { method: "POST" });
+        recurringRulesData = recurringRulesData.filter((r) => r.id !== rule.id);
+        renderRecurringRulesList();
+      } catch (e) {
+        alert("Не удалось удалить правило.");
+      }
+    }
+
+    function openRecurringRulesSheet() {
+      recurringRulesSheetOpen = true;
+      render();
+      loadRecurringRules();
+    }
+    function closeRecurringRulesSheet() {
+      recurringRulesSheetOpen = false;
+      render();
+    }
+    function openRecurringRuleForm() {
+      resetRecurringRuleForm();
+      recurringRuleFormOpen = true;
+      render();
+    }
+    function closeRecurringRuleForm() {
+      recurringRuleFormOpen = false;
+      render();
+    }
+
+    // ---- Форма создания правила — статическая разметка (см. index.html),
+    // JS-слушатели навешаны один раз при загрузке страницы (не
+    // перестраивается при каждом render(), как остальные динамические
+    // формы этого приложения — незачем: состав полей фиксирован,
+    // единственное, что меняется, это классы/подписи да сам
+    // recurringDraft). uiKind — "weekly" (соответствует schedule_kind
+    // "weekly_days" на бэкенде — "Будни"/"Выходные" в UI лишь пресеты
+    // того же мульти-выбора дней, по фидбеку) или "monthly"
+    // ("monthly_day").
+    let recurringDraft = null;
+
+    function emptyRecurringDraft() {
+      return {
+        title: "",
+        uiKind: "weekly",
+        weekdays: [0],
+        monthday: 1,
+        periodStart: "",
+        periodEnd: "",
+        noEnd: true,
+      };
+    }
+
+    function syncRecurringWeekdayButtons() {
+      document.querySelectorAll("#recurring-weekday-picker .weekday-btn").forEach((b) => {
+        b.classList.toggle("selected", recurringDraft.weekdays.includes(Number(b.dataset.day)));
+      });
+    }
+    function syncRecurringMonthdayButtons() {
+      document.querySelectorAll("#recurring-monthday-picker .monthday-btn").forEach((b) => {
+        const val = b.dataset.day ? Number(b.dataset.day) : 32;
+        b.classList.toggle("selected", recurringDraft.monthday === val);
+      });
+    }
+    function syncRecurringPeriodButtons() {
+      const startBtn = document.getElementById("recurring-period-start");
+      const endBtn = document.getElementById("recurring-period-end");
+      startBtn.textContent = recurringDraft.periodStart
+        ? formatShortDate(recurringDraft.periodStart)
+        : "Начало";
+      startBtn.classList.toggle("date-set", !!recurringDraft.periodStart);
+      endBtn.textContent = recurringDraft.periodEnd ? formatShortDate(recurringDraft.periodEnd) : "Конец";
+      endBtn.classList.toggle("date-set", !!recurringDraft.periodEnd);
+      endBtn.disabled = recurringDraft.noEnd;
+    }
+
+    function resetRecurringRuleForm() {
+      recurringDraft = emptyRecurringDraft();
+      document.getElementById("recurring-rule-title").value = "";
+      document
+        .querySelectorAll("#recurring-kind-row .sphere-chip")
+        .forEach((c) => c.classList.toggle("selected", c.dataset.kind === "weekly_day"));
+      document.getElementById("recurring-weekday-detail").style.display = "";
+      document.getElementById("recurring-monthday-detail").style.display = "none";
+      syncRecurringWeekdayButtons();
+      syncRecurringMonthdayButtons();
+      document.getElementById("recurring-no-end-toggle").classList.add("on");
+      syncRecurringPeriodButtons();
+    }
+
+    document.getElementById("recurring-rule-title").addEventListener("input", (e) => {
+      recurringDraft.title = e.target.value;
+    });
+
+    document.querySelectorAll("#recurring-kind-row .sphere-chip").forEach((chip) => {
+      chip.onclick = () => {
+        document
+          .querySelectorAll("#recurring-kind-row .sphere-chip")
+          .forEach((c) => c.classList.remove("selected"));
+        chip.classList.add("selected");
+        const preset = chip.dataset.kind;
+        if (preset === "monthly_day") {
+          recurringDraft.uiKind = "monthly";
+          document.getElementById("recurring-weekday-detail").style.display = "none";
+          document.getElementById("recurring-monthday-detail").style.display = "";
+          return;
+        }
+        recurringDraft.uiKind = "weekly";
+        document.getElementById("recurring-weekday-detail").style.display = "";
+        document.getElementById("recurring-monthday-detail").style.display = "none";
+        // "Будни"/"Выходные" — не отдельные виды повторения на бэкенде,
+        // просто пресеты того же мульти-выбора дней (по фидбеку); сам
+        // чип "День недели" ничего не сбрасывает — открывает пикер с
+        // уже стоящим выбором как есть.
+        if (preset === "weekdays") recurringDraft.weekdays = [0, 1, 2, 3, 4];
+        if (preset === "weekend") recurringDraft.weekdays = [5, 6];
+        syncRecurringWeekdayButtons();
+      };
+    });
+
+    document.querySelectorAll("#recurring-weekday-picker .weekday-btn").forEach((btn) => {
+      btn.onclick = () => {
+        const day = Number(btn.dataset.day);
+        const idx = recurringDraft.weekdays.indexOf(day);
+        if (idx === -1) recurringDraft.weekdays.push(day);
+        else recurringDraft.weekdays.splice(idx, 1);
+        recurringDraft.weekdays.sort((a, b) => a - b);
+        syncRecurringWeekdayButtons();
+      };
+    });
+
+    const _recurringMonthdayGrid = document.getElementById("recurring-monthday-picker");
+    for (let d = 1; d <= 31; d++) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "monthday-btn";
+      btn.textContent = String(d);
+      btn.dataset.day = String(d);
+      btn.onclick = () => {
+        recurringDraft.monthday = d;
+        syncRecurringMonthdayButtons();
+      };
+      _recurringMonthdayGrid.append(btn);
+    }
+    const _recurringLastDayBtn = document.createElement("button");
+    _recurringLastDayBtn.type = "button";
+    _recurringLastDayBtn.className = "monthday-btn last";
+    _recurringLastDayBtn.textContent = "Последний день";
+    _recurringLastDayBtn.onclick = () => {
+      recurringDraft.monthday = 32;
+      syncRecurringMonthdayButtons();
+    };
+    _recurringMonthdayGrid.append(_recurringLastDayBtn);
+
+    document.getElementById("recurring-period-start").onclick = () =>
+      openDatePicker(recurringDraft.periodStart, (iso) => {
+        recurringDraft.periodStart = iso || "";
+        syncRecurringPeriodButtons();
+      });
+    document.getElementById("recurring-period-end").onclick = () => {
+      if (recurringDraft.noEnd) return;
+      openDatePicker(recurringDraft.periodEnd, (iso) => {
+        recurringDraft.periodEnd = iso || "";
+        syncRecurringPeriodButtons();
+      });
+    };
+    document.getElementById("recurring-no-end-toggle").onclick = () => {
+      recurringDraft.noEnd = !recurringDraft.noEnd;
+      document.getElementById("recurring-no-end-toggle").classList.toggle("on", recurringDraft.noEnd);
+      syncRecurringPeriodButtons();
+    };
+
+    document.getElementById("recurring-rule-submit").onclick = async () => {
+      const title = recurringDraft.title.trim();
+      if (!title) return;
+      if (recurringDraft.uiKind === "weekly" && recurringDraft.weekdays.length === 0) return;
+      const payload = {
+        title,
+        schedule_kind: recurringDraft.uiKind === "monthly" ? "monthly_day" : "weekly_days",
+        weekdays: recurringDraft.uiKind === "weekly" ? recurringDraft.weekdays : null,
+        day_of_month: recurringDraft.uiKind === "monthly" ? recurringDraft.monthday : null,
+        period_start: recurringDraft.periodStart || null,
+        period_end: recurringDraft.noEnd ? null : recurringDraft.periodEnd || null,
+      };
+      try {
+        await api("/miniapp/api/recurring-rules", { method: "POST", body: JSON.stringify(payload) });
+        closeRecurringRuleForm();
+        await loadRecurringRules();
+      } catch (e) {
+        alert("Не удалось создать правило.");
+      }
+    };
+
+    document.getElementById("open-recurring-rule-form-btn").onclick = () => openRecurringRuleForm();
+    document.getElementById("recurring-rule-form-close").onclick = () => closeRecurringRuleForm();
+    document.getElementById("open-recurring-rules-btn").onclick = () => openRecurringRulesSheet();
+    document.getElementById("recurring-rules-close").onclick = () => closeRecurringRulesSheet();
 
     // Свайп-шторка (Phase 63 — у задач убрана, используется только
     // строкой проекта/цели, см. renderEntityRow) — раньше размер считался
@@ -2937,6 +3572,8 @@
       renderTemplatesList();
       renderProjectsPage();
       renderGoalsPages();
+      renderTasksScreen();
+      renderRecurringRulesList();
       renderProjectPickerList();
       renderCreateEntityForm();
       renderDatePickerGrid();
@@ -2963,7 +3600,9 @@
         taskReviewOpen ||
         projectDetailId !== null ||
         editingTaskId != null ||
-        editingTemplateId != null;
+        editingTemplateId != null ||
+        recurringRulesSheetOpen ||
+        recurringRuleFormOpen;
       document.getElementById("reorder-scrim").classList.toggle("visible", anySheetOpen);
       document.getElementById("templates-sheet").classList.toggle("visible", templatesPickerOpen);
       document
@@ -2977,6 +3616,12 @@
       document
         .getElementById("create-entity-sheet")
         .classList.toggle("visible", createEntityKind !== null);
+      document
+        .getElementById("recurring-rules-sheet")
+        .classList.toggle("visible", recurringRulesSheetOpen);
+      document
+        .getElementById("recurring-rule-form-sheet")
+        .classList.toggle("visible", recurringRuleFormOpen);
       document.getElementById("date-picker-sheet").classList.toggle("visible", datePickerOpen);
       document.getElementById("side-drawer").classList.toggle("visible", sideDrawerOpen);
       document.getElementById("help-sheet").classList.toggle("visible", helpSheetOpen);

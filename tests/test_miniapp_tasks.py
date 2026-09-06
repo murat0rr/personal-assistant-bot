@@ -136,6 +136,32 @@ def test_description_included_in_serialized_task():
     assert by_title["купить хлеб"]["description"] is None
 
 
+def test_source_included_for_recurring_badge():
+    # Phase 74, фидбек — значок "повторяющаяся" в списках задач читает
+    # source, materialize_due_rules уже проставляет "recurring", просто
+    # раньше не отдавалось на фронтенд.
+    recurring = Task(
+        title="зарядка",
+        due_date=None,
+        priority="средний",
+        done=False,
+        sort_order=1,
+        source="recurring",
+    )
+    manual = Task(
+        title="купить хлеб",
+        due_date=None,
+        priority="средний",
+        done=False,
+        sort_order=2,
+        source="MiniApp",
+    )
+    board = build_task_board([recurring, manual], _TODAY)
+    by_title = {t["title"]: t for t in board["inbox"]}
+    assert by_title["зарядка"]["source"] == "recurring"
+    assert by_title["купить хлеб"]["source"] == "MiniApp"
+
+
 def test_task_can_be_important_and_event_at_the_same_time():
     # Phase 66 — раньше "событие" было значением priority ("event"),
     # взаимоисключающим с "высокий". Теперь is_event независим —

@@ -24,6 +24,13 @@ function calendarIcon() {
 function clockIcon() {
   return icon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>', 16);
 }
+// Значок "повторяющаяся" (Phase 74) и вход на экран правил повторения.
+function repeatIcon() {
+  return icon(
+    '<path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/>',
+    12
+  );
+}
 function archiveIcon() {
   return icon('<rect x="4" y="10" width="16" height="10" rx="1"/><path d="M12 3v8M9 8l3 3 3-3"/>', 16);
 }
