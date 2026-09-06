@@ -19,6 +19,11 @@ function calendarIcon() {
     16
   );
 }
+// Отдельная кнопка времени в форме правки задачи (Phase 68, фидбек:
+// раньше дата+время у события были одним нативным datetime-local).
+function clockIcon() {
+  return icon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>', 16);
+}
 function archiveIcon() {
   return icon('<rect x="4" y="10" width="16" height="10" rx="1"/><path d="M12 3v8M9 8l3 3 3-3"/>', 16);
 }

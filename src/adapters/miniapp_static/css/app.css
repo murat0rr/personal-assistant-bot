@@ -984,6 +984,9 @@
     }
     .entity-date-btn svg { flex-shrink: 0; }
     .entity-date-btn.date-set { color: var(--text); }
+    /* Кнопка времени в форме правки задачи (Phase 68) — активна, только
+       когда уже задана дата (время без даты бессмысленно, см. index.html). */
+    .entity-date-btn:disabled { opacity: 0.4; }
     .entity-form-toggle-row {
       display: flex;
       align-items: center;
@@ -1340,19 +1343,19 @@
       overflow-y: auto;
     }
     #side-drawer.visible { display: block; }
-    /* Уже, чем шторка настроек (66vw против полной ширины) — строке с
-       переключателем темы тесно в один ряд (подпись + 3 кнопки),
-       складываем в две строки. Фон переключателя тоже инвертирован
-       относительно шторки настроек: там сама шторка на --bg, кнопки на
-       --card-bg; здесь раскрывашка на --card-bg, поэтому кнопки на
-       --bg — иначе слились бы с фоном раскрывашки. */
-    #side-drawer .settings-row { flex-direction: column; align-items: flex-start; gap: 8px; }
-    #side-drawer .settings-theme-toggle {
-      width: 100%;
-      justify-content: space-between;
-      background: var(--bg);
-      gap: 2px;
-    }
+    /* Уже, чем шторка настроек (66vw против полной ширины) — раньше
+       подпись+3 кнопки темы не помещались в один ряд, складывали в две
+       строки (подпись сверху, кнопки на всю ширину под ней); по
+       фидбогу это выглядело неаккуратно на фоне остальных строк — все
+       три строки (тема/вибрация/утренний дайджест) переведены на один
+       общий ряд, элемент управления прижат к правому краю (та же
+       раскладка display:flex; justify-content:space-between, что и у
+       базового .settings-row вне шторки, просто с уменьшенными кнопками
+       темы, чтобы 3 штуки реально помещались в 66vw). Фон переключателя
+       темы инвертирован относительно шторки настроек: там сама шторка
+       на --bg, кнопки на --card-bg; здесь раскрывашка на --card-bg,
+       поэтому кнопки на --bg — иначе слились бы с фоном раскрывашки. */
+    #side-drawer .settings-theme-toggle { background: var(--bg); gap: 2px; }
     #side-drawer .settings-theme-toggle button { padding: 6px 7px; font-size: 12px; }
     /* Пункт "Помощь" (Phase 37) — простая строка-ссылка под темой,
        отделена верхней границей, той же плотности, что settings-row. */
@@ -1442,6 +1445,19 @@
       flex-direction: column;
     }
     .entity-window.visible { display: flex; }
+    /* БАГ (фидбек): #project-picker-sheet (z-index 28) открывается ИЗ
+       #task-edit-sheet (27) кнопкой проекта — единственный
+       .reorder-scrim сидит НИЖЕ обоих (25), поэтому саму форму задачи
+       он не затемняет, только основной экран приложения ещё глубже
+       позади. Форма задачи оставалась полностью резкой и кликабельной
+       под пикером — не читалась как фон. Тот же приём "размытый фон",
+       что уже даёт .reorder-scrim остальному экрану, только локально
+       для этого окна; pointer-events:none — та же логика, что у
+       .reorder-scrim (клики сквозь задний слой не проходят). */
+    .entity-window.dimmed-behind {
+      filter: blur(2px) brightness(0.7);
+      pointer-events: none;
+    }
     .entity-window-head {
       display: flex;
       align-items: center;

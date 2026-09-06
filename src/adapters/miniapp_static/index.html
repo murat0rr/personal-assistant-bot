@@ -342,7 +342,10 @@
         <button type="button" class="toggle-chip" id="task-edit-important"></button>
         <button type="button" class="toggle-chip" id="task-edit-event"></button>
       </div>
-      <button type="button" class="entity-date-btn" id="task-edit-date"></button>
+      <div class="entity-form-dates">
+        <button type="button" class="entity-date-btn" id="task-edit-date"></button>
+        <button type="button" class="entity-date-btn" id="task-edit-time"></button>
+      </div>
       <button type="button" class="entity-date-btn" id="task-edit-project"></button>
       <!-- Описание (Phase 65) — свободный текст, видимый только здесь.
            Кнопка справа снизу внутри поля — та же ИИ-генерация, что и
@@ -2769,6 +2772,11 @@
       document
         .getElementById("project-picker-sheet")
         .classList.toggle("visible", projectPickerOpen);
+      // БАГ (фидбек): пикер проекта открывается ИЗ формы задачи, но сама
+      // форма оставалась резкой и кликабельной под ним — единственный
+      // .reorder-scrim затемняет только основной экран позади обоих
+      // (см. комментарий у .dimmed-behind в app.css).
+      document.getElementById("task-edit-sheet").classList.toggle("dimmed-behind", projectPickerOpen);
       document
         .getElementById("create-entity-sheet")
         .classList.toggle("visible", createEntityKind !== null);
@@ -3083,6 +3091,31 @@
     const FAN_RADIUS = 148;
     const FAN_HIT_RADIUS = 51;
     const FAN_MIRROR_MARGIN = 30;
+    // Половина ширины/высоты .fan-satellite (123x51, см. app.css) — для
+    // отступа конца стрелки от центра кнопки (см. fanArrowEndOffset,
+    // БАГ фидбека "стрелочки не видны").
+    const FAN_SAT_HALF_WIDTH = 61.5;
+    const FAN_SAT_HALF_HEIGHT = 25.5;
+    const FAN_ARROW_GAP = 6;
+
+    // БАГ (фидбек: "стрелочки в веере не видны") — путь стрелки раньше
+    // шёл ровно до ЦЕНТРА кнопки-сателлита, а кнопка непрозрачна
+    // (var(--card-bg)) и рисуется позже стрелки в DOM (значит поверх
+    // неё) — наконечник маркера и добрая половина линии физически
+    // оказывались ПОД кнопкой, снаружи виден только короткий обрубок
+    // без острия. Тянем конец назад по направлению на кнопку — на
+    // расстояние до её края (кнопка — прямоугольник 123x51, приближаем
+    // эллипсом с такими полуосями, формула радиуса эллипса по
+    // направлению) плюс небольшой зазор, чтобы наконечник был виден
+    // целиком в промежутке между дугой и кнопкой.
+    function fanArrowEndOffset(dx, dy) {
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len;
+      const uy = dy / len;
+      const clearance =
+        1 / Math.hypot(ux / FAN_SAT_HALF_WIDTH, uy / FAN_SAT_HALF_HEIGHT) + FAN_ARROW_GAP;
+      return { x: dx - ux * clearance, y: dy - uy * clearance };
+    }
 
     const fanBackdropEl = document.getElementById("fan-backdrop");
     const fanArrowsEl = document.getElementById("fan-arrows");
@@ -3165,7 +3198,8 @@
         el.style.top = sy + "px";
         el.innerHTML = `${actions[i].icon}<span>${actions[i].label}</span>`;
         requestAnimationFrame(() => el.classList.add("open"));
-        arrowsSvg += `<path d="${fanCurvedPath(ox, oy, sx, sy)}" marker-end="url(#fan-arrowhead)"/>`;
+        const arrowEnd = fanArrowEndOffset(p.dx, p.dy);
+        arrowsSvg += `<path d="${fanCurvedPath(ox, oy, ox + arrowEnd.x, oy + arrowEnd.y)}" marker-end="url(#fan-arrowhead)"/>`;
       });
       fanArrowsEl.innerHTML = arrowsSvg;
 
@@ -3705,25 +3739,54 @@
       eventBtn.classList.toggle("on", task.is_event);
       eventBtn.innerHTML = eventPinIcon() + "<span>Событие</span>";
 
-      // Дата — тот же приём, что был в убранной свайп-шторке (Phase 19):
-      // невидимый input поверх кнопки, тап по кнопке открывает нативный
-      // пикер. Для события сразу дата+время одним пикером, для обычной
-      // задачи — только дата.
+      // Дата и время — отдельными кнопками/пикерами (фидбек: раньше у
+      // события это был один нативный datetime-local — на многих
+      // устройствах и в Telegram WebView такой пикер неудобный/не
+      // всегда понятный; у обычной задачи времени не было вообще, хотя
+      // due_time — обычное поле задачи, не только у событий). Тот же
+      // приём, что и раньше: невидимый input поверх кнопки, тап
+      // открывает нативный пикер; при изменении одного поля второе
+      // берётся из уже сохранённого состояния задачи и оба уходят одной
+      // строкой в setTaskDueDate (она сама разбирает "дата" или
+      // "дата+время" — см. комментарий там), бэкенд не менялся.
       const dateBtn = document.getElementById("task-edit-date");
-      const dateLabel = task.due_date
-        ? formatShortDate(task.due_date) + (task.due_time ? ", " + task.due_time : "")
-        : "Дата не задана";
+      const dateLabel = task.due_date ? formatShortDate(task.due_date) : "Дата не задана";
       dateBtn.className = "entity-date-btn" + (task.due_date ? " date-set" : "");
       dateBtn.innerHTML = calendarIcon() + `<span>${dateLabel}</span>`;
       const dateInput = document.createElement("input");
-      dateInput.type = task.is_event ? "datetime-local" : "date";
+      dateInput.type = "date";
       dateInput.className = "entity-date-input";
+      if (task.due_date) dateInput.value = task.due_date;
       dateInput.onchange = () => {
         if (!dateInput.value) return;
-        setTaskDueDate(task, dateInput.value);
+        // Время сохраняется, если уже было задано — смена одной только
+        // даты не должна молча стирать уже выбранное время.
+        setTaskDueDate(task, task.due_time ? `${dateInput.value}T${task.due_time}` : dateInput.value);
       };
       dateBtn.append(dateInput);
       dateBtn.onclick = () => (dateInput.showPicker ? dateInput.showPicker() : dateInput.click());
+
+      const timeBtn = document.getElementById("task-edit-time");
+      // Время без даты — бессмысленно (due_date — то, чем живёт вся
+      // бакетизация по дням), поэтому кнопка активна только когда дата
+      // уже задана — то же самое ограничение, что и раньше неявно было
+      // (datetime-local одним пикером не давал задать время без даты).
+      timeBtn.disabled = !task.due_date;
+      timeBtn.className = "entity-date-btn" + (task.due_time ? " date-set" : "");
+      timeBtn.innerHTML = clockIcon() + `<span>${task.due_time || "Без времени"}</span>`;
+      const timeInput = document.createElement("input");
+      timeInput.type = "time";
+      timeInput.className = "entity-date-input";
+      if (task.due_time) timeInput.value = task.due_time;
+      timeInput.onchange = () => {
+        if (!timeInput.value || !task.due_date) return;
+        setTaskDueDate(task, `${task.due_date}T${timeInput.value}`);
+      };
+      timeBtn.append(timeInput);
+      timeBtn.onclick = () => {
+        if (!task.due_date) return;
+        timeInput.showPicker ? timeInput.showPicker() : timeInput.click();
+      };
 
       const projectBtn = document.getElementById("task-edit-project");
       const project = task.project_id ? projectsData.find((p) => p.id === task.project_id) : null;
