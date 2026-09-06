@@ -289,6 +289,17 @@
       min-height: 54px;
     }
     .row:last-child { border-bottom: none; }
+    /* Список графиков аналитики в настройках (Phase 71, фидбек:
+       перетаскивание, "графики рисуются в согласии с очередью") —
+       чекбокс+название занимают всё место слева от ручки (.grip справа,
+       общий со строкой задачи стиль). */
+    .widget-settings-label {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
     .row.pending { background: var(--pending-bg); }
     /* Перетаскивание для ручного порядка (Phase 13) — тень и приподнятый
        z-index на время жеста, у .swipe-wrap ещё и overflow:visible, иначе
@@ -886,6 +897,14 @@
     .month-cal-day.today { background: color-mix(in srgb, var(--accent) 18%, transparent); }
     .month-cal-day.selected { border-color: var(--accent); }
     .month-cal-day.other-month { opacity: 0.35; }
+    /* Наведённая при перетаскивании из инбокса плитка дня (Phase 71) —
+       тот же приём подсветки, что и остальные drag-over состояния в
+       приложении. */
+    .month-cal-day.drag-hover {
+      background: color-mix(in srgb, var(--accent) 28%, transparent);
+      transform: scale(1.08);
+      transition: background-color 0.12s ease, transform 0.12s ease;
+    }
     .month-cal-day.weekend .month-cal-num { color: var(--neutral-blue); }
     .month-cal-day.selected .month-cal-num { color: inherit; }
     .month-cal-num { font-size: 12px; line-height: 1; }
@@ -1177,6 +1196,40 @@
        touch-action: чтобы браузер не пытался проскроллить страницу
        пальцем, который на самом деле уже держит веер. */
     .fan-trigger { touch-action: none; }
+    /* Перетаскивание задачи из инбокса на день календаря (Phase 71) —
+       строка-источник на время жеста, по фидбеку ровно 70% прозрачности
+       (opacity 0.3), не просто затемнение/тень, как у обычного
+       reorder-переноса. */
+    .cal-inbox-row-dragging { opacity: 0.3; }
+    /* Клон строки, летящий за пальцем — singleton-узел (см. разметку),
+       JS только переставляет left/top и переключает .visible. Центр
+       узла — под самим пальцем (translate(-50%, -50%)), а не левый
+       верхний угол, чтобы визуально совпадать с тем, что и так
+       "держат". */
+    .cal-inbox-drag-ghost {
+      position: fixed;
+      left: 0;
+      top: 0;
+      z-index: 45;
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: var(--card-bg);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3);
+      font-size: 14px;
+      color: var(--text);
+      pointer-events: none;
+      transform: translate(-50%, -50%) scale(1.04) rotate(-1.5deg);
+      max-width: 70vw;
+    }
+    .cal-inbox-drag-ghost .title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cal-inbox-drag-ghost.visible { display: flex; }
     .fan-trigger.pressed { background: var(--accent); color: var(--accent-text); }
     /* Один общий (singleton) оверлей на всё приложение — JS позиционирует
        под конкретную кнопку при каждом жесте (attachFanMenu). z-index 50

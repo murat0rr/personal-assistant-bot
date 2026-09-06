@@ -117,6 +117,19 @@
           <div class="month-cal-panel"><div class="month-cal-grid" data-slot="next"></div></div>
         </div>
       </div>
+      <!-- Инбокс между календарём и списком задач дня (Phase 71,
+           фидбек) — та же раскрывашка, что на обычном экране (см.
+           #inbox-header выше в разметке), но строки урезаны до кружка
+           статуса и ручки (без даты/корзины, см. renderCalInboxList):
+           единственное действие здесь — перетащить задачу на день
+           выше, а не управлять ею кнопками. -->
+      <p class="section-label section-header" id="cal-inbox-header">
+        <span id="cal-inbox-title">Инбокс</span>
+        <span class="chevron" id="cal-inbox-chevron"></span>
+      </p>
+      <div id="cal-inbox-body" style="display: none;">
+        <div id="cal-inbox-list" class="list"></div>
+      </div>
       <div id="month-cal-day-info"></div>
       <div id="month-day-detail-list"></div>
     </div>
@@ -124,10 +137,14 @@
 
   <div id="ext-panel-projects" style="display:none">
     <div class="section">
-      <!-- Заголовок экрана убран (Phase 67, фидбек) — вкладка внизу
-           экрана уже называется "Проекты". Подписи ниже
-           ("Недельные/Месячные/Годовые цели") остаются — это не
-           заголовок ЭКРАНА, а подписи РАЗНЫХ секций внутри него. -->
+      <!-- Заголовок ЭКРАНА убран (Phase 67, фидбек) — вкладка внизу
+           экрана уже называется "Проекты". Но подпись САМОГО СПИСКА
+           проектов (в отличие от "Недельные/Месячные/Годовые цели" ниже
+           у соответствующих списков) была убрана вместе с заголовком
+           экрана по ошибке — без неё список проектов единственный на
+           экране без подписи секции, хотя речь не обо всей странице, а
+           именно об этом списке (Phase 71, фидбек). Возвращена. -->
+      <p class="section-label">Проекты</p>
       <div id="pg-projects" class="list"></div>
     </div>
     <div class="section">
@@ -335,6 +352,12 @@
     <button type="button" class="fan-satellite" id="fan-sat1"></button>
     <button type="button" class="fan-satellite fan-sat-delete" id="fan-sat2"></button>
   </div>
+
+  <!-- Клон строки инбокса, летящий за пальцем при перетаскивании на
+       день календаря (Phase 71, фидбек) — один общий узел на всё
+       приложение, тот же приём "singleton-оверлей, JS переставляет под
+       жест", что и у #fan-layer выше. -->
+  <div id="cal-inbox-drag-ghost" class="cal-inbox-drag-ghost"></div>
 
   <!-- Форма редактирования задачи по долгому нажатию (Phase 63) — тот
        же .entity-window, что у формы проекта/цели: текст, важность/
@@ -756,7 +779,10 @@
     // этим необязательным флагам да к due-time). Постоянная ручка
     // справа (перенос) и долгое нажатие по остальной части строки
     // (форма редактирования) — теперь на каждом списке задач одинаково.
-    function renderTaskRow(task, { showDateButton, showTrashButton, showMoveToToday, showFanMenu }) {
+    function renderTaskRow(
+      task,
+      { showDateButton, showTrashButton, showMoveToToday, showFanMenu, tapTogglesDone }
+    ) {
       const row = document.createElement("div");
       row.className = "row task-row" + (pendingIds.has(task.id) ? " pending" : "");
       row.dataset.sortOrder = String(task.sort_order);
@@ -776,10 +802,16 @@
       // дважды подряд (визуально — как будто ничего не произошло).
       // Остальной набор исключений — см. ROW_TAP_IGNORE_SELECTOR (ручка
       // переноса и прочие элементы строки со своей семантикой тапа).
-      row.addEventListener("click", (e) => {
-        if (isPending || e.target.closest(ROW_TAP_IGNORE_SELECTOR)) return;
-        toggleTaskDone(task);
-      });
+      // tapTogglesDone === false (Phase 71, фидбек) — только у инбокса:
+      // там тап по тексту не должен ничего делать, статус меняет только
+      // кружок. Остальные списки (сегодня/завтра/вчера/неделя) не
+      // тронуты — умолчание (undefined) сохраняет поведение Phase 48.
+      if (tapTogglesDone !== false) {
+        row.addEventListener("click", (e) => {
+          if (isPending || e.target.closest(ROW_TAP_IGNORE_SELECTOR)) return;
+          toggleTaskDone(task);
+        });
+      }
 
       // "На сегодня" — слева от календаря (Phase 55, сейчас нужна и
       // Инбоксу, не только "Вчера" — единственный компонент, который
@@ -1859,8 +1891,21 @@
       const [start, end] = goalPeriodBounds(tier, ref);
       const startIso = isoDate(start);
       const endIso = isoDate(end);
+      // БАГ (фидбек: "цели без заполненных некоторых полей не
+      // отображаются"): раньше фильтр требовал ТОЧНОГО совпадения и
+      // start_date, и end_date со стандартными границами периода — цель
+      // с и-то нестандартным периодом (например, созданная ДО Phase 68,
+      // когда даты цели ещё вводились вручную, а не считались из
+      // тира+панели) не попадала НИ В ОДНУ панель и пропадала из виду
+      // насовсем, хотя оставалась активной. Реальные данные это
+      // подтвердили: у части старых целей start_date/end_date не
+      // выровнены на Пн–Вс/календарный месяц (см. TECHDEBT.md). Фикс —
+      // цель попадает в панель по ОДНОМУ признаку by (её start_date
+      // внутри границ панели), end_date для попадания в список больше
+      // не участвует — терпимо к любым историческим и будущим
+      // нестандартным периодам, без миграции данных.
       const items = goalsData.filter(
-        (g) => g.tier === tier && g.start_date === startIso && g.end_date === endIso
+        (g) => g.tier === tier && g.start_date >= startIso && g.start_date <= endIso
       );
       listEl.innerHTML = "";
       if (items.length === 0) renderEmpty(listEl);
@@ -2724,6 +2769,119 @@
       title.textContent = boardState.inbox.length ? `Инбокс (${boardState.inbox.length})` : "Инбокс";
     }
 
+    // ---- Инбокс на экране календаря (Phase 71, фидбек) — та же
+    // раскрывашка, что на обычном экране, но строки урезаны до кружка
+    // статуса и ручки (никаких даты/корзины/веера — единственное
+    // действие здесь: перетащить задачу за ручку на день в календаре
+    // выше, см. attachInboxDragToDay). Не переиспользует renderList/
+    // renderTaskRow целиком — тем строкам не нужны ни лишние кнопки, ни
+    // их встроенный setupDragReorder на ручке (тут ручка занята другим
+    // жестом), ни свайп/долгое нажатие, ни строка добавления снизу.
+    function renderCalInboxHeader() {
+      const title = document.getElementById("cal-inbox-title");
+      title.textContent = boardState.inbox.length ? `Инбокс (${boardState.inbox.length})` : "Инбокс";
+    }
+
+    function renderCalInboxList() {
+      const container = document.getElementById("cal-inbox-list");
+      container.innerHTML = "";
+      if (!boardState.inbox.length) {
+        renderEmpty(container);
+        return;
+      }
+      sortByOrder(boardState.inbox).forEach((task) => {
+        const row = document.createElement("div");
+        row.className = "row cal-inbox-row";
+        row.dataset.taskId = task.id;
+
+        const checkbox = renderStatusCircle(task, pendingIds.has(task.id), () =>
+          toggleTaskDone(task)
+        );
+        row.append(checkbox);
+
+        const title = document.createElement("span");
+        title.className = titleClass(task);
+        title.textContent = task.title;
+        row.append(title);
+
+        const grip = document.createElement("span");
+        grip.className = "grip";
+        grip.setAttribute("aria-label", "Перетащить на день");
+        grip.innerHTML = gripIcon();
+        row.append(grip);
+
+        attachInboxDragToDay(grip, row, task);
+        container.append(row);
+      });
+    }
+
+    // Перетаскивание задачи из инбокса на день календаря (Phase 71,
+    // новая фича, только на экране "Календарь") — держишь ручку, строка-
+    // источник становится на 70% прозрачной (opacity 0.3, по фидбеку),
+    // клон летит за пальцем; наведённый день подсвечивается; отпустил
+    // над днём — setTaskDueDate переносит задачу туда (та же функция,
+    // что и обычный пикер даты — оптимистичное обновление, rebucketTask
+    // сам уберёт её из инбокса и покажет в правильном месте, включая
+    // точку на плитке дня после следующего render()). Мимо календаря —
+    // ничего не происходит, источник возвращается как было.
+    const calInboxGhostEl = document.getElementById("cal-inbox-drag-ghost");
+
+    function attachInboxDragToDay(gripEl, rowEl, task) {
+      let dragging = false;
+      let pointerId = null;
+      let hoveredDay = null;
+
+      gripEl.addEventListener("pointerdown", (e) => {
+        dragging = true;
+        pointerId = e.pointerId;
+        rowEl.classList.add("cal-inbox-row-dragging");
+        calInboxGhostEl.innerHTML =
+          `<span class="checkbox${task.done ? " done" : ""}">${task.done ? checkIcon() : ""}</span>` +
+          `<span class="title">${escapeHtml(task.title)}</span>` +
+          `<span class="grip">${gripIcon()}</span>`;
+        calInboxGhostEl.classList.add("visible");
+        positionGhost(e.clientX, e.clientY);
+        try {
+          gripEl.setPointerCapture(e.pointerId);
+        } catch (err) {
+          // Жест не должен молча ломаться из-за этого — редкий случай.
+        }
+      });
+
+      function positionGhost(x, y) {
+        calInboxGhostEl.style.left = x + "px";
+        calInboxGhostEl.style.top = y + "px";
+      }
+
+      document.addEventListener("pointermove", (e) => {
+        if (!dragging || e.pointerId !== pointerId) return;
+        positionGhost(e.clientX, e.clientY);
+        const under = document.elementFromPoint(e.clientX, e.clientY);
+        const dayEl = under && under.closest(".month-cal-day:not(.other-month)");
+        if (dayEl !== hoveredDay) {
+          if (hoveredDay) hoveredDay.classList.remove("drag-hover");
+          hoveredDay = dayEl || null;
+          if (hoveredDay) hoveredDay.classList.add("drag-hover");
+        }
+      });
+
+      function endDrag(e) {
+        if (!dragging || e.pointerId !== pointerId) return;
+        dragging = false;
+        calInboxGhostEl.classList.remove("visible");
+        rowEl.classList.remove("cal-inbox-row-dragging");
+        if (hoveredDay) {
+          const targetIso = hoveredDay.dataset.iso;
+          hoveredDay.classList.remove("drag-hover");
+          hapticImpact("light");
+          setTaskDueDate(task, task.due_time ? `${targetIso}T${task.due_time}` : targetIso);
+          hoveredDay = null;
+        }
+      }
+      document.addEventListener("pointerup", endDrag);
+      document.addEventListener("pointercancel", endDrag);
+    }
+
     function render() {
       for (const key of ["yesterday", "today"]) {
         const el = document.getElementById(`${key}-list`);
@@ -2742,8 +2900,11 @@
         showTrashButton: true,
         showMoveToToday: true,
         withDatePicker: true,
+        tapTogglesDone: false,
       });
       renderInboxHeader();
+      renderCalInboxHeader();
+      renderCalInboxList();
       renderWeekCarousel();
       renderWeekDetail();
       refreshMonthDayDetail();
@@ -4182,26 +4343,40 @@
       if (!isProject) {
         const tierRow = document.createElement("div");
         tierRow.className = "entity-form-tier-row";
+        // БАГ (фидбек, Phase 71): при СОЗДАНИИ цели тир уже однозначно
+        // определён тем, откуда открыли форму — какую из трёх панелей
+        // карусели периодов ("+ Новая цель" внутри неё, renderAddEntityRow)
+        // или квик-ввод конкретного тира снизу списка. Кликабельные чипы
+        // позволяли молча поменять тир на другой — createEntityDraft.start/end
+        // при этом обнулялись (см. ниже), и цель уезжала в СЕГОДНЯШНИЙ
+        // период нового тира, а не туда, откуда её реально создавали —
+        // путаница, а не полезная возможность. Строка остаётся видна
+        // (подтверждает тир), но не кликабельна — только при создании;
+        // при правке уже существующей цели тир по-прежнему меняется
+        // (см. isEditing проверку ниже).
         for (const tier of GOAL_TIERS) {
           const chip = document.createElement("button");
           chip.type = "button";
           chip.className = "sphere-chip" + (createEntityDraft.tier === tier ? " selected" : "");
           chip.textContent = GOAL_TIER_LABELS[tier];
-          chip.onclick = () => {
-            // Смена тира при уже стоящих датах (пришли либо из
-            // openEditEntitySheet — с текущего периода цели, либо из
-            // renderAddEntityRow — с просмотренной панели карусели)
-            // делает их бессмысленными: они посчитаны под ДРУГОЙ тир.
-            // Обнуляем — сервер сам пересчитает период из нового тира
-            // и сегодняшней даты (core/goals.py::create_goal_now), тот
-            // же фолбэк, что при полностью пустой форме.
-            if (createEntityDraft.tier !== tier) {
-              createEntityDraft.start = "";
-              createEntityDraft.end = "";
-            }
-            createEntityDraft.tier = tier;
-            render();
-          };
+          if (isEditing) {
+            chip.onclick = () => {
+              // Смена тира при уже стоящих датах (пришли из
+              // openEditEntitySheet — с текущего периода цели) делает
+              // их бессмысленными: они посчитаны под ДРУГОЙ тир.
+              // Обнуляем — сервер сам пересчитает период из нового
+              // тира и сегодняшней даты (core/goals.py::create_goal_now),
+              // тот же фолбэк, что при полностью пустой форме.
+              if (createEntityDraft.tier !== tier) {
+                createEntityDraft.start = "";
+                createEntityDraft.end = "";
+              }
+              createEntityDraft.tier = tier;
+              render();
+            };
+          } else {
+            chip.disabled = true;
+          }
           tierRow.append(chip);
         }
         container.append(tierRow);
@@ -4454,14 +4629,37 @@
     // автоматика при загрузке страницы), модуль давно готов, но
     // полагаться на "на практике" вместо явного ожидания — тот же
     // риск гонки, что уже был найден и исправлен у loadAnalytics().
+    // Строки — в порядке panel.getWidgetOrder() (Phase 71, фидбек:
+    // "графики рисуются в согласии с очередью"), не в порядке объявления
+    // в реестре. Ручка справа у каждой строки перетаскивает — тот же
+    // setupDragReorder, что и у задач, только "сохранение" не считает
+    // дробный sort_order для одной строки (тут ему просто негде жить —
+    // порядок целиком в localStorage, не персональное поле на сервере),
+    // а перечитывает итоговый порядок ВСЕХ строк из DOM после того, как
+    // сам перенос его уже физически переставил, и сохраняет разом.
     async function renderWidgetSettingsList() {
       const listEl = document.getElementById("widget-settings-list");
       const panel = await window.__analyticsPanelReady;
       const enabled = new Set(panel.getEnabledIds());
+      const order = panel.getWidgetOrder();
       listEl.innerHTML = "";
-      panel.registry.forEach((entry) => {
+
+      function persistWidgetOrder() {
+        const rows = Array.from(listEl.querySelectorAll(".row[data-widget-id]"));
+        panel.setWidgetOrder(rows.map((r) => r.dataset.widgetId));
+        loadAnalytics();
+      }
+
+      order.forEach((id, index) => {
+        const entry = panel.registry.find((w) => w.id === id);
+        if (!entry) return; // защита — не должно случаться, getWidgetOrder уже фильтрует
+        const row = document.createElement("div");
+        row.className = "row";
+        row.dataset.widgetId = entry.id;
+        row.dataset.sortOrder = String(index);
+
         const label = document.createElement("label");
-        label.className = "row";
+        label.className = "widget-settings-label";
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
         checkbox.checked = enabled.has(entry.id);
@@ -4475,7 +4673,23 @@
         const span = document.createElement("span");
         span.textContent = entry.title;
         label.append(checkbox, span);
-        listEl.append(label);
+        row.append(label);
+
+        const grip = document.createElement("span");
+        grip.className = "grip";
+        grip.setAttribute("aria-label", "Перетащить");
+        grip.innerHTML = gripIcon();
+        row.append(grip);
+
+        setupDragReorder({
+          row,
+          trigger: grip,
+          rowSelector: ".row[data-widget-id]",
+          getSortOrder: (el) => parseFloat(el.dataset.sortOrder),
+          persist: persistWidgetOrder,
+        });
+
+        listEl.append(row);
       });
     }
 
@@ -4957,6 +5171,12 @@
         if (cell.other) btn.classList.add("other-month");
 
         const iso = `${cell.year}-${pad2(cell.month)}-${pad2(cell.d)}`;
+        // data-iso (Phase 71) — целевая дата для перетаскивания задачи
+        // из инбокса (см. attachInboxDragToDay): без атрибута пришлось
+        // бы пересчитывать дату из cell.year/month/d заново по индексу
+        // плитки, а тут элемент под пальцем и так уже есть от
+        // elementFromPoint.
+        btn.dataset.iso = iso;
         if (iso === todayIso) btn.classList.add("today");
         if (iso === calSelectedDay) btn.classList.add("selected");
 
@@ -5302,6 +5522,16 @@
       inboxExpanded = !inboxExpanded;
       document.getElementById("inbox-body").style.display = inboxExpanded ? "" : "none";
       document.getElementById("inbox-chevron").classList.toggle("expanded", inboxExpanded);
+    };
+
+    // Тот же приём для инбокса на экране "Календарь" (Phase 71) — своё
+    // независимое состояние свёрнутости, не связано с обычным экраном.
+    let calInboxExpanded = false;
+    document.getElementById("cal-inbox-chevron").innerHTML = chevronIcon();
+    document.getElementById("cal-inbox-header").onclick = () => {
+      calInboxExpanded = !calInboxExpanded;
+      document.getElementById("cal-inbox-body").style.display = calInboxExpanded ? "" : "none";
+      document.getElementById("cal-inbox-chevron").classList.toggle("expanded", calInboxExpanded);
     };
 
     attachSheetOverswipeClose(
@@ -5753,12 +5983,25 @@
        точка соприкосновения с классическим скриптом (см. loadAnalytics
        и window.__coreBridge там же). -->
   <script type="module">
-    import { renderAnalyticsPanel, getEnabledIds, setEnabledIds } from "./js/widgets/panel.js";
+    import {
+      renderAnalyticsPanel,
+      getEnabledIds,
+      setEnabledIds,
+      getWidgetOrder,
+      setWidgetOrder,
+    } from "./js/widgets/panel.js";
     import { WIDGET_REGISTRY } from "./js/widgets/registry.js";
     import { bus } from "./js/core/bus.js";
 
     window.__registerAnalyticsPanel(
-      { render: renderAnalyticsPanel, getEnabledIds, setEnabledIds, registry: WIDGET_REGISTRY },
+      {
+        render: renderAnalyticsPanel,
+        getEnabledIds,
+        setEnabledIds,
+        getWidgetOrder,
+        setWidgetOrder,
+        registry: WIDGET_REGISTRY,
+      },
       bus
     );
   </script>

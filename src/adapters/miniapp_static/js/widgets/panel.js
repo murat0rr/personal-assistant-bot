@@ -8,6 +8,13 @@
 import { WIDGET_REGISTRY } from "./registry.js";
 
 const STORAGE_KEY = "analyticsWidgets";
+// Отдельный ключ (Phase 71, фидбек: "графики рисуются в согласии с
+// очередью") — порядок ВСЕХ виджетов реестра, включённых и выключенных
+// (не только включённых, как STORAGE_KEY выше): перетаскивание в
+// настройках работает по всему списку разом, чтобы выключенный виджет,
+// если его потом снова включат, вернулся на своё же место, а не в
+// конец. Порядок и включённость — независимые понятия.
+const ORDER_STORAGE_KEY = "analyticsWidgetOrder";
 
 export function getEnabledIds() {
   try {
@@ -27,6 +34,34 @@ export function setEnabledIds(ids) {
   }
 }
 
+// Порядок — массив id ВСЕХ виджетов реестра (не только включённых).
+// Идентификаторы, которых нет в сохранённом порядке (новый виджет
+// появился в реестре уже после того, как пользователь настроил
+// порядок) дописываются в конец в порядке объявления в реестре —
+// иначе виджет, добавленный будущей фазой, вообще не отрисовался бы,
+// пока пользователь явно не перетащит что-нибудь в настройках.
+export function getWidgetOrder() {
+  let stored = [];
+  try {
+    const raw = localStorage.getItem(ORDER_STORAGE_KEY);
+    if (raw) stored = JSON.parse(raw);
+  } catch (e) {
+    // приватный режим и т.п. — откатываемся на порядок реестра целиком
+  }
+  const known = new Set(WIDGET_REGISTRY.map((w) => w.id));
+  const order = stored.filter((id) => known.has(id));
+  const missing = WIDGET_REGISTRY.map((w) => w.id).filter((id) => !order.includes(id));
+  return [...order, ...missing];
+}
+
+export function setWidgetOrder(ids) {
+  try {
+    localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(ids));
+  } catch (e) {
+    // приватный режим — порядок просто не переживёт перезагрузку страницы
+  }
+}
+
 let activeWidgets = [];
 
 export async function renderAnalyticsPanel(container, ctx) {
@@ -35,7 +70,10 @@ export async function renderAnalyticsPanel(container, ctx) {
   container.innerHTML = "";
 
   const enabled = new Set(getEnabledIds());
-  const toShow = WIDGET_REGISTRY.filter((entry) => enabled.has(entry.id));
+  const order = getWidgetOrder();
+  const toShow = order
+    .map((id) => WIDGET_REGISTRY.find((entry) => entry.id === id))
+    .filter((entry) => entry && enabled.has(entry.id));
 
   if (toShow.length === 0) {
     container.innerHTML =
