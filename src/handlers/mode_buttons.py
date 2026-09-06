@@ -9,7 +9,11 @@ from src.core.message_text import extract_text
 from src.handlers.f1_task_note import handle_task_note
 from src.handlers.f_notes import handle_note
 from src.handlers.f_question import handle_question_input
-from src.handlers.f_recurring import handle_new_recurring_task
+from src.handlers.f_recurring import (
+    RecurringClarificationStates,
+    handle_new_recurring_task,
+    handle_recurring_clarification_answer,
+)
 from src.handlers.f_reminders import handle_new_reminder
 
 router = Router()
@@ -46,14 +50,17 @@ _BUTTON_PROMPTS: dict[str, tuple[State, str]] = {
     ),
 }
 
-# ModeStates.question сюда не входит — у него свой хендлер (handle_question_button
-# ниже): нужен мультимодальный ввод (фото/PDF) и мгновенный ack, который
-# generic-путь через extract_text не покрывает.
+# ModeStates.question и ModeStates.recurring сюда не входят — у обоих
+# свой хендлер ниже. У question — мультимодальный ввод (фото/PDF) и
+# мгновенный ack, который generic-путь через extract_text не покрывает.
+# У recurring (Phase 73) — диалог с уточняющим вопросом от Claude может
+# продолжиться ещё на один (или несколько) ход, а generic-путь ниже
+# безусловно чистит state ДО вызова хендлера — after that там уже
+# негде было бы продолжить диалог.
 _MODE_HANDLERS = {
     ModeStates.task: handle_task_note,
     ModeStates.note: handle_note,
     ModeStates.reminder: handle_new_reminder,
-    ModeStates.recurring: handle_new_recurring_task,
 }
 
 
@@ -95,3 +102,33 @@ async def handle_question_button(message: Message, state: FSMContext) -> None:
 
     await state.clear()
     await handle_question_input(message)
+
+
+# Повторяющиеся задачи (Phase 73) — свои два хендлера, не через
+# generic _MODE_HANDLERS/handle_mode_content выше: тот безусловно чистит
+# state ДО вызова хендлера, а здесь хендлер сам решает, очистить state
+# (правило создано или откровенно не разобрать) или перевести в
+# RecurringClarificationStates.awaiting_answer (Claude задал уточняющий
+# вопрос) — состояние нужно живым ПОСЛЕ вызова.
+@router.message(StateFilter(ModeStates.recurring), F.voice | F.text)
+async def handle_recurring_button(message: Message, state: FSMContext) -> None:
+    if not message.from_user or not await is_authorized(message.from_user.id):
+        await message.answer("Извините, этот бот вам недоступен.")
+        return
+
+    text = await extract_text(message)
+    if not text:
+        return
+    await handle_new_recurring_task(message, text, state)
+
+
+@router.message(StateFilter(RecurringClarificationStates.awaiting_answer), F.voice | F.text)
+async def handle_recurring_clarification_button(message: Message, state: FSMContext) -> None:
+    if not message.from_user or not await is_authorized(message.from_user.id):
+        await message.answer("Извините, этот бот вам недоступен.")
+        return
+
+    text = await extract_text(message)
+    if not text:
+        return
+    await handle_recurring_clarification_answer(message, text, state)

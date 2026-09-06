@@ -31,3 +31,11 @@ class RecurringTaskRule(Base):
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     last_materialized_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Ограничение по периоду (Phase 73, фидбек) — оба поля необязательны:
+    # пусто у period_start значит "с сегодня" (де-факто, т.к. _is_due
+    # никогда не смотрит в прошлое относительно last_materialized_date/
+    # created_at), пусто у period_end значит "без окончания" — самый
+    # частый случай для привычек ("зарядка по будням" не нуждается в
+    # заранее известной дате остановки).
+    period_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    period_end: Mapped[date | None] = mapped_column(Date, nullable=True)

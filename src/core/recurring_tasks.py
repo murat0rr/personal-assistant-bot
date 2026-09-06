@@ -19,6 +19,15 @@ def _is_due(rule: RecurringTaskRule, today: date) -> bool:
     if rule.last_materialized_date == today:
         return False
 
+    # Период действия (Phase 73, фидбек) — пусто с обеих сторон значит
+    # "без ограничений" (де-факто было всегда, до этой фазы полей вообще
+    # не было). Проверяется раньше самого паттерна — вне периода
+    # неважно, что показывает schedule_kind.
+    if rule.period_start is not None and today < rule.period_start:
+        return False
+    if rule.period_end is not None and today > rule.period_end:
+        return False
+
     value = rule.schedule_value
     kind = rule.schedule_kind
 
@@ -30,6 +39,13 @@ def _is_due(rule: RecurringTaskRule, today: date) -> bool:
         return today.day == day
     if kind == "weekly_day":
         return today.weekday() == value.get("weekday")
+    # weekly_days (Phase 73, фидбек — несколько дней недели одним
+    # правилом: "по будням"/"по выходным"/любой свой набор дней, вместо
+    # отдельного правила на каждый день). weekly_day (в единственном
+    # числе) остаётся — не переписываем уже существующие правила,
+    # только новые создаются через weekly_days.
+    if kind == "weekly_days":
+        return today.weekday() in (value.get("weekdays") or [])
     if kind == "interval_days":
         anchor = rule.last_materialized_date or rule.created_at.date()
         interval = value.get("interval_days") or 1
@@ -38,10 +54,22 @@ def _is_due(rule: RecurringTaskRule, today: date) -> bool:
     return False
 
 
-async def create_rule(user_id: int, title: str, schedule_kind: str, schedule_value: dict) -> dict:
+async def create_rule(
+    user_id: int,
+    title: str,
+    schedule_kind: str,
+    schedule_value: dict,
+    period_start: date | None = None,
+    period_end: date | None = None,
+) -> dict:
     async with async_session() as session:
         rule = RecurringTaskRule(
-            user_id=user_id, title=title, schedule_kind=schedule_kind, schedule_value=schedule_value
+            user_id=user_id,
+            title=title,
+            schedule_kind=schedule_kind,
+            schedule_value=schedule_value,
+            period_start=period_start,
+            period_end=period_end,
         )
         session.add(rule)
         await session.commit()

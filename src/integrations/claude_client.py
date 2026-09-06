@@ -369,6 +369,126 @@ async def parse_reminder(text: str, today: date) -> ReminderPlan:
     return ReminderPlan.model_validate(tool_use.input)
 
 
+# Повторяющиеся задачи (Phase 73, фидбек) — отдельная схема/тул, НЕ
+# переиспользует ReminderPlan/parse_reminder выше: тот разбор común с
+# напоминалками (f_reminders.py), а повторяющимся задачам нужны свои
+# поля (period_start/period_end, weekdays-список) и свой механизм
+# уточняющего вопроса — трогать общую схему рискованно для не связанной
+# с этой фазой фичи напоминалок.
+_PARSE_RECURRING_TASK_TOOL = {
+    "name": "parse_recurring_task",
+    "description": (
+        "Разобрать повторяющуюся задачу, описанную пользователем на "
+        "естественном языке (в один или несколько заходов диалога), в "
+        "структурированное правило повторения. Если данных достаточно — "
+        "вернуть заполненный план. Если что-то важное неясно (не понятно, "
+        "что за задача; не понятно, как часто/в какие дни; пользователь "
+        "упомянул ограничение по времени без точной даты и т.п.) — "
+        "вернуть needs_clarification=true и один короткий уточняющий "
+        "вопрос вместо того, чтобы гадать."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "needs_clarification": {
+                "type": "boolean",
+                "description": (
+                    "true, если нужно спросить пользователя, прежде чем создавать правило"
+                ),
+            },
+            "clarification_question": {
+                "type": ["string", "null"],
+                "description": (
+                    "Один короткий вопрос пользователю, если needs_clarification=true, иначе null"
+                ),
+            },
+            "title": {
+                "type": ["string", "null"],
+                "description": "Формулировка задачи — краткая, как она будет называться каждый раз",
+            },
+            "schedule_kind": {
+                "type": ["string", "null"],
+                "enum": ["weekly_days", "monthly_day", "interval_days", None],
+                "description": (
+                    "'weekly_days' — один или несколько дней недели каждую неделю "
+                    "(будни = [0,1,2,3,4], выходные = [5,6], один день — список из "
+                    "одного числа). 'monthly_day' — определённое число каждого "
+                    "месяца (day_of_month=32 значит 'последний день месяца'). "
+                    "'interval_days' — каждые N дней начиная с сегодня."
+                ),
+            },
+            "weekdays": {
+                "type": ["array", "null"],
+                "items": {"type": "integer"},
+                "description": (
+                    "Для 'weekly_days' — список дней недели, 0=понедельник..6=воскресенье"
+                ),
+            },
+            "day_of_month": {
+                "type": ["integer", "null"],
+                "description": "Для 'monthly_day' — число 1-31, или 32 для последнего дня месяца",
+            },
+            "interval_days": {
+                "type": ["integer", "null"],
+                "description": "Для 'interval_days' — раз в сколько дней",
+            },
+            "period_start": {
+                "type": ["string", "null"],
+                "description": (
+                    "Дата начала действия правила, YYYY-MM-DD, если пользователь "
+                    "явно её называл (иначе null — по умолчанию значит 'с сегодня')"
+                ),
+            },
+            "period_end": {
+                "type": ["string", "null"],
+                "description": (
+                    "Дата конца действия правила, YYYY-MM-DD, если пользователь "
+                    "явно называл ограничение (иначе null — без окончания, самый "
+                    "частый случай для привычек)"
+                ),
+            },
+        },
+        "required": ["needs_clarification"],
+    },
+}
+
+
+class RecurringTaskPlan(BaseModel):
+    needs_clarification: bool
+    clarification_question: str | None = None
+    title: str | None = None
+    schedule_kind: Literal["weekly_days", "monthly_day", "interval_days"] | None = None
+    weekdays: list[int] | None = None
+    day_of_month: int | None = None
+    interval_days: int | None = None
+    period_start: date | None = None
+    period_end: date | None = None
+
+
+async def parse_recurring_task(conversation: str, today: date) -> RecurringTaskPlan:
+    """`conversation` — исходное сообщение пользователя, а если это уже
+    не первый заход (был уточняющий вопрос) — исходное сообщение плюс
+    вопрос(ы) и ответ(ы) одним текстом (см. handlers/f_recurring.py) —
+    без настоящего многоходового диалога через messages[] (усложнило бы
+    tool_use/tool_result-протокол без реальной пользы: Claude и так
+    видит всю историю в одном блоке текста)."""
+    response = await client.messages.create(
+        model=settings.claude_model_haiku,
+        max_tokens=400,
+        system=(
+            f"Сегодняшняя дата: {today.isoformat()}. Разбери повторяющуюся "
+            "задачу пользователя в структурированное правило."
+        ),
+        tools=[_PARSE_RECURRING_TASK_TOOL],
+        tool_choice={"type": "tool", "name": "parse_recurring_task"},
+        messages=[{"role": "user", "content": conversation}],
+    )
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+    if tool_use is None:
+        raise ValueError(f"Claude не вернул структурированный ответ на текст: {conversation!r}")
+    return RecurringTaskPlan.model_validate(tool_use.input)
+
+
 _SUGGEST_TEMPLATES_TOOL = {
     "name": "suggest_templates",
     "description": (
