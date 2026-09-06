@@ -267,14 +267,6 @@
     <div id="day-view-settings-list" class="list"></div>
   </div>
 
-  <div id="color-picker-sheet" class="bottom-sheet">
-    <div class="bottom-sheet-handle"></div>
-    <!-- Общий заголовок для обеих сущностей (Phase 54) — раньше был
-         "Цвет проекта", но пикер теперь открывается и для целей. -->
-    <p class="section-label">Цвет</p>
-    <div id="color-picker-list" class="list"></div>
-  </div>
-
   <!-- Окно создания/правки проекта/цели (Phase 33) — плавающая карточка
        по центру экрана вместо шторки снизу (см. .entity-window в CSS):
        макет обсуждали и утвердили отдельно (интерактивный прототип). -->
@@ -362,7 +354,7 @@
        "добавить" вместо кружка статуса, тап не зачёркивает текст. -->
   <div id="task-review-sheet" class="entity-window">
     <div class="entity-window-head">
-      <span class="entity-window-title">Предложенные задачи</span>
+      <span class="entity-window-title" id="task-review-title">Предложенные задачи</span>
       <button type="button" class="entity-window-close" id="task-review-close" aria-label="Закрыть">✕</button>
     </div>
     <div class="entity-window-body">
@@ -588,15 +580,6 @@
     let helpSheetOpen = false;
     let widgetSettingsOpen = false; // Phase 46 — настройка включённых виджетов аналитики
     let dayViewSettingsOpen = false; // Phase 50 — настройка отображений главной карусели
-
-    // Та же палитра, что уже показывали на макете-прототипе — 20 цветов,
-    // без внешних библиотек.
-    const PROJECT_COLORS = [
-      "#ef5b5b", "#ef7d5b", "#f0954a", "#f2b544", "#e8d24d",
-      "#c3d94e", "#8fd160", "#5fd192", "#4fcfc0", "#4fb8d9",
-      "#5b9ef0", "#6b8cf0", "#7d7ff0", "#9b6ff0", "#b869e0",
-      "#d768c9", "#ef6ba8", "#ef6b85", "#a8907a", "#98a3ad",
-    ];
 
     // Порядок — ручной (Phase 13), хранится в task.sort_order (float),
     // приходит с бэкенда и обновляется через /reorder при перетаскивании.
@@ -848,8 +831,8 @@
     // Свайп-шторка (Phase 63 — у задач убрана, используется только
     // строкой проекта/цели, см. renderEntityRow) — раньше размер считался
     // под 5 кнопок задачи (важность/событие/дата/проект/архив), теперь
-    // под 1-2 кнопки сущности (архив, для проекта ещё и цвет); само
-    // значение здесь не трогаю — лишний запас на панели сущности не
+    // под одну кнопку сущности (архив — цвет убран целиком, Phase 67);
+    // само значение здесь не трогаю — лишний запас на панели сущности не
     // менялся этой фазой, не хочу задевать не проверенное живьём.
     const SWIPE_MAX_REVEAL = 220;
     const SWIPE_OPEN_THRESHOLD = SWIPE_MAX_REVEAL * 0.2; // открыть — лёгкий свайп, то же место (зона)
@@ -1594,8 +1577,8 @@
     }
 
     // Общая строка проекта/цели в стиле задачи: кружок статуса слева,
-    // заголовок, краткие данные справа, свайп открывает 1-2 действия
-    // (архивировать, для проекта ещё и цвет). taskId в setupSwipeDrag
+    // заголовок, краткие данные справа, свайп открывает архивацию
+    // (цвет убран целиком, Phase 67). taskId в setupSwipeDrag
     // получает строковый префикс — id проекта/цели/задачи не должны
     // путаться в общем openSwipeTaskId (см. комментарий у переменной).
     function renderEntityRow(entity, kind) {
@@ -1604,19 +1587,6 @@
 
       const actions = document.createElement("div");
       actions.className = "swipe-actions";
-
-      // Цвет — теперь и у целей (Phase 54: проекты и цели одна
-      // сущность, то же поле у обеих), кнопка больше не различает kind.
-      const colorBtn = document.createElement("button");
-      colorBtn.className = "swipe-btn";
-      colorBtn.setAttribute("aria-label", "Цвет");
-      colorBtn.innerHTML = icon('<circle cx="12" cy="12" r="8"/>', 16);
-      colorBtn.style.color = entity.color || "var(--text-muted)";
-      colorBtn.onclick = () => {
-        swipeHandle.close();
-        openColorPicker(entity, kind);
-      };
-      actions.append(colorBtn);
 
       const archiveBtn = document.createElement("button");
       archiveBtn.className = "swipe-btn swipe-btn-archive";
@@ -1639,13 +1609,6 @@
       title.className = "title title-full" + (entity.done ? " done" : "");
       title.textContent = entity.title;
       content.append(title);
-
-      if (entity.color) {
-        const dot = document.createElement("span");
-        dot.className = "entity-color-dot";
-        dot.style.background = entity.color;
-        content.append(dot);
-      }
 
       // Сферы больше не показываются на строке (Phase 54 — пункт
       // "убираем отображение сфер") — meta теперь всегда даты+прогресс,
@@ -1822,70 +1785,6 @@
       }
       renderGoalsPages();
       notifyGoalsChanged();
-    }
-
-    // Sheet выбора цвета — свой отдельный sheet (не переиспользуем
-    // project-picker-sheet: у того своя видимость через render()/
-    // projectPickerOpen, смешивать состояния рискованно), но по тому же
-    // паттерну (state-переменная + рендер внутри общего render()). У
-    // цели цвет тоже есть (Phase 54 — проекты и цели одна сущность),
-    // отсюда colorPickerKind рядом с самой сущностью.
-    let colorPickerProject = null;
-    let colorPickerKind = "project";
-
-    function openColorPicker(entity, kind) {
-      colorPickerProject = entity;
-      colorPickerKind = kind;
-      render();
-    }
-
-    function closeColorPicker() {
-      colorPickerProject = null;
-      render();
-    }
-
-    function renderColorPickerList() {
-      const list = document.getElementById("color-picker-list");
-      list.innerHTML = "";
-      if (!colorPickerProject) return;
-
-      const noneRow = document.createElement("div");
-      noneRow.className = "row template-row";
-      noneRow.textContent = "Без цвета";
-      noneRow.onclick = () => setEntityColor(colorPickerProject, colorPickerKind, null);
-      list.append(noneRow);
-
-      const grid = document.createElement("div");
-      grid.className = "palette-grid";
-      grid.style.margin = "10px 0";
-      for (const hex of PROJECT_COLORS) {
-        const sw = document.createElement("div");
-        sw.className = "swatch" + (colorPickerProject.color === hex ? " selected" : "");
-        sw.style.background = hex;
-        sw.onclick = () => setEntityColor(colorPickerProject, colorPickerKind, hex);
-        grid.append(sw);
-      }
-      list.append(grid);
-    }
-
-    async function setEntityColor(entity, kind, color) {
-      closeColorPicker();
-      const prev = entity.color;
-      entity.color = color;
-      renderProjectsPage();
-      renderGoalsPages();
-      try {
-        const path =
-          kind === "project"
-            ? `/miniapp/api/projects/${entity.id}/color`
-            : `/miniapp/api/goals/${entity.id}/color`;
-        await api(path, { method: "POST", body: JSON.stringify({ color }) });
-      } catch (e) {
-        entity.color = prev;
-        renderProjectsPage();
-        renderGoalsPages();
-        alert("Не удалось изменить цвет.");
-      }
     }
 
     // ---- Sheet выбора проекта для задачи (5-я кнопка в свайп-шторке).
@@ -2530,7 +2429,6 @@
       renderProjectsPage();
       renderGoalsPages();
       renderProjectPickerList();
-      renderColorPickerList();
       renderCreateEntityForm();
       renderDatePickerGrid();
       // Сущность окна проекта/цели могла пропасть (заархивирована,
@@ -2547,7 +2445,6 @@
       const anySheetOpen =
         templatesPickerOpen ||
         projectPickerOpen ||
-        colorPickerProject !== null ||
         createEntityKind !== null ||
         datePickerOpen ||
         sideDrawerOpen ||
@@ -2563,9 +2460,6 @@
       document
         .getElementById("project-picker-sheet")
         .classList.toggle("visible", projectPickerOpen);
-      document
-        .getElementById("color-picker-sheet")
-        .classList.toggle("visible", colorPickerProject !== null);
       document
         .getElementById("create-entity-sheet")
         .classList.toggle("visible", createEntityKind !== null);
@@ -3230,7 +3124,6 @@
             spheres: draft.spheres,
             start_date: draft.start || null,
             end_date: draft.end || null,
-            color: draft.color || null,
             analyze: !!draft.analyze,
           }),
         });
@@ -3293,7 +3186,6 @@
             tier: draft.tier,
             start_date: draft.start || null,
             end_date: draft.end || null,
-            color: draft.color || null,
             analyze: !!draft.analyze,
           }),
         });
@@ -3306,7 +3198,7 @@
       }
     }
 
-    // Правка цели (Phase 28; даты/описание/цвет — Phase 54) — та же
+    // Правка цели (Phase 28; даты/описание — Phase 54) — та же
     // логика, что editProject: не дописывает локальный кэш вручную, а
     // перечитывает список целиком. Если start_date/end_date не заданы
     // явно, но тир поменялся — сервер пересчитывает период из тира (тот
@@ -3322,7 +3214,6 @@
             tier: draft.tier,
             start_date: draft.start || null,
             end_date: draft.end || null,
-            color: draft.color || null,
           }),
         });
         await loadGoals();
@@ -3352,7 +3243,6 @@
         spheres: [],
         start: "",
         end: "",
-        color: "",
         analyze: false,
         tier: kind === "goal" ? "weekly" : undefined,
       };
@@ -3376,7 +3266,6 @@
         spheres: [...(entity.spheres || [])],
         start: entity.start_date || "",
         end: entity.end_date || "",
-        color: entity.color || "",
         analyze: false,
         tier: kind === "goal" ? entity.tier || "weekly" : undefined,
       };
@@ -3389,8 +3278,7 @@
     // сохранить одна и та же. Без названия/формулировки, либо без сферы
     // у цели (единственное по-настоящему обязательное после названия) —
     // просто ничего не создаём/не сохраняем, без алертов, форма и так
-    // уже закрывается. Цвет — при отсутствии выбора назначается
-    // случайно, не остаётся пустым полем.
+    // уже закрывается.
     function commitEntityForm() {
       const kind = createEntityKind;
       if (!kind) return;
@@ -3400,9 +3288,6 @@
       if (!titleText) return;
       if (!isProject && !draft.spheres.length) return;
 
-      if (!draft.color) {
-        draft.color = PROJECT_COLORS[Math.floor(Math.random() * PROJECT_COLORS.length)];
-      }
       if (isProject) {
         if (createEntityEditingId != null) editProject(createEntityEditingId, draft);
         else createProject(draft);
@@ -3656,6 +3541,17 @@
         taskReviewItems = titles.map((title, i) => ({ title, selected: false, sortOrder: i }));
         taskReviewEditMode = false;
         taskReviewOpen = true;
+        // Название окна включает название проекта/цели (Phase 67,
+        // фидбек) — пользователь может нажать "сгенерировать" и уйти на
+        // другое окошко, вернувшись позже не должен гадать, к чему
+        // относится список. Фиксируется один раз при открытии, не
+        // переживает смену сущности другим способом — этого достаточно,
+        // окно всё равно закрывается перед следующим открытием.
+        const entityList = kind === "project" ? projectsData : goalsData;
+        const entity = entityList.find((e) => e.id === entityId);
+        document.getElementById("task-review-title").textContent = entity
+          ? `Предложенные задачи по: ${entity.title}`
+          : "Предложенные задачи";
         renderTaskReviewList();
         render();
       } catch (e) {
@@ -3944,21 +3840,6 @@
         });
       datesWrap.append(startBtn, endBtn);
       container.append(datesWrap);
-
-      const colorGrid = document.createElement("div");
-      colorGrid.className = "palette-grid";
-      colorGrid.style.margin = "10px 0";
-      for (const hex of PROJECT_COLORS) {
-        const sw = document.createElement("div");
-        sw.className = "swatch" + (createEntityDraft.color === hex ? " selected" : "");
-        sw.style.background = hex;
-        sw.onclick = () => {
-          createEntityDraft.color = createEntityDraft.color === hex ? "" : hex;
-          render();
-        };
-        colorGrid.append(sw);
-      }
-      container.append(colorGrid);
 
       const toggleRow = document.createElement("div");
       toggleRow.className = "entity-form-toggle-row";
@@ -4382,8 +4263,8 @@
         "</div>" +
         '<div class="help-section"><h4>Проекты и цели</h4>' +
         helpRow(null, "Тот же принцип, что у задач — тап по кружку отмечает выполненным.") +
-        helpRow(swipeGestureIcon(), "Свайп открывает архив и цвет.") +
-        helpRow(longPressGestureIcon(), "Долгое нажатие открывает окно редактирования — название, сфера, даты, цвет.") +
+        helpRow(swipeGestureIcon(), "Свайп открывает архив.") +
+        helpRow(longPressGestureIcon(), "Долгое нажатие открывает окно редактирования — название, сфера, даты.") +
         helpRow(null, "Цели разбиты по срокам — недельные, месячные, годовые, каждый список отдельно.") +
         helpRow(
           null,
@@ -4963,11 +4844,6 @@
       closeProjectPicker
     );
     attachSheetOverswipeClose(
-      document.getElementById("color-picker-sheet"),
-      document.getElementById("color-picker-list"),
-      closeColorPicker
-    );
-    attachSheetOverswipeClose(
       document.getElementById("widget-settings-sheet"),
       document.getElementById("widget-settings-list"),
       closeWidgetSettingsSheet
@@ -5076,8 +4952,6 @@
         closeTemplatesPicker();
       } else if (projectPickerOpen) {
         closeProjectPicker();
-      } else if (colorPickerProject !== null) {
-        closeColorPicker();
       } else if (datePickerOpen) {
         // Проверяем раньше createEntityKind — календарь открыт поверх
         // формы (см. z-index #date-picker-sheet), тап мимо карточки

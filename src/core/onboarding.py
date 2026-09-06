@@ -24,7 +24,7 @@ async def seed_onboarding_data(user_id: int, today: date) -> None:
     project = await projects_repo.create_project(
         user_id,
         title="Пробный проект",
-        description="Можно переименовать, поменять сферу/цвет или удалить — это просто пример.",
+        description="Можно переименовать, поменять сферу или удалить — это просто пример.",
         spheres=[_SEED_SPHERE],
         start_date=today,
         end_date=None,

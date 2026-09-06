@@ -13,7 +13,6 @@ def _serialize(project: Project, task_count: int, done_count: int) -> dict:
         "title": project.title,
         "description": project.description,
         "spheres": project.spheres,
-        "color": project.color,
         "done": project.done,
         "start_date": project.start_date.isoformat() if project.start_date else None,
         "end_date": project.end_date.isoformat() if project.end_date else None,
@@ -85,7 +84,6 @@ async def create_project(
     spheres: list[str],
     start_date: date | None,
     end_date: date | None,
-    color: str | None = None,
     tier: str | None = None,
 ) -> dict:
     async with async_session() as session:
@@ -96,7 +94,6 @@ async def create_project(
             spheres=spheres,
             start_date=start_date,
             end_date=end_date,
-            color=color,
             tier=tier,
         )
         session.add(project)
@@ -140,13 +137,6 @@ async def set_project_done(project_id: int, user_id: int, done: bool) -> None:
     async with async_session() as session:
         project = await _get_owned(session, project_id, user_id)
         project.done = done
-        await session.commit()
-
-
-async def set_project_color(project_id: int, user_id: int, color: str | None) -> None:
-    async with async_session() as session:
-        project = await _get_owned(session, project_id, user_id)
-        project.color = color
         await session.commit()
 
 

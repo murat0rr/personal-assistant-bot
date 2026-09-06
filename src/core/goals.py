@@ -61,7 +61,7 @@ def _serialize(project: dict) -> dict:
     """`project` — уже сериализованный projects_repo._serialize dict
     (не ORM-модель) — здесь только переупаковка под форму, которую
     ожидают потребители цели: id/description/spheres/tier/start_date/
-    end_date/title/done/color те же имена, что у проекта (см. комментарий
+    end_date/title/done те же имена, что у проекта (см. комментарий
     выше). task_count/done_count — новые в этом ответе (Phase 54): у
     прежней самостоятельной Goal их не было, задача не имела настоящей
     связи с целью; теперь есть бесплатно, и фронтенд показывает их в
@@ -75,7 +75,6 @@ def _serialize(project: dict) -> dict:
         "end_date": project["end_date"],
         "title": project["title"],
         "done": project["done"],
-        "color": project["color"],
         "task_count": project["task_count"],
         "done_count": project["done_count"],
     }
@@ -89,14 +88,13 @@ async def create_goal(
     period_end: date | None,
     title: str,
     description: str | None = None,
-    color: str | None = None,
 ) -> dict:
-    # description/color — необязательные, добавлены в конце (Phase 54) —
+    # description — необязательное, добавлено в конце (Phase 54) —
     # handlers/f_goals.py зовёт эту функцию позиционно только первыми
     # шестью аргументами, новые параметры туда не долетают и остаются
     # None, старое поведение не меняется.
     project = await projects_repo.create_project(
-        user_id, title, description, spheres, period_start, period_end, color=color, tier=tier
+        user_id, title, description, spheres, period_start, period_end, tier=tier
     )
     return _serialize(project)
 
@@ -111,7 +109,6 @@ async def create_goal_now(
     period_start: date | None = None,
     period_end: date | None = None,
     description: str | None = None,
-    color: str | None = None,
 ) -> dict:
     """Ручное создание цели из Mini App (Phase 26) — период считается по
     тиру и опорной дате, ЕСЛИ не передан явно (Phase 54: теперь можно
@@ -121,9 +118,7 @@ async def create_goal_now(
     if period_start is None and period_end is None:
         bounds = GOAL_TIER_BOUNDS.get(tier)
         period_start, period_end = bounds(reference_date or today) if bounds else (None, None)
-    return await create_goal(
-        user_id, spheres, tier, period_start, period_end, title, description, color
-    )
+    return await create_goal(user_id, spheres, tier, period_start, period_end, title, description)
 
 
 async def update_goal(
@@ -136,14 +131,14 @@ async def update_goal(
     reference_date: date | None = None,
     period_start: date | None = None,
     period_end: date | None = None,
-    color: str | None = None,
 ) -> None:
-    """Правка полей цели из карточки Mini App (Phase 28; даты/цвет —
-    Phase 54) — все аргументы опциональны, передаётся только то, что
-    реально поменялось. Если явно переданы period_start/period_end —
-    используются как есть (как у проекта). Иначе, если поменялся тир
-    и/или reference_date — период пересчитывается из тира (старое
-    поведение, теперь фолбэк, не единственный путь)."""
+    """Правка полей цели из карточки Mini App (Phase 28; даты — Phase 54,
+    цвет убран целиком — Phase 67) — все аргументы опциональны,
+    передаётся только то, что реально поменялось. Если явно переданы
+    period_start/period_end — используются как есть (как у проекта).
+    Иначе, если поменялся тир и/или reference_date — период
+    пересчитывается из тира (старое поведение, теперь фолбэк, не
+    единственный путь)."""
     if (
         period_start is None
         and period_end is None
@@ -171,8 +166,6 @@ async def update_goal(
         end_date=period_end,
         tier=tier,
     )
-    if color is not None:
-        await projects_repo.set_project_color(goal_id, user_id, color)
 
 
 async def list_goals_for_period(

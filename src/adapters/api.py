@@ -235,7 +235,6 @@ class CreateProjectRequest(BaseModel):
     spheres: SpheresField = []
     start_date: str | None = None
     end_date: str | None = None
-    color: str | None = None
     analyze: bool = False
 
 
@@ -256,10 +255,6 @@ class SetTaskSphereRequest(BaseModel):
 
 class SetDoneRequest(BaseModel):
     done: bool
-
-
-class SetColorRequest(BaseModel):
-    color: str | None = None
 
 
 class EditProjectRequest(BaseModel):
@@ -284,7 +279,6 @@ class CreateGoalRequest(BaseModel):
     tier: str
     start_date: str | None = None
     end_date: str | None = None
-    color: str | None = None
     analyze: bool = False
     reference_date: str | None = None
 
@@ -299,7 +293,6 @@ class EditGoalRequest(BaseModel):
     tier: str | None = None
     start_date: str | None = None
     end_date: str | None = None
-    color: str | None = None
     reference_date: str | None = None
 
 
@@ -709,7 +702,7 @@ async def create_project_endpoint(
     start = date.fromisoformat(payload.start_date) if payload.start_date else None
     end = date.fromisoformat(payload.end_date) if payload.end_date else None
     project = await projects_repo.create_project(
-        uid, payload.title, payload.description, payload.spheres, start, end, payload.color
+        uid, payload.title, payload.description, payload.spheres, start, end
     )
     # payload.analyze больше не запускает ничего на бэкенде (Phase 52) —
     # это чисто фронтендный триггер: после успешного сохранения он сам
@@ -735,17 +728,6 @@ async def set_project_done_endpoint(
 ) -> dict[str, str]:
     try:
         await projects_repo.set_project_done(project_id, user["id"], payload.done)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail="project not found") from exc
-    return {"status": "ok"}
-
-
-@app.post("/miniapp/api/projects/{project_id}/color")
-async def set_project_color_endpoint(
-    project_id: int, payload: SetColorRequest, user: dict = Depends(get_authorized_user)
-) -> dict[str, str]:
-    try:
-        await projects_repo.set_project_color(project_id, user["id"], payload.color)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="project not found") from exc
     return {"status": "ok"}
@@ -855,7 +837,6 @@ async def create_goal_endpoint(
         period_start=start,
         period_end=end,
         description=payload.description,
-        color=payload.color,
     )
     # payload.analyze больше не запускает ничего на бэкенде (Phase 52) —
     # см. тот же комментарий в create_project_endpoint выше.
@@ -868,21 +849,6 @@ async def set_goal_done_endpoint(
 ) -> dict[str, str]:
     try:
         await goals_repo.set_goal_done(goal_id, user["id"], payload.done)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail="goal not found") from exc
-    return {"status": "ok"}
-
-
-# Цвет у цели (Phase 54 — проекты и цели одна сущность, то же поле,
-# что у проекта) — своя пара маршрут/функция, а не переиспользование
-# set_project_color_endpoint напрямую: URL-поверхность у целей везде
-# остаётся под /goals/*, тем же паттерном, что done/archive/edit выше.
-@app.post("/miniapp/api/goals/{goal_id}/color")
-async def set_goal_color_endpoint(
-    goal_id: int, payload: SetColorRequest, user: dict = Depends(get_authorized_user)
-) -> dict[str, str]:
-    try:
-        await projects_repo.set_project_color(goal_id, user["id"], payload.color)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="goal not found") from exc
     return {"status": "ok"}
@@ -918,7 +884,6 @@ async def edit_goal_endpoint(
             reference_date=reference_date,
             period_start=start,
             period_end=end,
-            color=payload.color,
         )
         if payload.description is not None:
             await projects_repo.update_project(goal_id, user["id"], description=payload.description)

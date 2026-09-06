@@ -39,8 +39,7 @@ class Project(Base):
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # Phase 26 — отображение в стиле задач (Mini App): свой статус
     # выполнено/не выполнено (не выводится автоматически из прогресса
-    # задач — управляется вручную, как у Task) и цвет из фиксированной
-    # палитры 20 цветов (hex-строка, см. index.html::PROJECT_COLORS).
+    # задач — управляется вручную, как у Task). Цвет (была фиксированная
+    # палитра 20 цветов) убран целиком — Phase 67, фидбек.
     done: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
-    color: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
