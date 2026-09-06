@@ -111,7 +111,11 @@ export function createMonthChartWidget(ctx) {
           const remainingH = (remaining / max) * plotH;
           const doneY = padTop + plotH - doneH;
           const remainingY = doneY - remainingH;
-          const doneRect = `<rect x="${x + 0.5}" y="${doneY}" width="${barWidth}" height="${Math.max(doneH, done > 0 ? 1 : 0)}" fill="var(--accent)" rx="1"/>`;
+          // БАГ (Phase 77, фидбек): раньше здесь не было opacity вообще —
+          // если сегодня выходной, столбик "сделано" красился как будний
+          // (полная непрозрачность), хотя все остальные выходные дни
+          // (прошлые/будущие ветки ниже) корректно применяют opacity.
+          const doneRect = `<rect x="${x + 0.5}" y="${doneY}" width="${barWidth}" height="${Math.max(doneH, done > 0 ? 1 : 0)}" fill="var(--accent)" opacity="${opacity}" rx="1"/>`;
           const remainingRect =
             remaining > 0
               ? `<rect x="${x + 0.5}" y="${remainingY}" width="${barWidth}" height="${Math.max(remainingH, 1)}" fill="var(--text-muted)" opacity="0.6" rx="1"/>`

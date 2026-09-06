@@ -670,6 +670,32 @@ async def archive_recurring_rule_endpoint(
     return {"status": "ok"}
 
 
+# Правка уже существующего правила (Phase 77, фидбек — окно
+# редактирования по долгому нажатию на повторяющуюся задачу) — тот же
+# payload/конвертация, что у создания (CreateRecurringRuleRequest/
+# _recurring_request_to_value), одного набора полей достаточно для
+# обоих сценариев.
+@app.post("/miniapp/api/recurring-rules/{rule_id}/edit")
+async def edit_recurring_rule_endpoint(
+    rule_id: int, payload: CreateRecurringRuleRequest, user: dict = Depends(get_authorized_user)
+) -> dict:
+    value = _recurring_request_to_value(payload)
+    period_start = date.fromisoformat(payload.period_start) if payload.period_start else None
+    period_end = date.fromisoformat(payload.period_end) if payload.period_end else None
+    try:
+        return await recurring_tasks_repo.update_rule(
+            rule_id,
+            user["id"],
+            payload.title,
+            payload.schedule_kind,
+            value,
+            period_start,
+            period_end,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="not found") from exc
+
+
 @app.get("/miniapp/api/briefing")
 async def briefing(user: dict = Depends(get_authorized_user)) -> dict:
     return {"weather": await get_weather_summary(user["id"])}

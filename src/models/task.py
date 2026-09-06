@@ -74,6 +74,19 @@ class Task(Base):
     # строки с priority="event" переведены миграцией в is_event=true,
     # priority="средний" (см. migrations/).
     is_event: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Phase 77 — обратная ссылка на правило-источник (source="recurring"
+    # само по себе уже проставлялось материализацией, но не позволяло
+    # найти КОНКРЕТНОЕ правило от конкретного occurrence). Нужна для
+    # окна редактирования по долгому нажатию на повторяющуюся задачу —
+    # без неё редактировать можно было только сам occurrence, не всю
+    # серию. NULL у всех задач, не рождённых из правила — тот же
+    # принцип, что у остальных nullable-полей источника (google_event_id
+    # и т.п.). Правило может быть удалено, а материализованные из него
+    # задачи — остаться (см. core/recurring_tasks.py::archive_rule) —
+    # ondelete="SET NULL", чтобы это не мешало.
+    recurring_rule_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("recurring_task_rules.id", ondelete="SET NULL"), nullable=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

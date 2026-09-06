@@ -200,7 +200,15 @@
        макет: https://claude.ai/code/artifact/5264c16f-611d-466a-891f-9601adbb56fa -->
   <div id="ext-panel-tasks" style="display:none">
     <div class="section">
-      <p class="section-label">Задачи</p>
+      <!-- Раскрывашка (Phase 77, фидбек) — тот же приём, что у инбокса
+           (#inbox-header/#inbox-body): свёрнуто по умолчанию, видна
+           только эта строка со счётчиком; фильтры и список — только
+           после разворачивания. -->
+      <p class="section-label section-header" id="tasks-header">
+        <span id="tasks-header-title">Задачи</span>
+        <span class="chevron" id="tasks-chevron"></span>
+      </p>
+      <div id="tasks-body" style="display: none;">
       <div class="filter-bar">
         <button class="filter-chip" id="tasks-filter-date-btn" type="button">
           <span>Дата</span><span class="filter-chip-caret">▾</span>
@@ -244,6 +252,7 @@
         <span>🔁 Повторяющиеся задачи</span>
         <span class="drawer-link-chevron">›</span>
       </button>
+      </div>
     </div>
   </div>
 
@@ -425,7 +434,7 @@
        #project-detail-sheet. -->
   <div id="recurring-rule-form-sheet" class="entity-window">
     <div class="entity-window-head">
-      <span class="entity-window-title">Новое правило</span>
+      <span class="entity-window-title" id="recurring-rule-form-title">Новое правило</span>
       <button type="button" class="entity-window-close" id="recurring-rule-form-close" aria-label="Закрыть">✕</button>
     </div>
     <div class="entity-window-body">
@@ -462,6 +471,12 @@
         <button type="button" class="entity-form-toggle on" id="recurring-no-end-toggle"></button>
       </div>
       <button type="button" class="entity-form-submit" id="recurring-rule-submit">Создать правило</button>
+      <!-- Только в режиме правки уже существующего правила (Phase 77,
+           фидбек: "экран редактирования... похож на режим
+           редактирования проектов и целей") — тот же приём, что у
+           deleteEditingEntity: не отдельная кнопка в списке правил
+           (та убрана), а кнопка прямо в форме, как у проекта/цели. -->
+      <button type="button" class="entity-form-submit task-edit-delete" id="recurring-rule-delete" style="display:none">Удалить правило</button>
     </div>
   </div>
 
@@ -1143,7 +1158,18 @@
       return true;
     }
 
+    // Заголовок раскрывашки (Phase 77) — счётчик всех неархивированных
+    // задач, тот же принцип, что у "Инбокс (N)" — общее число, не
+    // зависящее от текущих фильтров (те не видны, пока свёрнуто).
+    function renderTasksScreenHeader() {
+      const el = document.getElementById("tasks-header-title");
+      if (!el) return;
+      const count = allNonArchivedTasksFlat().length;
+      el.textContent = count ? `Задачи (${count})` : "Задачи";
+    }
+
     function renderTasksScreen() {
+      renderTasksScreenHeader();
       const listEl = document.getElementById("tasks-screen-list");
       if (!listEl) return; // разметка экрана ещё не отрендерилась (не должно случаться)
       // "Удалённые" в фильтре статуса (Phase 75, фидбек: "фильтр только
@@ -1336,6 +1362,10 @@
     let recurringRulesData = [];
     let recurringRulesSheetOpen = false;
     let recurringRuleFormOpen = false;
+    // Правка уже существующего правила (Phase 77) — null значит форма в
+    // режиме создания, тот же принцип, что createEntityEditingId у
+    // проекта/цели.
+    let editingRuleId = null;
     const _WEEKDAY_SHORT_JS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
     async function loadRecurringRules() {
@@ -1380,6 +1410,13 @@
       for (const rule of recurringRulesData) listEl.append(renderRecurringRuleRow(rule));
     }
 
+    // Тап по строке открывает форму редактирования, предзаполненную
+    // текущими значениями (Phase 77, фидбек — "похоже на режим
+    // редактирования проектов и целей": там тоже тап/долгое нажатие
+    // открывает форму, а удаление — кнопкой уже в самой форме, не
+    // отдельной кнопкой в списке, см. deleteEditingEntity/
+    // renderCreateEntityForm). Прежняя видимая кнопка удаления в
+    // строке убрана — теперь только в форме (#recurring-rule-delete).
     function renderRecurringRuleRow(rule) {
       const row = document.createElement("div");
       row.className = "row";
@@ -1392,12 +1429,7 @@
         `<div class="rule-row-period">${describeRulePeriod(rule)}</div>`;
       row.append(main);
 
-      const deleteBtn = document.createElement("button");
-      deleteBtn.className = "small-btn archive-btn";
-      deleteBtn.setAttribute("aria-label", "Удалить правило");
-      deleteBtn.innerHTML = archiveIcon();
-      deleteBtn.onclick = () => deleteRecurringRule(rule);
-      row.append(deleteBtn);
+      row.addEventListener("click", () => openRecurringRuleForm(rule));
 
       return row;
     }
@@ -1421,13 +1453,21 @@
       recurringRulesSheetOpen = false;
       render();
     }
-    function openRecurringRuleForm() {
-      resetRecurringRuleForm();
+    // existingRule — правило для правки (Phase 77), передаётся из
+    // renderRecurringRuleRow (тап по строке) и из окна редактирования
+    // задачи (см. openTaskEditSheet — тап "Правила" у occurrence,
+    // найденного через task.recurring_rule_id). Без аргумента — обычное
+    // создание нового правила, как и раньше.
+    function openRecurringRuleForm(existingRule) {
+      editingRuleId = existingRule ? existingRule.id : null;
+      recurringDraft = existingRule ? ruleToRecurringDraft(existingRule) : emptyRecurringDraft();
+      syncRecurringFormFromDraft();
       recurringRuleFormOpen = true;
       render();
     }
     function closeRecurringRuleForm() {
       recurringRuleFormOpen = false;
+      editingRuleId = null;
       render();
     }
 
@@ -1477,18 +1517,57 @@
       endBtn.disabled = recurringDraft.noEnd;
     }
 
-    function resetRecurringRuleForm() {
-      recurringDraft = emptyRecurringDraft();
-      document.getElementById("recurring-rule-title").value = "";
-      document
-        .querySelectorAll("#recurring-kind-row .sphere-chip")
-        .forEach((c) => c.classList.toggle("selected", c.dataset.kind === "weekly_day"));
-      document.getElementById("recurring-weekday-detail").style.display = "";
-      document.getElementById("recurring-monthday-detail").style.display = "none";
+    // rule._serialize (core/recurring_tasks.py) уже свёл legacy
+    // weekly_day и новый weekly_days к единому списку weekdays — здесь
+    // остаётся только развернуть его обратно в форму. interval_days
+    // (доступен лишь через ИИ-сценарий бота, Phase 73) форма Mini App
+    // пока не умеет создавать/показывать отдельным видом — сознательное
+    // ограничение (то же самое уже верно и для создания, не regression):
+    // такое правило откроется как "День недели" с уже стоящими днями,
+    // сохранение перепишет его на weekly_days, что осмысленно совпадает
+    // с текущими границами формы.
+    function ruleToRecurringDraft(rule) {
+      const isMonthly = rule.schedule_kind === "monthly_day";
+      return {
+        title: rule.title,
+        uiKind: isMonthly ? "monthly" : "weekly",
+        weekdays: !isMonthly && rule.weekdays && rule.weekdays.length ? [...rule.weekdays] : [0],
+        monthday: isMonthly && rule.day_of_month ? rule.day_of_month : 1,
+        periodStart: rule.period_start || "",
+        periodEnd: rule.period_end || "",
+        noEnd: !rule.period_end,
+      };
+    }
+
+    // Заполняет статичную разметку формы текущим recurringDraft — общая
+    // точка и для чистого создания (recurringDraft только что сброшен
+    // на emptyRecurringDraft), и для правки существующего правила
+    // (recurringDraft только что заполнен из ruleToRecurringDraft) —
+    // тот же принцип, что renderTaskEditSheet/renderCreateEntityForm.
+    function syncRecurringFormFromDraft() {
+      document.getElementById("recurring-rule-title").value = recurringDraft.title;
+      document.querySelectorAll("#recurring-kind-row .sphere-chip").forEach((c) => {
+        const kind = c.dataset.kind;
+        const selected =
+          (recurringDraft.uiKind === "weekly" && kind === "weekly_day") ||
+          (recurringDraft.uiKind === "monthly" && kind === "monthly_day");
+        c.classList.toggle("selected", selected);
+      });
+      document.getElementById("recurring-weekday-detail").style.display =
+        recurringDraft.uiKind === "weekly" ? "" : "none";
+      document.getElementById("recurring-monthday-detail").style.display =
+        recurringDraft.uiKind === "monthly" ? "" : "none";
       syncRecurringWeekdayButtons();
       syncRecurringMonthdayButtons();
-      document.getElementById("recurring-no-end-toggle").classList.add("on");
+      document.getElementById("recurring-no-end-toggle").classList.toggle("on", recurringDraft.noEnd);
       syncRecurringPeriodButtons();
+      document.getElementById("recurring-rule-form-title").textContent = editingRuleId
+        ? "Изменить правило"
+        : "Новое правило";
+      document.getElementById("recurring-rule-submit").textContent = editingRuleId
+        ? "Сохранить"
+        : "Создать правило";
+      document.getElementById("recurring-rule-delete").style.display = editingRuleId ? "" : "none";
     }
 
     document.getElementById("recurring-rule-title").addEventListener("input", (e) => {
@@ -1585,13 +1664,25 @@
         period_start: recurringDraft.periodStart || null,
         period_end: recurringDraft.noEnd ? null : recurringDraft.periodEnd || null,
       };
+      const path = editingRuleId
+        ? `/miniapp/api/recurring-rules/${editingRuleId}/edit`
+        : "/miniapp/api/recurring-rules";
       try {
-        await api("/miniapp/api/recurring-rules", { method: "POST", body: JSON.stringify(payload) });
+        await api(path, { method: "POST", body: JSON.stringify(payload) });
         closeRecurringRuleForm();
         await loadRecurringRules();
       } catch (e) {
-        alert("Не удалось создать правило.");
+        alert(editingRuleId ? "Не удалось сохранить правило." : "Не удалось создать правило.");
       }
+    };
+    // Удаление (Phase 77) — та же логика, что deleteEditingEntity у
+    // проекта/цели: закрыть форму и удалить, без обычного сохранения
+    // (иначе только что удалённое правило тут же пересоздалось бы).
+    document.getElementById("recurring-rule-delete").onclick = async () => {
+      if (editingRuleId == null) return;
+      const rule = recurringRulesData.find((r) => r.id === editingRuleId);
+      closeRecurringRuleForm();
+      if (rule) await deleteRecurringRule(rule);
     };
 
     document.getElementById("open-recurring-rule-form-btn").onclick = () => openRecurringRuleForm();
@@ -3307,6 +3398,17 @@
         } catch (err) {
           // Жест не должен молча ломаться из-за этого — редкий случай.
         }
+        // БАГ (Phase 77, фидбек: "с компа не работает прозрачность 70%") —
+        // .grip уже touch-action:none (гасит нативный скролл ПАЛЬЦЕМ), но
+        // touch-action на мышь не действует вообще (спецификация). Без
+        // preventDefault мышиный жест мог инициировать нативное поведение
+        // браузера (drag-image и т.п.), из-за которого класс
+        // cal-inbox-row-dragging не успевал повлиять на кадр — тот же
+        // приём, что уже есть у setupDragReorder (см. onDocPointerMove
+        // там), только тот вешает его в pointermove; здесь — сразу и на
+        // pointerdown тоже, раз жест стартует немедленно (без порога), в
+        // отличие от переноса.
+        e.preventDefault();
       });
 
       function positionGhost(x, y) {
@@ -3324,6 +3426,7 @@
           hoveredDay = dayEl || null;
           if (hoveredDay) hoveredDay.classList.add("drag-hover");
         }
+        e.preventDefault();
       });
 
       function endDrag(e) {
@@ -5983,11 +6086,15 @@
       const label = `${d}.${m}.${y}`;
 
       if (todayIso !== null && iso >= todayIso) {
-        // Сегодня/будущее — полноценный список задач дня вместо прежнего
-        // упрощённого read-only списка (item 3, Phase 35): тот же
-        // компонент, что и в недельном виде, с чекбоксами, свайпом,
-        // переносом и добавлением задач прямо на этот день.
-        el.classList.remove("visible");
+        // Сегодня/будущее — полноценный список задач дня (item 3, Phase
+        // 35), тот же компонент, что и в недельном виде, с чекбоксами,
+        // свайпом, переносом и добавлением задач прямо на этот день.
+        // Маленькая строка с датой перед списком (Phase 77, фидбек:
+        // "через небольшое расстояние — строчка задачи на этот день, и
+        // уже потом список") — тот же .day-info-title, что и у
+        // прошедшего дня ниже, просто без ревью дневника под ним.
+        el.classList.add("visible");
+        el.innerHTML = `<p class="day-info-title">${label}</p>`;
         renderMonthDayDetail(iso);
         return;
       }
@@ -6039,6 +6146,17 @@
       calInboxExpanded = !calInboxExpanded;
       document.getElementById("cal-inbox-body").style.display = calInboxExpanded ? "" : "none";
       document.getElementById("cal-inbox-chevron").classList.toggle("expanded", calInboxExpanded);
+    };
+
+    // Тот же приём для всего экрана "Задачи" (Phase 77, фидбек) — свёрнут
+    // по умолчанию, видна только строка со счётчиком (см.
+    // renderTasksScreenHeader), фильтры и список — только развернув.
+    let tasksExpanded = false;
+    document.getElementById("tasks-chevron").innerHTML = chevronIcon();
+    document.getElementById("tasks-header").onclick = () => {
+      tasksExpanded = !tasksExpanded;
+      document.getElementById("tasks-body").style.display = tasksExpanded ? "" : "none";
+      document.getElementById("tasks-chevron").classList.toggle("expanded", tasksExpanded);
     };
 
     attachSheetOverswipeClose(
@@ -6118,12 +6236,25 @@
       closeTaskEditSheet(false);
       if (task) archiveTask(task);
     });
-    // "Правила" в пометке повторяющейся задачи (Phase 75) — сохраняет
-    // правки этого occurrence как обычное закрытие формы, и сразу
-    // переоткрывает уже существующий список правил повторения (Phase 74),
-    // а не пытается сделать что-то новое поверх открытой формы задачи.
-    document.getElementById("task-edit-open-rules").addEventListener("click", () => {
+    // "Правила" в пометке повторяющейся задачи — сохраняет правки этого
+    // occurrence как обычное закрытие формы (Phase 75), а дальше (Phase
+    // 77, фидбек: "экран редактирования при зажатии задачи, похожий на
+    // режим редактирования проектов и целей") открывает СРАЗУ форму
+    // редактирования КОНКРЕТНОГО правила — task.recurring_rule_id (см.
+    // models/task.py) указывает, какое именно. Список правил — только
+    // запасной путь, если правило почему-то не нашлось (уже удалено,
+    // или recurringRulesData ещё не грузились ни разу в этой сессии).
+    document.getElementById("task-edit-open-rules").addEventListener("click", async () => {
+      const task = editingTaskId != null ? findTaskById(editingTaskId) : null;
       closeTaskEditSheet(true);
+      if (task && task.recurring_rule_id != null) {
+        await loadRecurringRules();
+        const rule = recurringRulesData.find((r) => r.id === task.recurring_rule_id);
+        if (rule) {
+          openRecurringRuleForm(rule);
+          return;
+        }
+      }
       openRecurringRulesSheet();
     });
     document.getElementById("template-edit-close").addEventListener("click", () => closeTemplateEditSheet(true));

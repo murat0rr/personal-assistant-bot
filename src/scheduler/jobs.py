@@ -174,12 +174,11 @@ async def _tidy_inbox_job(bot: Bot, user_id: int) -> None:
         if changes:
             await session.commit()
 
+    # Уведомление в чат убрано (Phase 77, фидбек) — правки заголовков
+    # по-прежнему происходят и логируются, просто больше не приходят
+    # отдельным сообщением каждое утро.
     if changes:
-        lines = "\n".join(f"— «{old}» → «{new}»" for old, new in changes)
-        await bot.send_message(
-            chat_id=user_id,
-            text=f"🧹 Причесал заголовки в инбоксе:\n{lines}",
-        )
+        logger.info("Причесал заголовки в инбоксе (%s): %s", user_id, changes)
 
 
 async def _cleanup_old_messages(bot: Bot, user_id: int) -> None:

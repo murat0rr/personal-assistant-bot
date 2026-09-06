@@ -33,6 +33,10 @@ def serialize_task(task: Task) -> dict:
         # source="recurring" уже проставлялся материализацией
         # (core/recurring_tasks.py), просто не отдавался на фронтенд.
         "source": task.source,
+        # Phase 77 — какое правило породило этот occurrence (см.
+        # models/task.py), нужно окну редактирования по долгому нажатию,
+        # чтобы найти правило в уже загруженном recurringRulesData.
+        "recurring_rule_id": task.recurring_rule_id,
     }
 
 

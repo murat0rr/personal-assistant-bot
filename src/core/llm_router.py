@@ -1,5 +1,6 @@
 from typing import Literal
 
+from src.core import prompts
 from src.core.config import settings
 from src.integrations.claude_client import client
 
@@ -32,7 +33,7 @@ async def classify_intent(text: str) -> Intent:
     response = await client.messages.create(
         model=settings.claude_model_haiku,
         max_tokens=50,
-        system="Классифицируй запрос пользователя по одному из сценариев.",
+        system=prompts.CLASSIFY_INTENT,
         tools=[_CLASSIFY_INTENT_TOOL],
         tool_choice={"type": "tool", "name": "classify_intent"},
         messages=[{"role": "user", "content": text}],

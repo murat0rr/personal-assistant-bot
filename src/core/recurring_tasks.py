@@ -67,6 +67,8 @@ def _materialize(rule: RecurringTaskRule, today: date) -> Task:
         sort_order=time.time(),
         sphere=rule.sphere,
         project_id=rule.project_id,
+        # Phase 77 — обратная ссылка на правило, см. models/task.py.
+        recurring_rule_id=rule.id,
     )
 
 
@@ -191,3 +193,31 @@ async def archive_rule(rule_id: int, user_id: int) -> None:
             raise ValueError("recurring rule not found")
         rule.archived = True
         await session.commit()
+
+
+async def update_rule(
+    rule_id: int,
+    user_id: int,
+    title: str,
+    schedule_kind: str,
+    schedule_value: dict,
+    period_start: date | None,
+    period_end: date | None,
+) -> dict:
+    """Правка уже существующего правила (Phase 77, фидбек — окно
+    редактирования по долгому нажатию на повторяющуюся задачу, тот же
+    принцип, что update_project/update_goal). Меняет только само
+    правило — уже материализованные Task-строки прошлых дней не
+    трогает (та же логика, что и у archive_rule: они независимы от
+    правила после создания)."""
+    async with async_session() as session:
+        rule = await session.get(RecurringTaskRule, rule_id)
+        if rule is None or rule.user_id != user_id:
+            raise ValueError("recurring rule not found")
+        rule.title = title
+        rule.schedule_kind = schedule_kind
+        rule.schedule_value = schedule_value
+        rule.period_start = period_start
+        rule.period_end = period_end
+        await session.commit()
+    return _serialize(rule)

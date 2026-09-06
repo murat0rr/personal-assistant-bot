@@ -4,6 +4,7 @@ from typing import Literal
 from anthropic import AsyncAnthropic
 from pydantic import BaseModel
 
+from src.core import prompts
 from src.core.config import settings
 
 # Та же таксономия, что и везде в проекте (Task.sphere/Project.spheres/
@@ -109,15 +110,7 @@ async def extract_tasks_fields(text: str, today: date) -> list[TaskFields]:
         # предложений на каждую задачу, а сообщение может называть
         # несколько сразу.
         max_tokens=1200,
-        system=(
-            f"Сегодняшняя дата: {today.isoformat()}. Извлеки из сообщения "
-            "пользователя одну или несколько задач: если в тексте перечислено "
-            "несколько самостоятельных дел (через запятую, союз 'и' и т.п.) — "
-            "верни отдельный объект на каждое, не объединяй их в одну задачу. "
-            "Для каждой — название, срок (переведи относительные даты вроде "
-            "'завтра'/'послезавтра' в конкретную дату YYYY-MM-DD), приоритет и, "
-            "если применимо, описание (см. схему поля description)."
-        ),
+        system=prompts.extract_tasks_fields(today),
         tools=[_EXTRACT_TASKS_TOOL],
         tool_choice={"type": "tool", "name": "extract_tasks"},
         messages=[{"role": "user", "content": text}],
@@ -169,14 +162,7 @@ async def maybe_generate_task_description(title: str, due_date: date | None) -> 
     response = await client.messages.create(
         model=settings.claude_model_sonnet,
         max_tokens=400,
-        system=(
-            "Пользователь завёл задачу в личном планировщике. Реши, можно ли "
-            "конкретно помочь её выполнению советом или подсказкой (например "
-            "'найти реферат по теме X' — подсказать тему и куда обычно "
-            "обращаются за материалом; 'сходить на собеседование' — как "
-            "подготовиться). Для обычных бытовых дел ('купить хлеб', "
-            "'позвонить маме') — просто null, помогать нечем."
-        ),
+        system=prompts.MAYBE_GENERATE_TASK_DESCRIPTION,
         tools=[_MAYBE_DESCRIPTION_TOOL],
         tool_choice={"type": "tool", "name": "maybe_describe_task"},
         messages=[{"role": "user", "content": f"Задача: {title}.{due_text}"}],
@@ -208,14 +194,7 @@ async def generate_task_description(
     response = await client.messages.create(
         model=settings.claude_model_sonnet,
         max_tokens=400,
-        system=(
-            "Напиши полезное описание-подсказку к задаче пользователя в "
-            "личном планировщике — конкретный совет, куда обратиться или что "
-            "учесть при выполнении (по своим знаниям, без реального "
-            "веб-поиска — если для точности нужны самые свежие данные, "
-            "коротко оговори это). Компактно, 1-3 предложения, на русском, "
-            "без вступлений вроде 'вот описание'."
-        ),
+        system=prompts.GENERATE_TASK_DESCRIPTION,
         messages=[{"role": "user", "content": f"Задача: {title}.{due_text}{draft_text}"}],
     )
     return "".join(block.text for block in response.content if block.type == "text").strip()
@@ -266,12 +245,7 @@ async def suggest_entity_spheres(
     response = await client.messages.create(
         model=settings.claude_model_haiku,
         max_tokens=200,
-        system=(
-            "Пользователь заводит проект или цель в личном планировщике. "
-            "Определи, к какой сфере(-ам) жизни это явно относится, из "
-            "закрытого списка. Если неочевидно — верни пустой список, не "
-            "выбирай сферу наугад."
-        ),
+        system=prompts.SUGGEST_ENTITY_SPHERES,
         tools=[_SUGGEST_SPHERES_TOOL],
         tool_choice={"type": "tool", "name": "suggest_spheres"},
         messages=[
@@ -355,10 +329,7 @@ async def parse_reminder(text: str, today: date) -> ReminderPlan:
     response = await client.messages.create(
         model=settings.claude_model_haiku,
         max_tokens=300,
-        system=(
-            f"Сегодняшняя дата: {today.isoformat()}. Разбери напоминание "
-            "пользователя в структурированное расписание."
-        ),
+        system=prompts.parse_reminder(today),
         tools=[_PARSE_REMINDER_TOOL],
         tool_choice={"type": "tool", "name": "parse_reminder"},
         messages=[{"role": "user", "content": text}],
@@ -475,10 +446,7 @@ async def parse_recurring_task(conversation: str, today: date) -> RecurringTaskP
     response = await client.messages.create(
         model=settings.claude_model_haiku,
         max_tokens=400,
-        system=(
-            f"Сегодняшняя дата: {today.isoformat()}. Разбери повторяющуюся "
-            "задачу пользователя в структурированное правило."
-        ),
+        system=prompts.parse_recurring_task(today),
         tools=[_PARSE_RECURRING_TASK_TOOL],
         tool_choice={"type": "tool", "name": "parse_recurring_task"},
         messages=[{"role": "user", "content": conversation}],
@@ -525,15 +493,7 @@ async def suggest_new_templates(recent_titles: list[str], existing_titles: list[
     response = await client.messages.create(
         model=settings.claude_model_haiku,
         max_tokens=300,
-        system=(
-            "Вот заголовки задач пользователя за последнюю неделю и уже "
-            "существующие шаблоны частых задач (список готовых формулировок "
-            "для быстрого добавления). Предложи новые шаблоны только для "
-            "того, что реально повторяется в задачах за неделю и ещё не "
-            "покрыто существующими шаблонами — по смыслу, не только по "
-            "точному совпадению текста. Не предлагай ничего, если нечего "
-            "предложить."
-        ),
+        system=prompts.SUGGEST_NEW_TEMPLATES,
         tools=[_SUGGEST_TEMPLATES_TOOL],
         tool_choice={"type": "tool", "name": "suggest_templates"},
         messages=[
@@ -556,16 +516,7 @@ async def summarize_finance_csv(csv_text: str) -> str:
     response = await client.messages.create(
         model=settings.claude_model_sonnet,
         max_tokens=1500,
-        system=(
-            "Тебе присылают CSV-выписку по банковской карте (формат и "
-            "названия колонок могут отличаться — определи их сама по "
-            "содержимому, включая колонку с суммой и категорией/описанием "
-            "операции). Посчитай общую сумму трат, разбивку по категориям "
-            "(топ-5), и отметь 1-2 необычно крупные операции, если такие "
-            "есть. Игнорируй пополнения и переводы самому себе, если они "
-            "отличимы от трат. Ответь компактно, на русском, с эмодзи по "
-            "категориям."
-        ),
+        system=prompts.SUMMARIZE_FINANCE_CSV,
         messages=[{"role": "user", "content": csv_text}],
     )
     return "".join(block.text for block in response.content if block.type == "text")
@@ -629,16 +580,7 @@ async def answer_question_rich(content_blocks: list[dict]) -> QuestionAnswer:
     response = await client.messages.create(
         model=settings.claude_model_sonnet,
         max_tokens=4096,
-        system=(
-            "Ты отвечаешь на вопросы пользователя: рецепты, учебные "
-            "вопросы, разбор домашних заданий (в том числе по фото или "
-            "PDF), выбор между вариантами, подбор товаров/услуг по "
-            "бюджету. Веб-поиска у тебя нет — для вопросов, требующих "
-            "самых свежих данных, отвечай по знаниям с оговоркой, что они "
-            "могут быть не самыми актуальными. Если это домашнее задание — "
-            "дай пошаговый план решения/подготовки и укажи, какие темы "
-            "стоит повторить."
-        ),
+        system=prompts.ANSWER_QUESTION_RICH,
         tools=[_ANSWER_QUESTION_TOOL],
         tool_choice={"type": "tool", "name": "answer_question"},
         messages=[{"role": "user", "content": content_blocks}],
@@ -653,10 +595,7 @@ async def summarize_diary(answers_text: str) -> str:
     response = await client.messages.create(
         model=settings.claude_model_haiku,
         max_tokens=300,
-        system=(
-            "Кратко (2-3 предложения) обобщи дневниковую запись пользователя "
-            "за день. Дружелюбный тон, на русском, без воды."
-        ),
+        system=prompts.SUMMARIZE_DIARY,
         messages=[{"role": "user", "content": answers_text}],
     )
     return "".join(block.text for block in response.content if block.type == "text")
@@ -728,16 +667,7 @@ async def generate_tasks_from_goals(
     response = await client.messages.create(
         model=settings.claude_model_sonnet,
         max_tokens=1500,
-        system=(
-            f"Период цели: с {period_start.isoformat()} по {period_end.isoformat()} "
-            "(используй только чтобы понять масштаб — недельная цель ⇒ небольшие "
-            "задачи, месячная ⇒ покрупнее). Разложи цели пользователя по сферам "
-            "жизни на конкретные, выполнимые задачи. Даты не проставляй — все "
-            "задачи уйдут в инбокс, пользователь сам расставит их по дням. Не "
-            "дублируй уже существующие задачи (список ниже). Если задача явно "
-            "относится к одному из текущих проектов — укажи его точное "
-            "название, иначе null."
-        ),
+        system=prompts.generate_tasks_from_goals(period_start, period_end),
         tools=[_GENERATE_TASKS_FROM_GOALS_TOOL],
         tool_choice={"type": "tool", "name": "generate_tasks"},
         messages=[
@@ -811,15 +741,7 @@ async def propose_projects_from_goals(goals: list[dict], today: date) -> list[Pr
     response = await client.messages.create(
         model=settings.claude_model_sonnet,
         max_tokens=1000,
-        system=(
-            f"Сегодня {today.isoformat()}. Вот месячные цели пользователя по "
-            "сферам жизни. Если какая-то цель — это на самом деле крупная "
-            "многошаговая инициатива (а не просто повторяющееся намерение), "
-            "предложи под неё проект со сроками, разумно вытекающими из "
-            "контекста цели (обычно в пределах текущего месяца или чуть "
-            "дальше). Не предлагай проект под каждую цель — только там, где "
-            "это реально имеет смысл."
-        ),
+        system=prompts.propose_projects_from_goals(today),
         tools=[_PROPOSE_PROJECTS_TOOL],
         tool_choice={"type": "tool", "name": "propose_projects"},
         messages=[{"role": "user", "content": f"Месячные цели:\n{goals_text}"}],
@@ -887,14 +809,7 @@ async def tidy_task_titles(titles: list[str]) -> list[TidiedTask]:
     response = await client.messages.create(
         model=settings.claude_model_haiku,
         max_tokens=1500,
-        system=(
-            "Вот заголовки задач пользователя (нумерованный список). Для "
-            "каждой — предложи более лаконичную и понятную формулировку, если "
-            "она реально нужна (опечатки, лишние слова, невнятная "
-            "формулировка). Не меняй смысл и не добавляй деталей, которых не "
-            "было. Если заголовок уже хорош — верни его как есть с "
-            "changed=false."
-        ),
+        system=prompts.TIDY_TASK_TITLES,
         tools=[_TIDY_TASKS_TOOL],
         tool_choice={"type": "tool", "name": "tidy_tasks"},
         messages=[{"role": "user", "content": numbered}],
@@ -945,22 +860,11 @@ async def suggest_tasks_for_today(
     if not inbox_items:
         return []
     inbox_text = "\n".join(f"{item['id']}: {item['title']}" for item in inbox_items)
-    weekday_ru = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
     today = date.today()
     response = await client.messages.create(
         model=settings.claude_model_sonnet,
         max_tokens=500,
-        system=(
-            f"Сегодня {weekday_ru[today.weekday()]}. Пользователь работает по "
-            "графику 5/2 (Пн-Пт, полный день) — в будни свободного времени "
-            "на личные задачи немного, в выходные заметно больше. Вот что "
-            "не сделано со вчера, что уже стоит на сегодня, и что лежит в "
-            "инбоксе (без даты). Оцени текущую нагрузку на сегодня и "
-            "предложи, какие задачи из инбокса реально стоит добавить на "
-            "сегодня — не перегружая день. Если день и так плотный или в "
-            "инбоксе нет ничего срочного/важного — пустой список, это "
-            "нормальный исход."
-        ),
+        system=prompts.suggest_tasks_for_today(today),
         tools=[_SUGGEST_TODAY_TOOL],
         tool_choice={"type": "tool", "name": "suggest_today"},
         messages=[
@@ -1061,15 +965,7 @@ async def analyze_productivity(spheres: list[dict], month: dict, projects: list[
     response = await client.messages.create(
         model=settings.claude_model_sonnet,
         max_tokens=400,
-        system=(
-            "Оцени, как у пользователя обстоят дела по каждой сфере жизни "
-            "(отлично/хорошо/слабо/нет данных — по объёму и доле "
-            "выполненных задач), и застрявшим ли проектам. Если задач по "
-            "сфере почти или совсем нет — статус 'нет данных', это не "
-            "провал. Если данных мало по всем сферам сразу (например, "
-            "начало месяца) — enough_data=false, статусы всё равно верни, "
-            "но советовать в этом случае нечего (advice=null)."
-        ),
+        system=prompts.ANALYZE_PRODUCTIVITY,
         tools=[_ANALYZE_PRODUCTIVITY_TOOL],
         tool_choice={"type": "tool", "name": "summarize_productivity"},
         messages=[
@@ -1163,14 +1059,7 @@ async def suggest_tasks_for_entity(
     response = await client.messages.create(
         model=settings.claude_model_sonnet,
         max_tokens=1000,
-        system=(
-            "Пользователь заводит проект или цель в личном планировщике. "
-            "Придумай несколько конкретных, выполнимых задач, которые реально "
-            "продвигают именно ЭТУ цель/проект — не общие советы, а то, что "
-            "можно взять и сделать. Даты не проставляй. Если по названию "
-            "непонятно, с чего начать — верни пустой список, не выдумывай "
-            "задачи ради количества."
-        ),
+        system=prompts.SUGGEST_TASKS_FOR_ENTITY,
         tools=[_SUGGEST_ENTITY_TASKS_TOOL],
         tool_choice={"type": "tool", "name": "suggest_tasks"},
         messages=[
