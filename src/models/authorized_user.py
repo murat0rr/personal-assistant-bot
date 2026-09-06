@@ -39,3 +39,11 @@ class AuthorizedUser(Base):
     morning_digest_enabled: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true"
     )
+    # Плашка "посмотреть гайд" в Mini App (Phase 69, фидбек) — по умолчанию
+    # False (= ещё не показывали) только для НОВЫХ пользователей; у уже
+    # существующих на момент этой фазы принудительно True миграцией (они
+    # это первое знакомство уже прошли, показывать им плашку задним числом
+    # незачем). Взводится True один раз — либо тапом по самой плашке
+    # (открывает "Помощь"), либо крестиком — после этого не показывается
+    # больше никогда никаким способом.
+    guide_banner_shown: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")

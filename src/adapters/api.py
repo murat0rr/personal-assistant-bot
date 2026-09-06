@@ -31,6 +31,8 @@ from src.core.google_calendar_sync import maybe_sync_now
 from src.core.telegram_auth import verify_miniapp_init_data
 from src.core.user_location import (
     apply_stored_timezone,
+    guide_banner_shown,
+    mark_guide_banner_shown,
     morning_digest_enabled,
     set_morning_digest_enabled,
     user_today,
@@ -1088,6 +1090,20 @@ async def set_morning_digest_setting(
     payload: SetMorningDigestRequest, user: dict = Depends(get_authorized_user)
 ) -> dict[str, str]:
     await set_morning_digest_enabled(user["id"], payload.enabled)
+    return {"status": "ok"}
+
+
+# Плашка "посмотреть гайд" (Phase 69, фидбек) — показывается ровно один
+# раз, при самом первом входе в Mini App, потом никогда (см.
+# core/user_location.py::guide_banner_shown/mark_guide_banner_shown).
+@app.get("/miniapp/api/settings/guide-banner")
+async def get_guide_banner_setting(user: dict = Depends(get_authorized_user)) -> dict:
+    return {"shown": await guide_banner_shown(user["id"])}
+
+
+@app.post("/miniapp/api/settings/guide-banner")
+async def set_guide_banner_setting(user: dict = Depends(get_authorized_user)) -> dict[str, str]:
+    await mark_guide_banner_shown(user["id"])
     return {"status": "ok"}
 
 

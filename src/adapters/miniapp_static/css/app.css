@@ -213,6 +213,38 @@
     .ext-tab-main .screen-chevron { width: 20px; height: 20px; color: var(--text-muted); opacity: 1; }
     .ext-tab-main .pill-label { font-size: 10.5px; margin-top: 0; color: var(--text-muted); font-weight: 400; }
 
+    /* Плашка "посмотреть гайд" (Phase 69, фидбек) — только при самом
+       первом входе (см. loadGuideBanner в index.html). Акцентный фон,
+       не карточка в стиле остального экрана — специально заметнее
+       обычных строк, это одноразовое приглашение, а не постоянный
+       элемент интерфейса. */
+    .guide-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      width: 100%;
+      margin-bottom: 20px;
+      padding: 12px 14px;
+      border: none;
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--accent) 14%, var(--card-bg));
+      color: var(--text);
+      text-align: left;
+      font-size: 13.5px;
+      font-family: inherit;
+    }
+    .guide-banner-text { flex: 1; }
+    .guide-banner-close {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
     .section { margin-bottom: 24px; }
     .section-label {
       font-size: 13px;

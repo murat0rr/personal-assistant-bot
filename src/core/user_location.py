@@ -130,6 +130,33 @@ async def set_morning_digest_enabled(user_id: int, enabled: bool) -> None:
         await session.commit()
 
 
+async def guide_banner_shown(user_id: int) -> bool:
+    """Плашка "посмотреть гайд" в Mini App (Phase 69) — по умолчанию
+    False у новых пользователей (см. AuthorizedUser.guide_banner_shown,
+    у уже существующих на момент этой фазы забэкфиллено на True
+    миграцией). Отсутствие строки вообще (не должно случаться для
+    авторизованного пользователя, но защищаемся) трактуем как "уже
+    показывали" — самый безопасный вариант, не навязываем плашку тому,
+    о ком нет данных."""
+    location = await get_user_location(user_id)
+    return location.guide_banner_shown if location else True
+
+
+async def mark_guide_banner_shown(user_id: int) -> None:
+    """Взводится один раз — либо тапом по плашке, либо крестиком (см.
+    index.html) — та же защита "строки может не быть", что и
+    save_schedule_hour выше."""
+    async with async_session() as session:
+        existing = await session.get(AuthorizedUser, user_id)
+        if existing is None:
+            existing = AuthorizedUser(
+                telegram_user_id=user_id, added_at=datetime.now(await user_timezone(user_id))
+            )
+            session.add(existing)
+        existing.guide_banner_shown = True
+        await session.commit()
+
+
 async def save_location_for(
     telegram_user_id: int,
     latitude: float,
