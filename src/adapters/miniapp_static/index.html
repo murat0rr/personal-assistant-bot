@@ -122,15 +122,49 @@
     </div>
     <div class="section">
       <p class="section-label">Недельные цели</p>
-      <div id="pg-goals-weekly" class="list"></div>
+      <div class="period-header" id="pg-period-header-weekly">
+        <button class="small-btn" id="pg-period-prev-weekly" aria-label="Предыдущая неделя">‹</button>
+        <span class="period-label" id="pg-period-label-weekly"></span>
+        <button class="small-btn" id="pg-period-next-weekly" aria-label="Следующая неделя">›</button>
+      </div>
+      <div class="period-carousel" id="pg-period-carousel-weekly">
+        <div class="period-track" id="pg-period-track-weekly">
+          <div class="period-panel"><div class="list"></div></div>
+          <div class="period-panel"><div class="list"></div></div>
+          <div class="period-panel"><div class="list"></div></div>
+        </div>
+      </div>
     </div>
     <div class="section">
       <p class="section-label">Месячные цели</p>
-      <div id="pg-goals-monthly" class="list"></div>
+      <div class="period-header" id="pg-period-header-monthly">
+        <button class="small-btn" id="pg-period-prev-monthly" aria-label="Предыдущий месяц">‹</button>
+        <span class="period-label" id="pg-period-label-monthly"></span>
+        <button class="small-btn" id="pg-period-next-monthly" aria-label="Следующий месяц">›</button>
+      </div>
+      <div class="period-carousel" id="pg-period-carousel-monthly">
+        <div class="period-track" id="pg-period-track-monthly">
+          <div class="period-panel"><div class="list"></div></div>
+          <div class="period-panel"><div class="list"></div></div>
+          <div class="period-panel"><div class="list"></div></div>
+        </div>
+      </div>
     </div>
     <div class="section">
       <p class="section-label">Годовые цели</p>
-      <div id="pg-goals-yearly" class="list"></div>
+      <div class="period-header" id="pg-period-header-yearly">
+        <button class="small-btn" id="pg-period-prev-yearly" aria-label="Предыдущий год">‹</button>
+        <span class="period-label" id="pg-period-label-yearly"></span>
+        <button class="small-btn" id="pg-period-next-yearly" aria-label="Следующий год">›</button>
+      </div>
+      <div class="period-carousel" id="pg-period-carousel-yearly">
+        <div class="period-track" id="pg-period-track-yearly">
+          <div class="period-panel"><div class="list"></div></div>
+          <div class="period-panel"><div class="list"></div></div>
+          <div class="period-panel"><div class="list"></div></div>
+        </div>
+      </div>
+      <p class="period-bound-hint" id="pg-period-bound-hint-yearly">край периода — дальше нельзя</p>
     </div>
   </div>
 
@@ -1520,8 +1554,14 @@
       return `${d}.${m}`;
     }
 
-    function projectMeta(p) {
-      if (p.start_date && p.end_date) {
+    // hideDates (Phase 68, фидбек) — только у целей внутри карусели
+    // периодов (renderGoalPeriodPanel): период теперь один на весь
+    // блок (см. общий заголовок периода), повторять его в каждой
+    // строке избыточно — остаётся один прогресс. У задач и проектов
+    // не трогаем вообще (прямое указание по фидбеку), поэтому
+    // параметр не меняет дефолт — только карусель целей его передаёт.
+    function projectMeta(p, hideDates) {
+      if (!hideDates && p.start_date && p.end_date) {
         return `${formatShortDate(p.start_date)}–${formatShortDate(p.end_date)} · ${p.done_count}/${p.task_count}`;
       }
       return `${p.done_count}/${p.task_count}`;
@@ -1581,7 +1621,7 @@
     // (цвет убран целиком, Phase 67). taskId в setupSwipeDrag
     // получает строковый префикс — id проекта/цели/задачи не должны
     // путаться в общем openSwipeTaskId (см. комментарий у переменной).
-    function renderEntityRow(entity, kind) {
+    function renderEntityRow(entity, kind, hideDates) {
       const wrap = document.createElement("div");
       wrap.className = "swipe-wrap";
 
@@ -1616,7 +1656,7 @@
       // раньше не было ни того, ни другого).
       const meta = document.createElement("span");
       meta.className = "entity-meta";
-      meta.textContent = projectMeta(entity);
+      meta.textContent = projectMeta(entity, hideDates);
       content.append(meta);
 
       const handle = document.createElement("span");
@@ -1649,11 +1689,12 @@
     // В отличие от задач, тап по "+" не создаёт сущность мгновенно —
     // открывает форму (openCreateEntitySheet), предзаполненную введённым
     // текстом, чтобы можно было сразу дозаполнить остальные поля.
-    // draftKey — "project" или "goal-<tier>" (у каждого тира свой
-    // черновик, как у addTaskDrafts). tierForGoal — какой тир
-    // предвыбрать в форме, если добавляем цель со страницы конкретного
-    // тира.
-    function renderAddEntityRow(kind, draftKey, tierForGoal) {
+    // draftKey — "project" или "goal-<tier>-<periodStart>" (у каждой
+    // панели своей карусели свой черновик, как у addTaskDrafts).
+    // periodForGoal — {tier, start, end} той панели, в которой стоит
+    // строка (Phase 68, фидбек): цель создаётся сразу в ПРОСМотренном
+    // периоде, а не всегда "сегодняшнем" по умолчанию с бэкенда.
+    function renderAddEntityRow(kind, draftKey, periodForGoal) {
       const draft = addEntityDrafts[draftKey] || (addEntityDrafts[draftKey] = { title: "" });
 
       const row = document.createElement("div");
@@ -1675,7 +1716,11 @@
         const value = input.value.trim();
         addEntityDrafts[draftKey] = { title: "" };
         openCreateEntitySheet(kind, value);
-        if (kind === "goal" && tierForGoal) createEntityDraft.tier = tierForGoal;
+        if (kind === "goal" && periodForGoal) {
+          createEntityDraft.tier = periodForGoal.tier;
+          createEntityDraft.start = periodForGoal.start;
+          createEntityDraft.end = periodForGoal.end;
+        }
         render();
       };
       submitBtn.onclick = submit;
@@ -1687,7 +1732,9 @@
       return row;
     }
 
-    function renderEntityList(containerId, items, kind, draftKey, tierForGoal) {
+    // Только проекты (Phase 68) — у целей теперь своя карусель периодов
+    // (см. ниже), плоский список им больше не подходит.
+    function renderEntityList(containerId, items, kind, draftKey) {
       const container = document.getElementById(containerId);
       container.innerHTML = "";
       if (items.length === 0) {
@@ -1695,7 +1742,7 @@
       } else {
         for (const item of items) container.append(renderEntityRow(item, kind));
       }
-      container.append(renderAddEntityRow(kind, draftKey, tierForGoal));
+      container.append(renderAddEntityRow(kind, draftKey));
     }
 
     const GOAL_TIERS = ["weekly", "monthly", "yearly"];
@@ -1704,12 +1751,274 @@
       renderEntityList("pg-projects", projectsData, "project", "project");
     }
 
-    function renderGoalsPages() {
-      for (const tier of GOAL_TIERS) {
-        const items = goalsData.filter((g) => g.tier === tier);
-        renderEntityList("pg-goals-" + tier, items, "goal", "goal-" + tier, tier);
+    // ---- Карусель периодов у целей (Phase 68, фидбек "Проекты —
+    // большое изменение, будь аккуратен"): у каждого тира — 3 панели
+    // (пред./тек./след. период), тот же приём "перетаскиваем track
+    // transform'ом 1:1, после отпускания один transition до соседней
+    // панели, потом мгновенный возврат в центр с новыми данными", что
+    // уже отработан у месячного календаря (monthCarousel/
+    // settleMonthCarousel) — здесь одна реализация на все три тира
+    // вместо копипасты x3 (данные всех тиров различаются только
+    // функциями границ периода). Свайп — по всему заголовку периода,
+    // не только тап по треугольникам (фидбог: "точно так же, как
+    // календарь"). Новый сетевой запрос не нужен — list_active_goals
+    // уже отдаёт ВСЕ цели всех периодов одним списком (core/goals.py),
+    // свайп — просто другой фильтр по уже загруженному goalsData.
+
+    function addDaysDate(d, n) {
+      const r = new Date(d);
+      r.setDate(r.getDate() + n);
+      return r;
+    }
+    function addMonthsDate(d, n) {
+      const r = new Date(d);
+      r.setMonth(r.getMonth() + n);
+      return r;
+    }
+    function isoDate(d) {
+      return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    }
+
+    // Границы периода, которому ПРИНАДЛЕЖИТ ref — НЕ то же самое, что
+    // GOAL_TIER_BOUNDS на бэкенде (core/goals.py): та при создании цели
+    // без явных дат специально всегда даёт СЛЕДУЮЩУЮ неделю (даже если
+    // сегодня понедельник) — задача там другая, "на неделю вперёд".
+    // Здесь нужно понять, каким периодом уже помечены существующие
+    // цели "сейчас" — неделя/месяц/год, которые реально содержат ref.
+    function goalPeriodBounds(tier, ref) {
+      if (tier === "weekly") {
+        const day = ref.getDay() === 0 ? 7 : ref.getDay(); // Пн=1..Вс=7
+        const monday = addDaysDate(ref, 1 - day);
+        return [monday, addDaysDate(monday, 6)];
+      }
+      if (tier === "monthly") {
+        return [
+          new Date(ref.getFullYear(), ref.getMonth(), 1),
+          new Date(ref.getFullYear(), ref.getMonth() + 1, 0),
+        ];
+      }
+      return [new Date(ref.getFullYear(), 0, 1), new Date(ref.getFullYear(), 11, 31)];
+    }
+    function goalPeriodShift(tier, ref, dir) {
+      if (tier === "weekly") return addDaysDate(ref, 7 * dir);
+      if (tier === "monthly") return addMonthsDate(ref, dir);
+      return new Date(ref.getFullYear() + dir, ref.getMonth(), 1);
+    }
+    function goalPeriodLabel(tier, ref) {
+      const [start, end] = goalPeriodBounds(tier, ref);
+      if (tier === "weekly") return `${formatShortDate(isoDate(start))}–${formatShortDate(isoDate(end))}`;
+      if (tier === "monthly") return `${MONTH_NAMES_FULL[ref.getMonth()]} ${ref.getFullYear()}`;
+      return `${ref.getFullYear()}`;
+    }
+
+    // Год регистрации — граница назад для годовых целей (Phase 68,
+    // явный выбор пользователя: "added_at + бэкфилл 2026"). С сервера
+    // (core/goals.py::goal_year_floor); фолбэк — текущий год (самый
+    // строгий вариант), если запрос почему-то не удался.
+    let goalYearFloor = new Date().getFullYear();
+    async function loadGoalYearFloor() {
+      try {
+        const result = await api("/miniapp/api/goals/year-floor");
+        goalYearFloor = result.year_floor;
+        renderGoalsPages();
+      } catch (e) {
+        // остаёмся на дефолте (текущий год) — не критично для
+        // остального интерфейса, не мешаем алертом.
       }
     }
+
+    function canShiftGoalPeriod(tier, ref, dir) {
+      if (tier !== "yearly") return true;
+      const targetYear = ref.getFullYear() + dir;
+      // "Вперёд не больше 10 лет" — от ТЕКУЩЕГО года, не года
+      // регистрации: иначе граница застыла бы в прошлом для давних
+      // пользователей вместо того, чтобы плавно ехать вместе с "сегодня".
+      return targetYear >= goalYearFloor && targetYear <= new Date().getFullYear() + 10;
+    }
+
+    const goalPeriodRef = { weekly: new Date(), monthly: new Date(), yearly: new Date() };
+    const goalPeriodPanelEls = {};
+    for (const tier of GOAL_TIERS) {
+      goalPeriodPanelEls[tier] = Array.from(document.querySelectorAll(`#pg-period-track-${tier} .list`));
+    }
+
+    function renderGoalPeriodPanel(tier, ref, listEl) {
+      const [start, end] = goalPeriodBounds(tier, ref);
+      const startIso = isoDate(start);
+      const endIso = isoDate(end);
+      const items = goalsData.filter(
+        (g) => g.tier === tier && g.start_date === startIso && g.end_date === endIso
+      );
+      listEl.innerHTML = "";
+      if (items.length === 0) renderEmpty(listEl);
+      // hideDates=true — период теперь один на весь блок (заголовок
+      // выше), повторять его в каждой строке избыточно (фидбек).
+      else for (const item of items) listEl.append(renderEntityRow(item, "goal", true));
+      listEl.append(
+        renderAddEntityRow("goal", "goal-" + tier + "-" + startIso, { tier, start: startIso, end: endIso })
+      );
+    }
+
+    function renderGoalPeriodSection(tier) {
+      const ref = goalPeriodRef[tier];
+      document.getElementById("pg-period-label-" + tier).textContent = goalPeriodLabel(tier, ref);
+      const [prevEl, curEl, nextEl] = goalPeriodPanelEls[tier];
+      renderGoalPeriodPanel(tier, goalPeriodShift(tier, ref, -1), prevEl);
+      renderGoalPeriodPanel(tier, ref, curEl);
+      renderGoalPeriodPanel(tier, goalPeriodShift(tier, ref, 1), nextEl);
+      if (tier === "yearly") {
+        document.getElementById("pg-period-prev-yearly").disabled = !canShiftGoalPeriod(tier, ref, -1);
+        document.getElementById("pg-period-next-yearly").disabled = !canShiftGoalPeriod(tier, ref, 1);
+      }
+    }
+
+    // Тот же самый вызов, что раньше был у плоского списка (все места,
+    // где обновлялись цели, зовут именно эту функцию) — имя нарочно не
+    // менялось, чтобы не трогать все места вызова.
+    function renderGoalsPages() {
+      for (const tier of GOAL_TIERS) renderGoalPeriodSection(tier);
+    }
+
+    const GOAL_PERIOD_DRAG_THRESHOLD = 0.22;
+    const GOAL_PERIOD_FLING_VELOCITY = 0.5; // px/мс
+    const goalPeriodDragState = {};
+
+    function goalPeriodCarouselWidth(tier) {
+      return document.getElementById("pg-period-carousel-" + tier).clientWidth;
+    }
+    function goalPeriodRestX(tier, index) {
+      return -index * goalPeriodCarouselWidth(tier);
+    }
+    function setGoalPeriodTrackTransform(tier, x, withTransition) {
+      const track = document.getElementById("pg-period-track-" + tier);
+      track.style.transition = withTransition ? "transform 240ms cubic-bezier(0.22, 1, 0.36, 1)" : "none";
+      track.style.transform = `translateX(${x}px)`;
+    }
+    function recenterGoalPeriodCarousel(tier) {
+      setGoalPeriodTrackTransform(tier, goalPeriodRestX(tier, 1), false);
+    }
+    // БАГ (тот же, что чинили в switchExtendedTab у календаря, Phase
+    // 68): recenter меряет clientWidth своего контейнера — на момент
+    // ЭТОГО первого вызова вкладка "Проекты" ещё display:none (по
+    // умолчанию открыта "Аналитика"), значит clientWidth будет 0 и
+    // сдвиг навсегда застрянет на translateX(0), пока не пересчитать
+    // заново при реальном показе вкладки — см. фикс в switchExtendedTab.
+    function recenterAllGoalPeriodCarousels() {
+      for (const tier of GOAL_TIERS) recenterGoalPeriodCarousel(tier);
+    }
+    recenterAllGoalPeriodCarousels();
+
+    function flashGoalPeriodBoundHint(tier) {
+      const hint = document.getElementById("pg-period-bound-hint-" + tier);
+      if (!hint) return;
+      hint.classList.add("visible");
+      clearTimeout(hint._hideTimer);
+      hint._hideTimer = setTimeout(() => hint.classList.remove("visible"), 900);
+    }
+
+    function settleGoalPeriodCarousel(tier, targetIndex, dir) {
+      goalPeriodDragState[tier].settling = true;
+      setGoalPeriodTrackTransform(tier, goalPeriodRestX(tier, targetIndex), true);
+      const willChange = targetIndex !== 1;
+      if (willChange) {
+        goalPeriodRef[tier] = goalPeriodShift(tier, goalPeriodRef[tier], dir);
+        // Подпись — сразу, не дожидаясь конца анимации (тот же приём,
+        // что у месячного календаря — иначе видно, как она отстаёт).
+        document.getElementById("pg-period-label-" + tier).textContent = goalPeriodLabel(
+          tier,
+          goalPeriodRef[tier]
+        );
+      }
+      const track = document.getElementById("pg-period-track-" + tier);
+      track.addEventListener(
+        "transitionend",
+        () => {
+          if (willChange) renderGoalPeriodSection(tier);
+          recenterGoalPeriodCarousel(tier);
+          goalPeriodDragState[tier].settling = false;
+        },
+        { once: true }
+      );
+    }
+
+    function goToGoalPeriod(tier, dir) {
+      if (goalPeriodDragState[tier].settling) return;
+      if (!canShiftGoalPeriod(tier, goalPeriodRef[tier], dir)) {
+        hapticImpact("light");
+        flashGoalPeriodBoundHint(tier);
+        return;
+      }
+      settleGoalPeriodCarousel(tier, dir === 1 ? 2 : 0, dir);
+    }
+
+    function setupGoalPeriodDrag(tier) {
+      goalPeriodDragState[tier] = { drag: null, settling: false };
+      const header = document.getElementById("pg-period-header-" + tier);
+
+      header.addEventListener("pointerdown", (e) => {
+        if (e.target.closest("button")) return;
+        if (goalPeriodDragState[tier].settling) return;
+        goalPeriodDragState[tier].drag = {
+          pointerId: e.pointerId,
+          startX: e.clientX,
+          startY: e.clientY,
+          baseX: goalPeriodRestX(tier, 1),
+          horizontal: null,
+          lastX: e.clientX,
+          lastTime: e.timeStamp,
+          velocity: 0,
+        };
+      });
+      document.addEventListener("pointermove", (e) => {
+        const state = goalPeriodDragState[tier].drag;
+        if (!state || e.pointerId !== state.pointerId) return;
+        const dx = e.clientX - state.startX;
+        const dy = e.clientY - state.startY;
+        if (state.horizontal === null) {
+          if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+          state.horizontal = Math.abs(dx) > Math.abs(dy);
+          if (!state.horizontal) {
+            goalPeriodDragState[tier].drag = null;
+            return;
+          }
+        }
+        const dt = e.timeStamp - state.lastTime;
+        if (dt > 0) state.velocity = (e.clientX - state.lastX) / dt;
+        state.lastX = e.clientX;
+        state.lastTime = e.timeStamp;
+        setGoalPeriodTrackTransform(tier, state.baseX + dx, false);
+      });
+      function endDrag(e) {
+        const state = goalPeriodDragState[tier].drag;
+        if (!state || e.pointerId !== state.pointerId) return;
+        goalPeriodDragState[tier].drag = null;
+        if (state.horizontal !== true) return;
+        const dx = e.clientX - state.startX;
+        const pw = goalPeriodCarouselWidth(tier);
+        let dir = 0;
+        if (Math.abs(state.velocity) > GOAL_PERIOD_FLING_VELOCITY) {
+          dir = state.velocity < 0 ? 1 : -1;
+        } else if (Math.abs(dx) > pw * GOAL_PERIOD_DRAG_THRESHOLD) {
+          dir = dx < 0 ? 1 : -1;
+        }
+        if (dir !== 0 && !canShiftGoalPeriod(tier, goalPeriodRef[tier], dir)) {
+          // Край периода (только у года) — пружинит назад, как и не
+          // дотянутый до порога жест, плюс лёгкая вибрация-отказ и
+          // подсказка (тот же bound-hint, что и у кнопок ‹ ›).
+          hapticImpact("light");
+          flashGoalPeriodBoundHint(tier);
+          dir = 0;
+        }
+        settleGoalPeriodCarousel(tier, dir === 1 ? 2 : dir === -1 ? 0 : 1, dir);
+      }
+      document.addEventListener("pointerup", endDrag);
+      document.addEventListener("pointercancel", endDrag);
+
+      document.getElementById("pg-period-prev-" + tier).onclick = () => goToGoalPeriod(tier, -1);
+      document.getElementById("pg-period-next-" + tier).onclick = () => goToGoalPeriod(tier, 1);
+    }
+
+    for (const tier of GOAL_TIERS) setupGoalPeriodDrag(tier);
 
     // Содержимое окна проекта/цели (Phase 56) — видимость самого
     // #project-detail-sheet переключается в render() вместе с
@@ -3768,18 +4077,25 @@
           : "Новая цель";
 
       // Проекты и цели — одна сущность (Phase 54): форма ниже — общая,
-      // разница только в подписи поля названия и в ряду тиров (только у
-      // цели). Раньше у цели была единственная кнопка "Период: опорная
-      // дата" вместо прямых дат — теперь то же начало/конец, что у
-      // проекта; если оставить пустыми, сервер сам проставит период из
-      // тира (core/goals.py::create_goal_now) — то самое требование
-      // "если не указывать даты, то проставятся".
+      // разница — подпись поля названия, ряд тиров (только у цели) и
+      // ручные даты начала/конца (только у проекта, см. ниже — Phase
+      // 68, фидбек: у цели период теперь из карусели периодов, не из
+      // свободного ввода).
       const titleInput = document.createElement("input");
       titleInput.className = "entity-form-field";
       titleInput.type = "text";
       titleInput.placeholder = isProject ? "Название проекта" : "Формулировка цели";
       titleInput.value = createEntityDraft.title;
       titleInput.addEventListener("input", () => (createEntityDraft.title = titleInput.value));
+      // Подсказка сферы по названию (maybeSuggestSpheres) раньше
+      // спрашивалась только по закрытию пикера дат — событие "не на
+      // каждое нажатие клавиши" по любому полю. У цели дат в форме
+      // больше нет (Phase 68, см. ниже), так что для неё это теперь
+      // единственный триггер — по потере фокуса самим названием,
+      // тот же принцип "не на каждое нажатие".
+      titleInput.addEventListener("blur", () =>
+        maybeSuggestSpheres(createEntityDraft, createEntityDraft.start, createEntityDraft.end)
+      );
       container.append(titleInput);
 
       const descInput = document.createElement("input");
@@ -3799,6 +4115,17 @@
           chip.className = "sphere-chip" + (createEntityDraft.tier === tier ? " selected" : "");
           chip.textContent = GOAL_TIER_LABELS[tier];
           chip.onclick = () => {
+            // Смена тира при уже стоящих датах (пришли либо из
+            // openEditEntitySheet — с текущего периода цели, либо из
+            // renderAddEntityRow — с просмотренной панели карусели)
+            // делает их бессмысленными: они посчитаны под ДРУГОЙ тир.
+            // Обнуляем — сервер сам пересчитает период из нового тира
+            // и сегодняшней даты (core/goals.py::create_goal_now), тот
+            // же фолбэк, что при полностью пустой форме.
+            if (createEntityDraft.tier !== tier) {
+              createEntityDraft.start = "";
+              createEntityDraft.end = "";
+            }
             createEntityDraft.tier = tier;
             render();
           };
@@ -3816,30 +4143,42 @@
         })
       );
 
-      const datesWrap = document.createElement("div");
-      datesWrap.className = "entity-form-dates";
-      const startBtn = document.createElement("button");
-      startBtn.type = "button";
-      startBtn.className = "entity-date-btn" + (createEntityDraft.start ? " date-set" : "");
-      startBtn.innerHTML = calendarIcon() + `<span>${formatDateBtnLabel(createEntityDraft.start, "Начало")}</span>`;
-      startBtn.onclick = () =>
-        openDatePicker(createEntityDraft.start, (iso) => {
-          createEntityDraft.start = iso || "";
-          render();
-          maybeSuggestSpheres(createEntityDraft, createEntityDraft.start, createEntityDraft.end);
-        });
-      const endBtn = document.createElement("button");
-      endBtn.type = "button";
-      endBtn.className = "entity-date-btn" + (createEntityDraft.end ? " date-set" : "");
-      endBtn.innerHTML = calendarIcon() + `<span>${formatDateBtnLabel(createEntityDraft.end, "Конец")}</span>`;
-      endBtn.onclick = () =>
-        openDatePicker(createEntityDraft.end, (iso) => {
-          createEntityDraft.end = iso || "";
-          render();
-          maybeSuggestSpheres(createEntityDraft, createEntityDraft.start, createEntityDraft.end);
-        });
-      datesWrap.append(startBtn, endBtn);
-      container.append(datesWrap);
+      // Ручной выбор дат — только у проекта (Phase 68, фидбек): у цели
+      // период теперь определяется тиром + панелью карусели, откуда
+      // открыли форму (renderAddEntityRow передаёт start/end этой
+      // панели, openEditEntitySheet — уже существующие даты цели), а
+      // не свободным вводом — иначе легко создать цель с периодом,
+      // который не совпадает ни с одной панелью карусели, и она
+      // нигде не появится (см. renderGoalPeriodPanel — фильтр по
+      // точному совпадению границ). draft.start/end у цели по-прежнему
+      // отправляются на сервер как есть, просто без UI поверх них.
+      if (isProject) {
+        const datesWrap = document.createElement("div");
+        datesWrap.className = "entity-form-dates";
+        const startBtn = document.createElement("button");
+        startBtn.type = "button";
+        startBtn.className = "entity-date-btn" + (createEntityDraft.start ? " date-set" : "");
+        startBtn.innerHTML =
+          calendarIcon() + `<span>${formatDateBtnLabel(createEntityDraft.start, "Начало")}</span>`;
+        startBtn.onclick = () =>
+          openDatePicker(createEntityDraft.start, (iso) => {
+            createEntityDraft.start = iso || "";
+            render();
+            maybeSuggestSpheres(createEntityDraft, createEntityDraft.start, createEntityDraft.end);
+          });
+        const endBtn = document.createElement("button");
+        endBtn.type = "button";
+        endBtn.className = "entity-date-btn" + (createEntityDraft.end ? " date-set" : "");
+        endBtn.innerHTML = calendarIcon() + `<span>${formatDateBtnLabel(createEntityDraft.end, "Конец")}</span>`;
+        endBtn.onclick = () =>
+          openDatePicker(createEntityDraft.end, (iso) => {
+            createEntityDraft.end = iso || "";
+            render();
+            maybeSuggestSpheres(createEntityDraft, createEntityDraft.start, createEntityDraft.end);
+          });
+        datesWrap.append(startBtn, endBtn);
+        container.append(datesWrap);
+      }
 
       const toggleRow = document.createElement("div");
       toggleRow.className = "entity-form-toggle-row";
@@ -4138,6 +4477,20 @@
       extTabBtns.forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tab));
       const scrollEl = document.getElementById("extended-screen").querySelector(".screen-content");
       if (scrollEl) scrollEl.scrollTop = 0;
+      // БАГ (Phase 68, фидбек: "открываю календарь — а там прошлый
+      // месяц, хотя надпись правильная"): recenterMonthCarousel/
+      // recenterAllGoalPeriodCarousels меряют clientWidth своего
+      // контейнера, чтобы вычислить сдвиг центральной панели — но при
+      // самом первом (единственном на тот момент) вызове, ещё при
+      // загрузке страницы, вкладка была display:none (по умолчанию
+      // открыта "Аналитика"), clientWidth был 0, и сдвиг навсегда
+      // застревал на translateX(0) — видна ЛЕВАЯ, "предыдущая" панель,
+      // хотя подпись месяца (она берётся не из позиции карусели, а
+      // отдельно) уже показывала верное значение. Пересчитываем заново
+      // при каждом реальном показе вкладки — дёшево (только transform,
+      // без сети).
+      if (tab === "calendar") recenterMonthCarousel();
+      if (tab === "projects") recenterAllGoalPeriodCarousels();
     }
 
     extTabBtns.forEach((btn) => {
@@ -5270,6 +5623,7 @@
     loadProjects();
     loadAnalytics();
     loadGoals();
+    loadGoalYearFloor();
     loadMonthEvents();
   </script>
 

@@ -818,6 +818,16 @@ async def list_goals_endpoint(user: dict = Depends(get_authorized_user)) -> list
     return await goals_repo.list_active_goals(user["id"])
 
 
+# Свайп периодов годовых целей (Phase 68, фидбек) не должен пускать
+# назад дальше года регистрации — отдельный эндпоинт, а не поле внутри
+# списка целей (список — обычный list[dict], оборачивать в объект
+# ради одного числа не стали, см. core/goals.py::goal_year_floor).
+@app.get("/miniapp/api/goals/year-floor")
+async def goal_year_floor_endpoint(user: dict = Depends(get_authorized_user)) -> dict:
+    today = await user_today(user["id"])
+    return {"year_floor": await goals_repo.goal_year_floor(user["id"], today)}
+
+
 @app.post("/miniapp/api/goals")
 async def create_goal_endpoint(
     payload: CreateGoalRequest, user: dict = Depends(get_authorized_user)

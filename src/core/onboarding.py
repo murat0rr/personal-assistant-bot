@@ -29,8 +29,20 @@ async def seed_onboarding_data(user_id: int, today: date) -> None:
         start_date=today,
         end_date=None,
     )
+    # Явный период — неделя, СОДЕРЖАЩАЯ today (goals_repo.current_week_bounds),
+    # не дефолт create_goal_now (goals_repo.week_bounds даёт следующую
+    # неделю — та мысль "цели планируются заранее", здесь неуместна:
+    # затравочная цель должна попасть в ЦЕНТРАЛЬНУЮ панель карусели
+    # периодов Mini App, где новый пользователь её сразу увидит, Phase 68).
+    week_start, week_end = goals_repo.current_week_bounds(today)
     goal = await goals_repo.create_goal_now(
-        user_id, [_SEED_SPHERE], "weekly", "Освоить приложение", today
+        user_id,
+        [_SEED_SPHERE],
+        "weekly",
+        "Освоить приложение",
+        today,
+        period_start=week_start,
+        period_end=week_end,
     )
 
     async with async_session() as session:

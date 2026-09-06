@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 from src.core import projects as projects_repo
+from src.core.user_location import get_user_location
 
 
 def week_bounds(today: date) -> tuple[date, date]:
@@ -8,6 +9,17 @@ def week_bounds(today: date) -> tuple[date, date]:
     # уже понедельник, тоже берём следующий, не текущий — формула ниже
     # даёт 7, не 0, для этого случая).
     monday = today + timedelta(days=(7 - today.weekday()) % 7 or 7)
+    return monday, monday + timedelta(days=6)
+
+
+def current_week_bounds(today: date) -> tuple[date, date]:
+    """НЕ то же самое, что week_bounds выше — та специально всегда даёт
+    СЛЕДУЮЩИЙ понедельник (создание цели "на неделю вперёд"). Эта
+    функция — неделя, которая реально СОДЕРЖИТ today (для затравочной
+    цели онбординга, Phase 68: без неё сэмпл сразу попадал бы в
+    "следующую" неделю карусели периодов Mini App, а не в текущую, где
+    его первым делом ждёт увидеть новый пользователь)."""
+    monday = today - timedelta(days=today.weekday())
     return monday, monday + timedelta(days=6)
 
 
@@ -145,15 +157,20 @@ async def update_goal(
         and (tier is not None or reference_date is not None)
     ):
         # Явных новых дат нет, но тир и/или опорная дата поменялись —
-        # пересчитываем период из тира (старое поведение, теперь
-        # фолбэк). Текущий тир/дата нужны, если передан только один из
-        # двух — читаем уже сохранённую сущность одним быстрым запросом.
-        current = await projects_repo.get_project(goal_id, user_id)
-        new_tier = tier or current["tier"]
+        # пересчитываем период из тира. Опорная дата — reference_date,
+        # если её явно передали, иначе today (ФИКС, Phase 68: раньше
+        # фолбэком был СТАРЫЙ start_date уже сохранённой цели — единственный
+        # реальный вызывающий, edit_goal_endpoint, reference_date вообще
+        # не передаёт, так что смена тира в Mini App пересчитывала период
+        # от старой опорной точки прежнего периода, а не от сегодня —
+        # результат мог оказаться в произвольно далёком будущем/прошлом
+        # вместо ожидаемого "текущий период нового тира". Обнаружено
+        # живой проверкой карусели периодов — смена тира с "месяц" на
+        # "неделю" у цели с периодом на октябрь пересчитывала неделю от
+        # 1 октября, а не от сегодняшней даты).
+        new_tier = tier or (await projects_repo.get_project(goal_id, user_id))["tier"]
         bounds = GOAL_TIER_BOUNDS.get(new_tier)
-        ref = reference_date or (
-            date.fromisoformat(current["start_date"]) if current["start_date"] else today
-        )
+        ref = reference_date or today
         period_start, period_end = bounds(ref) if bounds else (None, None)
         tier = new_tier
 
@@ -198,3 +215,18 @@ async def set_goal_done(goal_id: int, user_id: int, done: bool) -> None:
 
 async def archive_goal(goal_id: int, user_id: int) -> None:
     await projects_repo.archive_project(goal_id, user_id)
+
+
+async def goal_year_floor(user_id: int, today: date) -> int:
+    """Самый ранний год, до которого можно пролистать назад годовые цели
+    в Mini App (Phase 68, фидбек: свайп периодов не должен пускать в
+    года ДО регистрации пользователя). Источник — AuthorizedUser.added_at
+    (у уже существующих на момент Phase 68 пользователей принудительно
+    забэкфиллен на 2026, см. миграцию e6065a7658a4 — added_at нигде
+    больше не читается, так что переопределение безопасно; у новых
+    пользователей это настоящая дата регистрации). Без строки вообще
+    (не должно случаться для авторизованного пользователя, но
+    защищаемся, тот же принцип, что у morning_digest_enabled) —
+    фолбэк на текущий год, самый строгий вариант."""
+    location = await get_user_location(user_id)
+    return location.added_at.year if location else today.year

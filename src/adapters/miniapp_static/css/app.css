@@ -780,6 +780,39 @@
     .month-cal-carousel { overflow: hidden; }
     .month-cal-track { display: flex; touch-action: pan-y; }
     .month-cal-panel { flex: 0 0 100%; min-width: 0; }
+    /* Карусель периодов у целей (Phase 68, фидбек) — тот же приём один
+       в один, что месячный календарь выше (перетаскиваем track
+       transform'ом, три полные панели), только без сетки дней —
+       внутри обычный .list со строками целей. */
+    .period-header {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      margin-bottom: 8px;
+      font-size: 14px;
+      color: var(--text);
+      touch-action: pan-y;
+      user-select: none;
+    }
+    .period-label {
+      flex: 1;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+    .small-btn:disabled { opacity: 0.3; }
+    .period-carousel { overflow: hidden; }
+    .period-track { display: flex; touch-action: pan-y; }
+    .period-panel { flex: 0 0 100%; min-width: 0; }
+    .period-bound-hint {
+      font-size: 11px;
+      color: var(--accent);
+      text-align: center;
+      margin: 4px 0 0;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+    .period-bound-hint.visible { opacity: 1; }
     .month-cal-grid {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
