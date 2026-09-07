@@ -37,6 +37,9 @@ def serialize_task(task: Task) -> dict:
         # models/task.py), нужно окну редактирования по долгому нажатию,
         # чтобы найти правило в уже загруженном recurringRulesData.
         "recurring_rule_id": task.recurring_rule_id,
+        # Phase 78 — длительность блока на "Таймлайне дня", см.
+        # models/task.py. NULL, пока пользователь не растянул блок сам.
+        "duration_minutes": task.duration_minutes,
     }
 
 

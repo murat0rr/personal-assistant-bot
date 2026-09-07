@@ -52,6 +52,26 @@
         </div>
         <div id="week-day-detail"></div>
       </div>
+      <!-- "Таймлайн дня" (Phase 78, из одобренного макета
+           https://claude.ai/code/artifact/18eaa788-4706-42c8-a8ed-16bff25eacad)
+           — задачи/события сегодняшнего дня со временем на вертикальной
+           шкале; без времени — чипами снизу, перетаскиваются на нужный
+           час (см. renderTimelinePage). Только "Сегодня" (не любой
+           день) — та же причина, что у showFanMenu только в "Сегодня":
+           это MVP довесок к главному экрану, не отдельный полноценный
+           экран календаря. -->
+      <div class="day-page" data-day="timeline">
+        <div class="timeline-wrap" id="timeline-wrap">
+          <div class="timeline-grid" id="timeline-grid"></div>
+        </div>
+        <div class="unscheduled-panel">
+          <div class="unscheduled-head">
+            <span>Без времени · перетащи на нужный час</span>
+            <span class="unscheduled-hint" id="timeline-unsch-count"></span>
+          </div>
+          <div class="chip-row" id="timeline-chip-row"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -256,6 +276,32 @@
     </div>
   </div>
 
+  <!-- "Канбан" (Phase 78, фидбек: "канбан доску для компа тоже
+       реализовывай, но сделай внизу инбокс") — неделя колонками (см.
+       renderKanbanBoard), из одобренного макета
+       https://claude.ai/code/artifact/71fb9949-41fb-4a05-a399-4e96c494e16d,
+       но без переключателя "комп/телефон" самого макета: сама вкладка
+       уже показывается только на широком экране (CSS media query, см.
+       app.css), мобильная версия осталась в бэклоге (TECHDEBT.md).
+       Инбокс — новый ряд снизу (в макете его не было, фидбек добавил
+       его отдельно), карточки перетаскиваются из него в любую колонку
+       и обратно. -->
+  <div id="ext-panel-kanban" style="display:none">
+    <div class="section">
+      <p class="section-label">Канбан</p>
+      <div class="kanban-header">
+        <button class="small-btn" id="kanban-prev-week" aria-label="Предыдущая неделя">‹</button>
+        <span class="kanban-range-label" id="kanban-range-label"></span>
+        <button class="small-btn" id="kanban-next-week" aria-label="Следующая неделя">›</button>
+      </div>
+      <div class="kanban-board" id="kanban-board"></div>
+    </div>
+    <div class="section">
+      <p class="section-label" id="kanban-inbox-title">Инбокс</p>
+      <div class="kanban-inbox-row" id="kanban-inbox-row"></div>
+    </div>
+  </div>
+
   </div>
 
   <!-- Нижняя панель вкладок (Phase 35) — вне .screen-content, обычный
@@ -296,6 +342,16 @@
     <button type="button" class="ext-tab-btn" data-tab="projects" aria-label="Проекты">
       <svg class="ext-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
       <span>Проекты</span>
+    </button>
+    <!-- "Канбан" (Phase 78, фидбек: "канбан доску для компа тоже
+         реализовывай") — только для широкого экрана (CSS media query,
+         см. app.css .ext-tab-btn[data-tab="kanban"]): на телефоне сама
+         кнопка не показывается вообще, а не просто ведёт в "здесь не
+         работает" — мобильная версия (один день на экран) осталась в
+         бэклоге, см. TECHDEBT.md. -->
+    <button type="button" class="ext-tab-btn" data-tab="kanban" aria-label="Канбан">
+      <svg class="ext-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="5" height="16" rx="1.2"/><rect x="9.5" y="4" width="5" height="10" rx="1.2"/><rect x="16" y="4" width="5" height="13" rx="1.2"/></svg>
+      <span>Канбан</span>
     </button>
   </div>
   </div>
@@ -510,6 +566,14 @@
        приложение, тот же приём "singleton-оверлей, JS переставляет под
        жест", что и у #fan-layer выше. -->
   <div id="cal-inbox-drag-ghost" class="cal-inbox-drag-ghost"></div>
+
+  <!-- Летящий клон при перетаскивании на "Таймлайне дня" (Phase 78) —
+       тот же приём, что у #cal-inbox-drag-ghost выше (и то же место —
+       прямой потомок body, вне #screen-stack: тот получает
+       transform:translateY() при переходах между главным/расширенным
+       экраном, см. БАГ Phase 74 в SPEC.md — здесь наступили бы на те
+       же грабли, если оставить оверлей внутри #main-screen). -->
+  <div id="timeline-drag-ghost" class="timeline-drag-ghost"></div>
 
   <!-- Форма редактирования задачи по долгому нажатию (Phase 63) — тот
        же .entity-window, что у формы проекта/цели: текст, важность/
@@ -3446,6 +3510,488 @@
       document.addEventListener("pointercancel", endDrag);
     }
 
+    // ---- "Таймлайн дня" (Phase 78, фидбек "мне нравится таймлайн дня,
+    // сделай у задач чтобы можно было их растягивать") — новая страница
+    // главной карусели (см. DAY_VIEWS), из одобренного макета
+    // https://claude.ai/code/artifact/18eaa788-4706-42c8-a8ed-16bff25eacad,
+    // адаптированного на реальные данные boardState.days.today. Только
+    // сегодня — не произвольный день (см. комментарий у разметки
+    // .day-page[data-day="timeline"]).
+    const TIMELINE_START_HOUR = 7;
+    const TIMELINE_END_HOUR = 23;
+    const TIMELINE_HOUR_PX = 56;
+    const timelineGhostEl = document.getElementById("timeline-drag-ghost");
+
+    function timelineMinutesToLabel(m) {
+      const h = Math.floor(m / 60);
+      const mm = m % 60;
+      return `${String(h).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+    }
+    function timelineTimeToMinutes(hhmm) {
+      const [h, m] = hhmm.split(":").map(Number);
+      return h * 60 + m;
+    }
+    function timelineSnapMinutes(m) {
+      const clamped = Math.max(TIMELINE_START_HOUR * 60, Math.min(TIMELINE_END_HOUR * 60 - 5, m));
+      return Math.round(clamped / 15) * 15;
+    }
+
+    function renderTimelinePage() {
+      const grid = document.getElementById("timeline-grid");
+      const chipRow = document.getElementById("timeline-chip-row");
+      const unschCount = document.getElementById("timeline-unsch-count");
+      // Страница может быть выключена настройкой "Отображения задач" —
+      // разметка тогда лежит в #day-page-pool как обычно (id остаются
+      // рабочими, см. общий комментарий у rebuildDayCarousel), так что
+      // элементы есть всегда; проверка — просто защита на случай, если
+      // это когда-нибудь перестанет быть так.
+      if (!grid || !chipRow) return;
+
+      const todayTasks = (boardState.days.today && boardState.days.today.tasks) || [];
+      const todayIso = boardState.days.today ? boardState.days.today.date : null;
+
+      grid.innerHTML = "";
+      const totalHours = TIMELINE_END_HOUR - TIMELINE_START_HOUR;
+      grid.style.height = totalHours * TIMELINE_HOUR_PX + "px";
+
+      for (let h = TIMELINE_START_HOUR; h < TIMELINE_END_HOUR; h++) {
+        const row = document.createElement("div");
+        row.className = "hour-row";
+        const label = document.createElement("span");
+        label.className = "hour-label";
+        label.textContent = String(h).padStart(2, "0") + ":00";
+        row.append(label);
+        const slot = document.createElement("div");
+        slot.className = "hour-slot";
+        slot.dataset.hour = String(h);
+        row.append(slot);
+        grid.append(row);
+      }
+
+      // Линия "сейчас" — по локальному времени устройства (то же самое
+      // "сейчас", что показывает браузер везде в приложении, отдельного
+      // похода на бэкенд за ним нет и здесь).
+      const now = new Date();
+      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      if (nowMinutes >= TIMELINE_START_HOUR * 60 && nowMinutes <= TIMELINE_END_HOUR * 60) {
+        const line = document.createElement("div");
+        line.className = "now-line";
+        line.style.top = ((nowMinutes - TIMELINE_START_HOUR * 60) / 60) * TIMELINE_HOUR_PX + "px";
+        grid.append(line);
+      }
+
+      const timed = todayTasks.filter((t) => t.due_time);
+      const untimed = todayTasks.filter((t) => !t.due_time);
+
+      for (const task of timed) {
+        const startMin = timelineTimeToMinutes(task.due_time);
+        const duration = task.duration_minutes || 30;
+        const top = ((startMin - TIMELINE_START_HOUR * 60) / 60) * TIMELINE_HOUR_PX;
+        const height = Math.max((duration / 60) * TIMELINE_HOUR_PX - 3, 22);
+        const block = document.createElement("div");
+        block.className = "block " + (task.is_event ? "event" : "task") + (task.done ? " done" : "");
+        block.style.top = top + "px";
+        block.style.height = height + "px";
+        block.dataset.id = task.id;
+        block.innerHTML =
+          `<span class="b-time">${task.due_time} · ${duration} мин</span>` +
+          `<span class="b-title">${escapeHtml(task.title)}</span>`;
+        const check = document.createElement("button");
+        check.className = "b-check";
+        check.setAttribute("aria-label", task.done ? "Снять отметку" : "Отметить выполненной");
+        check.onclick = (e) => {
+          e.stopPropagation();
+          toggleTaskDone(task);
+        };
+        block.append(check);
+        // Ручка растягивания снизу блока (Phase 78, сама фича этого
+        // довеска) — отдельный маленький хват, а не весь блок, чтобы не
+        // конфликтовать с переносом блока целиком (attachTimelineDrag).
+        const resizeHandle = document.createElement("span");
+        resizeHandle.className = "b-resize";
+        resizeHandle.setAttribute("aria-label", "Изменить длительность");
+        block.append(resizeHandle);
+        attachTimelineDrag(block, task, false);
+        attachTimelineResize(resizeHandle, block, task);
+        grid.append(block);
+      }
+
+      chipRow.innerHTML = "";
+      unschCount.textContent = untimed.length ? String(untimed.length) : "";
+      if (!untimed.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty-hint";
+        empty.textContent = "Все задачи на сегодня уже стоят во времени.";
+        chipRow.append(empty);
+      }
+      for (const task of untimed) {
+        const chip = document.createElement("div");
+        chip.className = "chip" + (task.done ? " done" : "");
+        chip.dataset.id = task.id;
+        chip.innerHTML = `<span class="chip-dot"></span><span>${escapeHtml(task.title)}</span>`;
+        attachTimelineDrag(chip, task, true);
+        chipRow.append(chip);
+      }
+
+      function attachTimelineDrag(el, dragTask, isChip) {
+        let dragging = false;
+        let pointerId = null;
+        let hoveredSlot = null;
+
+        el.addEventListener("pointerdown", (e) => {
+          if (e.target.closest(".b-check, .b-resize")) return;
+          dragging = true;
+          pointerId = e.pointerId;
+          el.classList.add("dragging");
+          timelineGhostEl.textContent = dragTask.title;
+          timelineGhostEl.classList.add("visible");
+          positionGhost(e.clientX, e.clientY);
+          try {
+            el.setPointerCapture(e.pointerId);
+          } catch (err) {
+            // Редкий случай — жест продолжит работать и без захвата.
+          }
+          // Тот же приём, что у attachInboxDragToDay (Phase 77, фидбек
+          // "с компа не работает прозрачность") — preventDefault на
+          // мышином жесте, touch-action на неё не действует.
+          e.preventDefault();
+        });
+
+        function positionGhost(x, y) {
+          timelineGhostEl.style.left = x + "px";
+          timelineGhostEl.style.top = y + "px";
+        }
+
+        document.addEventListener("pointermove", (e) => {
+          if (!dragging || e.pointerId !== pointerId) return;
+          positionGhost(e.clientX, e.clientY);
+          const under = document.elementFromPoint(e.clientX, e.clientY);
+          const slot = under && under.closest(".hour-slot");
+          if (slot !== hoveredSlot) {
+            if (hoveredSlot) hoveredSlot.classList.remove("drag-target");
+            hoveredSlot = slot;
+            if (hoveredSlot) hoveredSlot.classList.add("drag-target");
+          }
+          e.preventDefault();
+        });
+
+        function endDrag(e) {
+          if (!dragging || e.pointerId !== pointerId) return;
+          dragging = false;
+          el.classList.remove("dragging");
+          timelineGhostEl.classList.remove("visible");
+          if (hoveredSlot) {
+            const hour = Number(hoveredSlot.dataset.hour);
+            const rect = hoveredSlot.getBoundingClientRect();
+            const offsetMin = ((e.clientY - rect.top) / TIMELINE_HOUR_PX) * 60;
+            const minutes = timelineSnapMinutes(hour * 60 + offsetMin);
+            hoveredSlot.classList.remove("drag-target");
+            hoveredSlot = null;
+            hapticImpact("light");
+            if (todayIso) setTaskDueDate(dragTask, `${todayIso}T${timelineMinutesToLabel(minutes)}`);
+          } else if (!isChip) {
+            // Блок (уже со временем), отпущенный над панелью "без
+            // времени" снизу — снимает время, символично зеркаля жест
+            // "затащить чип на шкалу".
+            const panel = document.querySelector("#day-page-pool .day-page[data-day='timeline'] .unscheduled-panel");
+            if (panel && todayIso) {
+              const panelRect = panel.getBoundingClientRect();
+              if (e.clientY >= panelRect.top) setTaskDueDate(dragTask, todayIso);
+            }
+          }
+        }
+        document.addEventListener("pointerup", endDrag);
+        document.addEventListener("pointercancel", endDrag);
+      }
+
+      function attachTimelineResize(handle, block, resizeTask) {
+        let resizing = false;
+        let pointerId = null;
+        let startHeight = 0;
+        let startY = 0;
+
+        handle.addEventListener("pointerdown", (e) => {
+          resizing = true;
+          pointerId = e.pointerId;
+          startY = e.clientY;
+          startHeight = block.getBoundingClientRect().height;
+          block.classList.add("resizing");
+          try {
+            handle.setPointerCapture(e.pointerId);
+          } catch (err) {
+            // Редкий случай — жест продолжит работать и без захвата.
+          }
+          e.preventDefault();
+          e.stopPropagation(); // не дать это же нажатие подхватить attachTimelineDrag блока
+        });
+
+        document.addEventListener("pointermove", (e) => {
+          if (!resizing || e.pointerId !== pointerId) return;
+          const dy = e.clientY - startY;
+          block.style.height = Math.max(18, startHeight + dy) + "px";
+          e.preventDefault();
+        });
+
+        function endResize(e) {
+          if (!resizing || e.pointerId !== pointerId) return;
+          resizing = false;
+          block.classList.remove("resizing");
+          // Обратное преобразование высоты в минуты — см. формулу высоты
+          // выше (height = duration/60*HOUR_PX - 3), плюс снаппинг на
+          // 15 минут и минимум 15 (та же граница, что и на бэкенде, см.
+          // api.py::set_task_duration).
+          const finalHeight = block.getBoundingClientRect().height;
+          const rawMinutes = ((finalHeight + 3) / TIMELINE_HOUR_PX) * 60;
+          const minutes = Math.max(15, Math.round(rawMinutes / 15) * 15);
+          hapticImpact("light");
+          setTaskDuration(resizeTask, minutes);
+        }
+        document.addEventListener("pointerup", endResize);
+        document.addEventListener("pointercancel", endResize);
+      }
+    }
+
+    // ---- "Канбан" (Phase 78, фидбек "канбан доску для компа тоже
+    // реализовывай, но сделай внизу инбокс") — неделя колонками +
+    // инбокс снизу для перетаскивания. Только широкий экран — сама
+    // вкладка скрыта на узком (см. app.css), поэтому JS здесь не
+    // обязан бояться тесноты.
+    let kanbanWeekStart = null; // ISO понедельника показанной недели
+
+    function kanbanEnsureWeekStart() {
+      if (kanbanWeekStart) return;
+      const todayIso = boardState.days.today ? boardState.days.today.date : null;
+      kanbanWeekStart = computeWeekStart(todayIso || new Date().toISOString().slice(0, 10));
+    }
+
+    function renderKanbanRangeLabel() {
+      const el = document.getElementById("kanban-range-label");
+      if (!el || !kanbanWeekStart) return;
+      const end = addDaysIso(kanbanWeekStart, 6);
+      el.textContent = `${formatShortDate(kanbanWeekStart)} – ${formatShortDate(end)}`;
+    }
+
+    function kanbanMakeCard(task) {
+      const card = document.createElement("div");
+      card.className = "kanban-card" + (task.done ? " done" : "");
+      card.dataset.id = task.id;
+
+      const check = document.createElement("button");
+      check.className = "checkbox" + (task.done ? " done" : "");
+      check.setAttribute("aria-label", task.done ? "Снять отметку" : "Отметить выполненной");
+      if (task.done) check.innerHTML = checkIcon();
+      check.onclick = (e) => {
+        e.stopPropagation();
+        toggleTaskDone(task);
+      };
+      card.append(check);
+
+      const title = document.createElement("span");
+      title.className = "kanban-card-title";
+      title.textContent = task.due_time ? `${task.due_time} · ${task.title}` : task.title;
+      card.append(title);
+
+      attachKanbanCardDrag(card, task);
+      return card;
+    }
+
+    function renderKanbanBoard() {
+      const board = document.getElementById("kanban-board");
+      if (!board) return; // вкладка выключена медиа-запросом — разметки может не быть отрендерено видимой, но узлы есть всегда
+      kanbanEnsureWeekStart();
+      renderKanbanRangeLabel();
+
+      board.innerHTML = "";
+      const todayIso = boardState.days.today ? boardState.days.today.date : null;
+      for (let i = 0; i < 7; i++) {
+        const iso = addDaysIso(kanbanWeekStart, i);
+        const dayTasks = tasksForDate(iso).slice().sort((a, b) => a.sort_order - b.sort_order);
+
+        const col = document.createElement("div");
+        col.className = "kanban-col" + (iso === todayIso ? " is-today" : "");
+        col.dataset.iso = iso;
+
+        const head = document.createElement("div");
+        head.className = "kanban-col-head";
+        head.innerHTML =
+          `<span class="kanban-col-name">${WEEKDAY_LABELS[i]}${iso === todayIso ? " · сегодня" : ""}</span>` +
+          `<span class="kanban-col-count">${dayTasks.length}</span>` +
+          `<div class="kanban-col-date">${formatShortDate(iso)}</div>`;
+        col.append(head);
+
+        const list = document.createElement("div");
+        list.className = "kanban-card-list";
+        list.dataset.iso = iso;
+        for (const t of dayTasks) list.append(kanbanMakeCard(t));
+        col.append(list);
+
+        board.append(col);
+      }
+
+      renderKanbanInboxRow();
+    }
+
+    function renderKanbanInboxRow() {
+      const row = document.getElementById("kanban-inbox-row");
+      const title = document.getElementById("kanban-inbox-title");
+      if (!row) return;
+      if (title) title.textContent = boardState.inbox.length ? `Инбокс (${boardState.inbox.length})` : "Инбокс";
+      row.innerHTML = "";
+      if (!boardState.inbox.length) {
+        renderEmpty(row);
+        return;
+      }
+      for (const task of sortByOrder(boardState.inbox)) {
+        const chip = document.createElement("div");
+        chip.className = "kanban-inbox-chip" + (task.done ? " done" : "");
+        chip.dataset.id = task.id;
+        chip.innerHTML = `<span class="chip-dot"></span><span>${escapeHtml(task.title)}</span>`;
+        attachKanbanInboxDrag(chip, task);
+        row.append(chip);
+      }
+    }
+
+    // Перенос карточки дня — в другую колонку (меняет due_date, время
+    // сохраняется как было) или вниз, в инбокс-ряд (снимает дату
+    // целиком). Тот же приём "singleton ghost + hover-подсветка", что
+    // и у attachInboxDragToDay/attachTimelineDrag — переиспользует тот
+    // же #timeline-drag-ghost: на экране одновременно активен только
+    // один жест переноса, второй singleton заводить незачем.
+    function attachKanbanCardDrag(card, task) {
+      let dragging = false;
+      let pointerId = null;
+      let hoveredList = null;
+      let overInboxRow = false;
+
+      card.addEventListener("pointerdown", (e) => {
+        if (e.target.closest(".checkbox")) return;
+        dragging = true;
+        pointerId = e.pointerId;
+        card.classList.add("dragging");
+        timelineGhostEl.textContent = task.title;
+        timelineGhostEl.classList.add("visible");
+        positionGhost(e.clientX, e.clientY);
+        try {
+          card.setPointerCapture(e.pointerId);
+        } catch (err) {
+          // Редкий случай — жест продолжит работать и без захвата.
+        }
+        e.preventDefault();
+      });
+
+      function positionGhost(x, y) {
+        timelineGhostEl.style.left = x + "px";
+        timelineGhostEl.style.top = y + "px";
+      }
+
+      document.addEventListener("pointermove", (e) => {
+        if (!dragging || e.pointerId !== pointerId) return;
+        positionGhost(e.clientX, e.clientY);
+        const under = document.elementFromPoint(e.clientX, e.clientY);
+        const list = under && under.closest(".kanban-card-list");
+        if (list !== hoveredList) {
+          if (hoveredList) hoveredList.classList.remove("drag-over");
+          hoveredList = list;
+          if (hoveredList) hoveredList.classList.add("drag-over");
+        }
+        const inboxRow = under && under.closest("#kanban-inbox-row");
+        overInboxRow = !!inboxRow;
+        document.getElementById("kanban-inbox-row")?.classList.toggle("drag-over", overInboxRow);
+        e.preventDefault();
+      });
+
+      function endDrag(e) {
+        if (!dragging || e.pointerId !== pointerId) return;
+        dragging = false;
+        card.classList.remove("dragging");
+        timelineGhostEl.classList.remove("visible");
+        document.getElementById("kanban-inbox-row")?.classList.remove("drag-over");
+        if (hoveredList) {
+          const targetIso = hoveredList.dataset.iso;
+          hoveredList.classList.remove("drag-over");
+          hoveredList = null;
+          hapticImpact("light");
+          if (targetIso !== task.due_date) {
+            setTaskDueDate(task, task.due_time ? `${targetIso}T${task.due_time}` : targetIso);
+          }
+        } else if (overInboxRow) {
+          hapticImpact("light");
+          sendTaskToInbox(task);
+        }
+        overInboxRow = false;
+      }
+      document.addEventListener("pointerup", endDrag);
+      document.addEventListener("pointercancel", endDrag);
+    }
+
+    // Перенос из инбокс-ряда вверх, в любую колонку дня — зеркало
+    // attachKanbanCardDrag выше, только источник без даты.
+    function attachKanbanInboxDrag(chip, task) {
+      let dragging = false;
+      let pointerId = null;
+      let hoveredList = null;
+
+      chip.addEventListener("pointerdown", (e) => {
+        dragging = true;
+        pointerId = e.pointerId;
+        chip.classList.add("dragging");
+        timelineGhostEl.textContent = task.title;
+        timelineGhostEl.classList.add("visible");
+        positionGhost(e.clientX, e.clientY);
+        try {
+          chip.setPointerCapture(e.pointerId);
+        } catch (err) {
+          // Редкий случай — жест продолжит работать и без захвата.
+        }
+        e.preventDefault();
+      });
+
+      function positionGhost(x, y) {
+        timelineGhostEl.style.left = x + "px";
+        timelineGhostEl.style.top = y + "px";
+      }
+
+      document.addEventListener("pointermove", (e) => {
+        if (!dragging || e.pointerId !== pointerId) return;
+        positionGhost(e.clientX, e.clientY);
+        const under = document.elementFromPoint(e.clientX, e.clientY);
+        const list = under && under.closest(".kanban-card-list");
+        if (list !== hoveredList) {
+          if (hoveredList) hoveredList.classList.remove("drag-over");
+          hoveredList = list;
+          if (hoveredList) hoveredList.classList.add("drag-over");
+        }
+        e.preventDefault();
+      });
+
+      function endDrag(e) {
+        if (!dragging || e.pointerId !== pointerId) return;
+        dragging = false;
+        chip.classList.remove("dragging");
+        timelineGhostEl.classList.remove("visible");
+        if (hoveredList) {
+          const targetIso = hoveredList.dataset.iso;
+          hoveredList.classList.remove("drag-over");
+          hoveredList = null;
+          hapticImpact("light");
+          setTaskDueDate(task, targetIso);
+        }
+      }
+      document.addEventListener("pointerup", endDrag);
+      document.addEventListener("pointercancel", endDrag);
+    }
+
+    document.getElementById("kanban-prev-week")?.addEventListener("click", () => {
+      kanbanEnsureWeekStart();
+      kanbanWeekStart = addDaysIso(kanbanWeekStart, -7);
+      renderKanbanBoard();
+    });
+    document.getElementById("kanban-next-week")?.addEventListener("click", () => {
+      kanbanEnsureWeekStart();
+      kanbanWeekStart = addDaysIso(kanbanWeekStart, 7);
+      renderKanbanBoard();
+    });
+
     function render() {
       for (const key of ["yesterday", "today"]) {
         const el = document.getElementById(`${key}-list`);
@@ -3469,6 +4015,8 @@
       renderInboxHeader();
       renderCalInboxHeader();
       renderCalInboxList();
+      renderTimelinePage();
+      renderKanbanBoard();
       renderWeekCarousel();
       renderWeekDetail();
       refreshMonthDayDetail();
@@ -3734,6 +4282,30 @@
         task.sort_order = prevSortOrder;
         render();
         alert("Не удалось изменить событие.");
+      } finally {
+        pendingIds.delete(id);
+        render();
+      }
+    }
+
+    // Растягивание/сжатие блока на "Таймлайне дня" (Phase 78) — тот же
+    // optimistic-паттерн, что и у соседних setTask*, sort_order не
+    // трогаем (смена длительности не переносит задачу между днями).
+    async function setTaskDuration(task, minutes) {
+      const id = task.id;
+      const prev = task.duration_minutes;
+      task.duration_minutes = minutes;
+      pendingIds.add(id);
+      render();
+      try {
+        await api(`/miniapp/api/tasks/${encodeURIComponent(id)}/duration`, {
+          method: "POST",
+          body: JSON.stringify({ duration_minutes: minutes }),
+        });
+      } catch (e) {
+        task.duration_minutes = prev;
+        render();
+        alert("Не удалось изменить длительность.");
       } finally {
         pendingIds.delete(id);
         render();
@@ -5363,6 +5935,7 @@
       calendar: document.getElementById("ext-panel-calendar"),
       tasks: document.getElementById("ext-panel-tasks"),
       projects: document.getElementById("ext-panel-projects"),
+      kanban: document.getElementById("ext-panel-kanban"),
     };
     const extTabBtns = Array.from(document.querySelectorAll(".ext-tab-btn"));
 
@@ -5388,6 +5961,7 @@
       // без сети).
       if (tab === "calendar") recenterMonthCarousel();
       if (tab === "projects") recenterAllGoalPeriodCarousels();
+      if (tab === "kanban") renderKanbanBoard();
     }
 
     extTabBtns.forEach((btn) => {
@@ -6477,6 +7051,12 @@
       { id: "today", label: "Сегодня", locked: true },
       { id: "tomorrow", label: "Завтра", locked: false },
       { id: "week", label: "Неделя", locked: false },
+      // Phase 78, фидбек ("мне нравится таймлайн дня") — тот же
+      // реестр/переключатель, что у остальных страниц карусели, просто
+      // новая страница показывает сегодняшние задачи+события по
+      // времени, а не списком. Не locked — как и у любой новой
+      // страницы, можно выключить в "Отображения задач".
+      { id: "timeline", label: "Таймлайн", locked: false },
     ];
     const DAY_VIEW_LABELS = Object.fromEntries(DAY_VIEWS.map((v) => [v.id, v.label]));
     const DAY_VIEWS_STORAGE_KEY = "dayViews";

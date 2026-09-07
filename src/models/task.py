@@ -87,6 +87,16 @@ class Task(Base):
     recurring_rule_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("recurring_task_rules.id", ondelete="SET NULL"), nullable=True
     )
+    # Phase 78 — длительность в минутах, для блока на "Таймлайне дня"
+    # (Mini App, главный экран). NULL значит "не задана явно" — блок на
+    # таймлайне тогда рисуется дефолтной высотой (см. фронтенд), ничего
+    # не записывая, пока пользователь реально не растянет/не сожмёт его
+    # перетаскиванием нижнего края. Имеет смысл только вместе с
+    # проставленным временем в due_date (без времени задаче негде
+    # рисовать блок вообще) — но отдельного ограничения на уровне БД
+    # нет, как и у большинства "имеет смысл только вместе с X" полей в
+    # этой модели (see is_event/google_event_id и т.п.).
+    duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

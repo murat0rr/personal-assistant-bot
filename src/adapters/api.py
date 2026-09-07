@@ -204,6 +204,13 @@ class SetDueDateRequest(BaseModel):
     due_date: str | None = None
 
 
+class SetDurationRequest(BaseModel):
+    # Phase 78 — "Таймлайн дня": растягивание/сжатие блока задачи мышью/
+    # пальцем. null сбрасывает явную длительность обратно на дефолтную
+    # отрисовку (см. models/task.py::duration_minutes).
+    duration_minutes: int | None = None
+
+
 class SetPriorityRequest(BaseModel):
     priority: str
 
@@ -426,6 +433,24 @@ async def set_task_due_date(
         # остаётся на случайной позиции среди задач, с которыми теперь
         # физически не соседствует.
         task.sort_order = time.time()
+        await session.commit()
+
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/tasks/{task_id}/duration")
+async def set_task_duration(
+    task_id: int, payload: SetDurationRequest, user: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    async with async_session() as session:
+        task = await _get_owned_task(session, task_id, user["id"])
+        # Минимум 15 минут, чтобы случайно не сжать блок до неразличимой
+        # полоски — тот же порог снаппинга, что и на фронтенде (см.
+        # index.html::snapMinutes у таймлайна). sort_order не трогаем —
+        # смена длительности не переносит задачу в другую группу/день.
+        task.duration_minutes = (
+            max(15, payload.duration_minutes) if payload.duration_minutes is not None else None
+        )
         await session.commit()
 
     return {"status": "ok"}

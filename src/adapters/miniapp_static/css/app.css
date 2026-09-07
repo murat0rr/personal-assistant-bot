@@ -195,6 +195,15 @@
     }
     .ext-tab-btn.active { color: var(--accent); }
     .ext-tab-icon { width: 20px; height: 20px; }
+    /* "Канбан" (Phase 78) — только для широкого экрана (фидбек: "канбан
+       доску для компа"), сама кнопка вкладки не показывается на узком,
+       а не ведёт в "здесь не работает". 900px — тот же порог, что
+       обычно отделяет "телефон/маленький таблет" от "планшет пошире/
+       комп" в подобных responsive-развилках; отдельного экспериментально
+       подобранного значения для этого Mini App ещё не было. */
+    @media (max-width: 899px) {
+      .ext-tab-btn[data-tab="kanban"] { display: none; }
+    }
     /* "Основной экран" — тот же #pill-extended, что и раньше (см.
        setupPill), просто в общей панели кнопок вместо отдельной плашки
        внизу экрана (Phase 35). Тот же размер, что у остальных трёх
@@ -1318,6 +1327,138 @@
       white-space: nowrap;
     }
     .cal-inbox-drag-ghost.visible { display: flex; }
+    /* "Таймлайн дня" (Phase 78) — портировано из одобренного макета
+       https://claude.ai/code/artifact/18eaa788-4706-42c8-a8ed-16bff25eacad
+       почти без изменений: тот же токены-палитра, что и у всего
+       остального приложения (--bg/--card-bg/--text/--accent и т.п.),
+       так что макет и реальный экран выглядят одинаково в обеих темах. */
+    .timeline-wrap { position: relative; padding: 4px 0 10px; }
+    .timeline-grid { position: relative; }
+    .hour-row { position: relative; height: 56px; border-top: 0.5px solid var(--hairline); }
+    .hour-label {
+      position: absolute; left: 12px; top: -7px; font-size: 11px; color: var(--text-muted);
+      background: var(--bg); padding: 0 4px;
+    }
+    .hour-slot { position: absolute; left: 56px; right: 12px; top: 0; bottom: 0; border-radius: 8px; }
+    .hour-slot.drag-target { background: var(--pending-bg); outline: 1.5px dashed var(--accent); }
+    .now-line {
+      position: absolute; left: 56px; right: 12px; height: 0;
+      border-top: 2px solid var(--neutral-red); z-index: 5; pointer-events: none;
+    }
+    .now-line::before {
+      content: ""; position: absolute; left: -5px; top: -4px; width: 8px; height: 8px;
+      border-radius: 50%; background: var(--neutral-red);
+    }
+    .timeline-grid .block {
+      position: absolute; left: 56px; right: 12px; border-radius: 9px;
+      padding: 5px 9px; font-size: 12.5px; line-height: 1.3; overflow: hidden;
+      cursor: grab; touch-action: none; border: 1px solid transparent;
+      display: flex; flex-direction: column; gap: 1px;
+    }
+    .timeline-grid .block.task { background: var(--pending-bg); border-color: color-mix(in srgb, var(--accent) 35%, transparent); color: var(--text); }
+    .timeline-grid .block.event { background: color-mix(in srgb, var(--neutral-red) 16%, transparent); border-color: color-mix(in srgb, var(--neutral-red) 40%, transparent); }
+    .timeline-grid .block.done { opacity: 0.5; text-decoration: line-through; }
+    .timeline-grid .block .b-time { font-size: 10.5px; color: var(--text-muted); font-weight: 600; letter-spacing: 0.01em; }
+    .timeline-grid .block .b-title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .timeline-grid .block.dragging { z-index: 20; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22); cursor: grabbing; }
+    .timeline-grid .block.resizing { z-index: 20; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22); }
+    .timeline-grid .block .b-check {
+      position: absolute; right: 6px; top: 5px; width: 15px; height: 15px; border-radius: 50%;
+      border: 1.5px solid var(--text-muted); background: transparent;
+    }
+    .timeline-grid .block.done .b-check { background: var(--accent); border-color: var(--accent); }
+    /* Ручка растягивания (сама фича этого довеска, Phase 78, фидбек
+       "чтобы можно было их растягивать") — узкая полоса на всю ширину
+       блока снизу, отдельный жест от переноса блока целиком (см.
+       attachTimelineResize/attachTimelineDrag). */
+    .timeline-grid .block .b-resize {
+      position: absolute; left: 0; right: 0; bottom: 0; height: 10px;
+      cursor: ns-resize; touch-action: none;
+    }
+    .timeline-grid .block .b-resize::after {
+      content: ""; position: absolute; left: 50%; bottom: 2px; width: 20px; height: 2.5px;
+      border-radius: 2px; background: currentColor; opacity: 0.35; transform: translateX(-50%);
+    }
+    .unscheduled-panel { border-top: 1px solid var(--hairline); padding: 10px 0 4px; }
+    .unscheduled-head {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 12px; color: var(--text-muted); margin-bottom: 8px;
+    }
+    .unscheduled-hint { font-size: 11px; }
+    .chip-row { display: flex; flex-wrap: wrap; gap: 8px; min-height: 34px; }
+    .chip-row .chip {
+      background: var(--card-bg); border: 1px solid var(--hairline); border-radius: 999px;
+      padding: 7px 12px; font-size: 12.5px; cursor: grab; touch-action: none;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .chip-row .chip.dragging { opacity: 0.35; }
+    .chip-row .chip.done { opacity: 0.6; text-decoration: line-through; }
+    .chip-row .chip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+    .timeline-wrap ~ .unscheduled-panel .empty-hint,
+    .unscheduled-panel .empty-hint { font-size: 11.5px; color: var(--text-muted); padding: 6px 2px; }
+    .timeline-drag-ghost {
+      position: fixed; left: 0; top: 0; z-index: 46; display: none;
+      background: var(--accent); color: var(--accent-text); border-radius: 9px;
+      padding: 7px 12px; font-size: 12.5px; font-weight: 500;
+      transform: translate(-50%, -50%); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+      max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      pointer-events: none;
+    }
+    .timeline-drag-ghost.visible { display: block; }
+    /* "Канбан" (Phase 78) — портировано из одобренного макета
+       https://claude.ai/code/artifact/71fb9949-41fb-4a05-a399-4e96c494e16d,
+       те же токены-палитра, что и у остального приложения. */
+    .kanban-header {
+      display: flex; align-items: center; justify-content: center; gap: 12px;
+      margin-bottom: 10px;
+    }
+    .kanban-range-label { font-size: 13.5px; font-weight: 600; min-width: 130px; text-align: center; }
+    .kanban-board { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+    .kanban-col {
+      background: var(--card-bg); border-radius: 12px; width: 148px; flex-shrink: 0;
+      display: flex; flex-direction: column; max-height: 60vh;
+    }
+    .kanban-col-head { padding: 8px 10px 6px; border-bottom: 0.5px solid var(--hairline); }
+    .kanban-col.is-today .kanban-col-head { background: var(--pending-bg); border-radius: 12px 12px 0 0; }
+    .kanban-col-name { font-size: 11.5px; font-weight: 600; }
+    .kanban-col-count { font-size: 10px; color: var(--text-muted); float: right; }
+    .kanban-col-date { font-size: 10.5px; color: var(--text-muted); }
+    .kanban-card-list {
+      flex: 1; overflow-y: auto; padding: 7px; display: flex; flex-direction: column;
+      gap: 6px; min-height: 50px;
+    }
+    .kanban-card-list.drag-over { background: var(--pending-bg); border-radius: 0 0 12px 12px; }
+    .kanban-card {
+      background: var(--bg); border: 1px solid var(--hairline); border-radius: 9px;
+      padding: 7px 8px; font-size: 12px; line-height: 1.3; cursor: grab; touch-action: none;
+      display: flex; align-items: flex-start; gap: 6px;
+    }
+    .kanban-card.dragging { opacity: 0.3; }
+    .kanban-card .checkbox { width: 16px; height: 16px; flex-shrink: 0; margin-top: 0.5px; }
+    .kanban-card .checkbox svg { width: 9px; height: 9px; }
+    .kanban-card-title {
+      flex: 1; overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+      -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    }
+    .kanban-card.done .kanban-card-title { color: var(--text-muted); text-decoration: line-through; }
+    /* Инбокс снизу (Phase 78, фидбек — в макете этого ряда не было) —
+       та же роль, что у #cal-inbox-list в календаре: единственное
+       действие тут — перетащить задачу в любую колонку дня выше, сам
+       ряд горизонтально скроллится, если задач много. */
+    .kanban-inbox-row {
+      display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px; min-height: 34px;
+      border-radius: 12px;
+    }
+    .kanban-inbox-row.drag-over { background: var(--pending-bg); }
+    .kanban-inbox-chip {
+      background: var(--card-bg); border: 1px solid var(--hairline); border-radius: 999px;
+      padding: 7px 12px; font-size: 12.5px; cursor: grab; touch-action: none; flex-shrink: 0;
+      display: flex; align-items: center; gap: 6px; max-width: 220px;
+    }
+    .kanban-inbox-chip .chip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+    .kanban-inbox-chip span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kanban-inbox-chip.dragging { opacity: 0.35; }
+    .kanban-inbox-chip.done { opacity: 0.6; text-decoration: line-through; }
     .fan-trigger.pressed { background: var(--accent); color: var(--accent-text); }
     /* Один общий (singleton) оверлей на всё приложение — JS позиционирует
        под конкретную кнопку при каждом жесте (attachFanMenu). z-index 50
