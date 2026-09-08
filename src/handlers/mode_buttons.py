@@ -6,6 +6,7 @@ from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 
 from src.core.auth import is_authorized
 from src.core.message_text import extract_text
+from src.core.topics import QUESTIONS_STUB_TEXT, ensure_in_topic, get_or_create_questions_topic
 from src.handlers.f1_task_note import handle_task_note
 from src.handlers.f_notes import handle_note
 from src.handlers.f_question import handle_question_input
@@ -71,6 +72,19 @@ async def handle_mode_button(message: Message, state: FSMContext) -> None:
         return
 
     assert message.text is not None
+
+    # Вопросы — только в своей теме (Phase 81, Threaded Mode). Кнопка
+    # видна из любой темы чата (клавиатура не привязана к конкретной
+    # теме), поэтому проверяем здесь же, до входа в ModeStates.question
+    # — иначе ниже пришлось бы ловить и в handle_question_button тоже
+    # (и таки пришлось, см. там же: FSM-состояние общее на весь чат, не
+    # по темам, кнопку могли нажать в теме, а текст прислать уже в
+    # General).
+    if message.text == "❓ Вопрос":
+        topic_id = await get_or_create_questions_topic(message.bot, message.from_user.id)
+        if not await ensure_in_topic(message, topic_id, QUESTIONS_STUB_TEXT):
+            return
+
     target_state, prompt = _BUTTON_PROMPTS[message.text]
     await state.set_state(target_state)
     await message.answer(prompt)
@@ -98,6 +112,15 @@ async def handle_mode_content(message: Message, state: FSMContext) -> None:
 async def handle_question_button(message: Message, state: FSMContext) -> None:
     if not message.from_user or not await is_authorized(message.from_user.id):
         await message.answer("Извините, этот бот вам недоступен.")
+        return
+
+    # Повторная проверка темы (Phase 81) — FSM-состояние общее на весь
+    # чат, не по темам: можно нажать "❓ Вопрос" в теме "Вопросы" (там
+    # проверка в handle_mode_button уже пройдена), а сам вопрос набрать,
+    # уже переключившись в General — состояние всё ещё активно.
+    topic_id = await get_or_create_questions_topic(message.bot, message.from_user.id)
+    if not await ensure_in_topic(message, topic_id, QUESTIONS_STUB_TEXT):
+        await state.clear()
         return
 
     await state.clear()

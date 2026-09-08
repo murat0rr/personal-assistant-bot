@@ -6,6 +6,7 @@ from aiogram.types import Message
 from src.core.auth import is_authorized
 from src.core.llm_router import classify_intent
 from src.core.message_text import extract_text
+from src.core.topics import QUESTIONS_STUB_TEXT, ensure_in_topic, get_or_create_questions_topic
 from src.handlers.f1_task_note import handle_task_note
 from src.handlers.f_notes import handle_note
 from src.handlers.f_question import handle_question
@@ -35,7 +36,11 @@ async def route_message(message: Message) -> None:
     if intent == "note":
         await handle_note(message, text)
     elif intent == "question":
-        await handle_question(message, text)
+        # Вопросы — только в своей теме (Phase 81, Threaded Mode) — где
+        # угодно ещё (обычно General) вместо ответа уходит заглушка.
+        topic_id = await get_or_create_questions_topic(message.bot, message.from_user.id)
+        if await ensure_in_topic(message, topic_id, QUESTIONS_STUB_TEXT):
+            await handle_question(message, text)
     elif intent == "reminder":
         await handle_new_reminder(message, text)
     else:
