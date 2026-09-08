@@ -5,6 +5,7 @@ from aiogram.types import Message
 
 from src.core.db import async_session
 from src.core.user_location import user_today
+from src.handlers.f_set_day_task import refresh_day_task_message
 from src.integrations.claude_client import extract_tasks_fields
 from src.models.task import Task
 
@@ -45,6 +46,16 @@ async def handle_task_note(message: Message, text: str) -> None:
         logger.exception("Не удалось создать задачу(-и) из сообщения: %r", text)
         await message.answer("Не получилось создать задачу, попробуй ещё раз.")
         return
+
+    # Живое обновление /set_day_task (Phase 80, фидбек живой проверки) —
+    # если новая задача попала на сегодня, а у пользователя уже открыто
+    # это сообщение, оно должно увидеть её сразу, не только по
+    # следующему тапу/повторной команде. Не должно ронять уже успешное
+    # создание задачи, если вдруг сломается — тихо логируется внутри.
+    try:
+        await refresh_day_task_message(message.bot, message.from_user.id)
+    except Exception:
+        logger.exception("Не удалось обновить /set_day_task после создания задачи")
 
     def _line(fields) -> str:
         due_str = fields.due_date.strftime("%d.%m.%Y") if fields.due_date else "без срока"

@@ -26,6 +26,7 @@ from src.core import projects as projects_repo
 from src.core import recurring_tasks as recurring_tasks_repo
 from src.core import task_templates as templates_repo
 from src.core.auth import is_authorized
+from src.core.bot_client import get_bot
 from src.core.config import settings
 from src.core.db import async_session
 from src.core.google_calendar_sync import maybe_sync_now
@@ -40,6 +41,7 @@ from src.core.user_location import (
 )
 from src.core.web_session import SESSION_COOKIE_NAME, verify_session_token
 from src.handlers.f8_habits import check_habit
+from src.handlers.f_set_day_task import refresh_day_task_message
 from src.handlers.f_task_nag import record_task_completion
 from src.handlers.miniapp_tasks import build_task_board, serialize_task
 from src.integrations.claude_client import (
@@ -380,6 +382,14 @@ async def create_task_endpoint(
     _background_tasks.add(bg_task)
     bg_task.add_done_callback(_background_tasks.discard)
 
+    # Живое обновление /set_day_task (Phase 80, тот же принцип, что
+    # f1_task_note.py на стороне бота) — no-op, если этой фичей не
+    # пользовались; не должно ронять успешный ответ Mini App.
+    try:
+        await refresh_day_task_message(get_bot(), user["id"])
+    except Exception:
+        logger.exception("Не удалось обновить /set_day_task после создания задачи")
+
     return {"status": "ok", "id": task.id}
 
 
@@ -414,6 +424,11 @@ async def mark_task_done(
         # задача закрыта. No-op, если фичей не пользовались.
         await record_task_completion(user["id"])
 
+    try:
+        await refresh_day_task_message(get_bot(), user["id"])
+    except Exception:
+        logger.exception("Не удалось обновить /set_day_task после смены статуса задачи")
+
     return {"status": "ok"}
 
 
@@ -434,6 +449,11 @@ async def set_task_due_date(
         # физически не соседствует.
         task.sort_order = time.time()
         await session.commit()
+
+    try:
+        await refresh_day_task_message(get_bot(), user["id"])
+    except Exception:
+        logger.exception("Не удалось обновить /set_day_task после смены даты задачи")
 
     return {"status": "ok"}
 
@@ -582,6 +602,11 @@ async def archive_task_endpoint(
         task = await _get_owned_task(session, task_id, user["id"])
         task.archived = True
         await session.commit()
+
+    try:
+        await refresh_day_task_message(get_bot(), user["id"])
+    except Exception:
+        logger.exception("Не удалось обновить /set_day_task после удаления задачи")
 
     return {"status": "ok"}
 

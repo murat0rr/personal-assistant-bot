@@ -34,6 +34,7 @@ from src.handlers.f12_briefing import build_morning_briefing
 from src.handlers.f_goals import start_goal_flow
 from src.handlers.f_morning_advice import send_morning_advice
 from src.handlers.f_reminders import check_reminders
+from src.handlers.f_set_day_task import refresh_day_task_message
 from src.handlers.f_task_nag import check_and_nudge
 from src.handlers.miniapp_tasks import build_task_board
 from src.integrations.claude_client import suggest_new_templates, tidy_task_titles
@@ -75,6 +76,13 @@ async def _materialize_recurring_tasks_job(bot: Bot, user_id: int) -> None:
     created = await materialize_due_rules(user_id, today)
     if created:
         logger.info("Создано повторяющихся задач: %s", len(created))
+        # Живое обновление /set_day_task (Phase 80) — свежесозданный
+        # occurrence должен появиться в уже отправленном сообщении, не
+        # только по следующему тапу.
+        try:
+            await refresh_day_task_message(bot, user_id)
+        except Exception:
+            logger.exception("Не удалось обновить /set_day_task после материализации")
 
 
 async def _morning_digest(bot: Bot, storage: BaseStorage, user_id: int) -> None:

@@ -11,6 +11,7 @@ from sqlalchemy import select
 from src.core.auth import is_authorized
 from src.core.db import async_session
 from src.core.user_location import user_today
+from src.handlers.f_set_day_task import refresh_day_task_message
 from src.integrations.claude_client import suggest_tasks_for_today
 from src.models.task import Task
 
@@ -117,6 +118,11 @@ async def handle_advice_button(callback: CallbackQuery, state: FSMContext) -> No
             task.due_date = due
             task.sort_order = time.time()
         await session.commit()
+
+    try:
+        await refresh_day_task_message(callback.bot, callback.from_user.id)
+    except Exception:
+        logger.exception("Не удалось обновить /set_day_task после принятия совета")
 
     await callback.answer("Добавил на сегодня")
     await callback.message.answer("Готово, добавил в сегодняшний список.")
