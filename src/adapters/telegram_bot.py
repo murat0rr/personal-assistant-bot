@@ -29,6 +29,7 @@ from src.handlers.f_google_calendar import router as google_calendar_router
 from src.handlers.f_morning_advice import router as morning_advice_router
 from src.handlers.f_reminders import router as reminders_router
 from src.handlers.f_schedule import router as schedule_router
+from src.handlers.f_set_day_task import router as set_day_task_router
 from src.handlers.f_task_nag import router as task_nag_router
 from src.handlers.f_timezone import router as timezone_router
 from src.handlers.f_web_login import router as web_login_router
@@ -57,6 +58,7 @@ dp.include_router(reminders_router)
 dp.include_router(finance_router)
 dp.include_router(task_nag_router)
 dp.include_router(schedule_router)
+dp.include_router(set_day_task_router)
 dp.include_router(timezone_router)
 dp.include_router(web_login_router)
 dp.include_router(orchestrator_router)
@@ -129,6 +131,9 @@ async def main() -> None:
             BotCommand(command="timezone", description="Определить часовой пояс по геопозиции"),
             BotCommand(command="google_calendar", description="Подключить Google Calendar"),
             BotCommand(command="google_calendar_off", description="Отключить Google Calendar"),
+            BotCommand(
+                command="set_day_task", description="[прототип] Задачи на сегодня одним сообщением"
+            ),
             BotCommand(command="staging", description="Открыть staging Mini App"),
         ]
     )
