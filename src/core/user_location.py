@@ -157,15 +157,27 @@ async def mark_guide_banner_shown(user_id: int) -> None:
         await session.commit()
 
 
-async def questions_topic_id(user_id: int) -> int | None:
-    """id темы "Вопросы" в личном чате этого пользователя (Phase 81,
-    Threaded Mode) — None, если ещё не создавалась (см.
-    core/topics.py::get_or_create_questions_topic)."""
+# Тема Telegram (Phase 81/82, Threaded Mode) на группу сценариев —
+# ключ здесь совпадает с ключом в core/topics.py::TOPIC_NAMES, значение
+# — имя колонки AuthorizedUser, которая его хранит.
+_TOPIC_COLUMNS = {
+    "questions": "questions_topic_id",
+    "tasks": "tasks_topic_id",
+    "notes": "notes_topic_id",
+    "planning": "planning_topic_id",
+}
+
+
+async def topic_id(user_id: int, topic_key: str) -> int | None:
+    """id темы этого пользователя для группы сценариев topic_key — None,
+    если ещё не создавалась (см. core/topics.py::get_or_create_topic)."""
     location = await get_user_location(user_id)
-    return location.questions_topic_id if location else None
+    if location is None:
+        return None
+    return getattr(location, _TOPIC_COLUMNS[topic_key])
 
 
-async def save_questions_topic_id(user_id: int, topic_id: int) -> None:
+async def save_topic_id(user_id: int, topic_key: str, thread_id: int) -> None:
     """Та же защита "строки может не быть", что и save_schedule_hour
     выше."""
     async with async_session() as session:
@@ -175,7 +187,7 @@ async def save_questions_topic_id(user_id: int, topic_id: int) -> None:
                 telegram_user_id=user_id, added_at=datetime.now(await user_timezone(user_id))
             )
             session.add(existing)
-        existing.questions_topic_id = topic_id
+        setattr(existing, _TOPIC_COLUMNS[topic_key], thread_id)
         await session.commit()
 
 

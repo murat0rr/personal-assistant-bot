@@ -1,13 +1,17 @@
 """Темы Telegram (Bot API 9.3, "Threaded Mode" — темы теперь работают и
 в личных чатах, не только в супергруппах) — постепенный перевод
 сценариев бота в отдельные темы внутри одного личного чата, вместо
-одной сплошной ленты (Phase 81, фидбек).
+одной сплошной ленты.
 
-Первый шаг — только "Вопросы": обработка вопроса возможна, только если
-сообщение реально пришло из этой темы. В любом другом месте чата
-(обычно — General, вне тем) бот присылает заглушку вместо ответа —
-ensure_in_topic ниже, общий примитив для будущих шагов того же рода
-(дневник, финансы и т.п.), не только вопросов.
+Phase 81 — "Вопросы" первой. Phase 82 — ещё три группы, каждая на
+несколько сценариев сразу (как попросили): "Задачи" (задачи, напоминалки,
+повторяющиеся), "Заметки", "Планирование" (дневник, финансы, цели,
+привычки). Команды (/reminders, /nag, /timezone и т.п.) НЕ переезжают —
+работают из любого места чата, как и раньше; переезжает только сам
+разговорный ввод (кнопки-режимы, свободный текст/голос, документ с
+CSV-выпиской) и исходящие сообщения фоновых джоб, которые сами
+инициируют разговор (дневник вечером, опрос целей, напоминание про
+привычки/выписку).
 
 Требует один раз включённый в @BotFather "Threaded Mode" для этого бота
 — без этого create_forum_topic ответит ошибкой Bad Request. Настройка
@@ -17,25 +21,39 @@ ensure_in_topic ниже, общий примитив для будущих ша
 from aiogram import Bot
 from aiogram.types import Message
 
-from src.core.user_location import questions_topic_id, save_questions_topic_id
+from src.core.user_location import save_topic_id, topic_id
 
-QUESTIONS_TOPIC_NAME = "Вопросы"
-QUESTIONS_STUB_TEXT = (
-    "❓ Вопросы теперь в отдельной теме — открой «Вопросы» в списке тем "
-    "этого чата и спроси там, отвечу."
-)
+TOPIC_NAMES = {
+    "questions": "Вопросы",
+    "tasks": "Задачи",
+    "notes": "Заметки",
+    "planning": "Планирование",
+}
+
+TOPIC_STUBS = {
+    "questions": (
+        "❓ Вопросы теперь в отдельной теме — открой «Вопросы» в списке "
+        "тем этого чата и спроси там, отвечу."
+    ),
+    "tasks": (
+        "📝 Задачи, напоминалки и повторяющиеся — теперь в теме «Задачи», открой её и напиши там."
+    ),
+    "notes": "🗒 Заметки — теперь в теме «Заметки», открой её и напиши там.",
+    "planning": ("📔 Дневник, финансы, цели и привычки — теперь в теме «Планирование», открой её."),
+}
 
 
-async def get_or_create_questions_topic(bot: Bot, user_id: int) -> int:
-    """id темы "Вопросы" этого пользователя. Сама тема — реальный объект
-    в Telegram, создаётся один раз лениво (при первом вопросе, откуда бы
-    он ни пришёл) и id кэшируется в БД — иначе каждый вызов плодил бы
-    новую тему вместо переиспользования уже созданной."""
-    existing = await questions_topic_id(user_id)
+async def get_or_create_topic(bot: Bot, user_id: int, topic_key: str) -> int:
+    """id темы этого пользователя для группы сценариев topic_key. Сама
+    тема — реальный объект в Telegram, создаётся один раз лениво (при
+    первом обращении, откуда бы оно ни пришло) и id кэшируется в БД —
+    иначе каждый вызов плодил бы новую тему вместо переиспользования уже
+    созданной."""
+    existing = await topic_id(user_id, topic_key)
     if existing is not None:
         return existing
-    topic = await bot.create_forum_topic(chat_id=user_id, name=QUESTIONS_TOPIC_NAME)
-    await save_questions_topic_id(user_id, topic.message_thread_id)
+    topic = await bot.create_forum_topic(chat_id=user_id, name=TOPIC_NAMES[topic_key])
+    await save_topic_id(user_id, topic_key, topic.message_thread_id)
     return topic.message_thread_id
 
 

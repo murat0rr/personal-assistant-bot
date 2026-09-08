@@ -4924,6 +4924,91 @@ Telegram Bot API, тем же токеном:
   БД+Telegram API, либо чисто хендлерная маршрутизация, не покрытая
   существующим стилем тестов в этом проекте) и `ruff` — чисто.
 
+## Phase 82 — темы: "Задачи", "Заметки", "Планирование"
+
+Продолжение Phase 81 той же перестройки — по прямой просьбе три
+следующие группы сценариев разом, каждая на одну общую тему:
+"Задачи" (задачи + напоминалки + повторяющиеся), "Заметки" (заметки),
+"Планирование" (дневник + финансы + цели + привычки). "Вопросы"
+(Phase 81) не трогались.
+
+- **`core/topics.py`** обобщён с одной темы на произвольный набор:
+  `TOPIC_NAMES`/`TOPIC_STUBS` — словари по `topic_key`
+  (`questions`/`tasks`/`notes`/`planning`); `get_or_create_topic(bot,
+  user_id, topic_key)` и `ensure_in_topic(...)` — те же сигнатуры и
+  поведение, что в Phase 81, только параметризованные ключом темы
+  вместо жёсткого "questions".
+- **`AuthorizedUser`** — ещё 3 колонки (миграция `c4a8e1f7d205`, вслед
+  за `questions_topic_id` из Phase 81): `tasks_topic_id`,
+  `notes_topic_id`, `planning_topic_id`. `core/user_location.py` —
+  соответствующее обобщение: `topic_id(user_id, topic_key)`/
+  `save_topic_id(user_id, topic_key, thread_id)` вместо пары
+  однократных `questions_topic_id()`/`save_questions_topic_id()`.
+- **Маршрутизация свободного текста** (`core/orchestrator.py`) —
+  `_INTENT_TOPIC_KEYS` мапит intent из `classify_intent` на topic_key
+  (`note`→notes, `question`→questions, `reminder`/`task`→tasks);
+  `route_message` считает тему один раз после классификации и делает
+  `ensure_in_topic` перед вызовом конкретного хендлера — тот же приём,
+  что в Phase 81, только на 4 intent'а вместо одного.
+- **Кнопки-режимы** (`handlers/mode_buttons.py`) — тот же "двойной"
+  паттерн, что Phase 81 завёл для вопроса, теперь для всех пяти
+  кнопок: проверка темы и при нажатии кнопки (`handle_mode_button`,
+  через `_BUTTON_TOPIC_KEYS`), и повторно при получении содержимого
+  (`handle_mode_content` — через `_STATE_TOPIC_KEYS`, для
+  задачи/заметки/напоминалки; `handle_recurring_button` и
+  `handle_recurring_clarification_button` — своя пара хендлеров,
+  тема "tasks", т.к. диалог повторяющейся задачи может продолжаться
+  ещё на ход после первого сообщения). Причина та же: FSM-состояние
+  общее на весь чат, не по темам — состояние могло стартовать в
+  верной теме, а содержимое прийти уже из другой.
+- **Проактивные (не-ответные) отправки** — `bot.send_message()`, в
+  отличие от `message.answer()`, никогда не наследует
+  `message_thread_id` сам, поэтому у каждого джоб-инициированного
+  сообщения тема считается и передаётся явно:
+  - `f4_diary.py` (`ask_question`, `_finish`) и `f_goals.py`
+    (`start_goal_flow`, `_finish_tier`, `_propose_projects_for_month`)
+    — тема "planning".
+  - `f_reminders.py` (`check_reminders`, `check_location_reminders`)
+    — тема "tasks", считается один раз на пачку сработавших
+    напоминаний (не в цикле — лишний поход в БД ради каждого).
+  - `scheduler/jobs.py` (`_finance_reminder_job`, `_habit_reminders`)
+    — тема "planning".
+  - `f9_finance.py::handle_finance_csv` — единственный из списка не
+    джоба, а глобальный `F.document`-хендлер без привязки к
+    состоянию; получил `ensure_in_topic` (тема "planning") прямо на
+    входе, до разбора файла — иначе CSV-выписка обрабатывалась бы из
+    любой темы чата.
+- **Сознательно не тронуто** (не названо пользователем в списке групп,
+  остаётся в General): `_morning_digest`, `_screen_time_digest`,
+  `_weekly_review`, `_suggest_templates_job` (все — `scheduler/jobs.py`),
+  `telegram_notify.py`, `f_task_nag.py` (напоминания-подгонялки),
+  `google_calendar_sync.py`, `f_morning_advice.py` (утренний совет по
+  задачам на сегодня). Как и в Phase 81, команды
+  (`/reminders`, `/nag`, `/timezone`, `/morning`, `/evening`,
+  `/google_calendar(_off)`, `/webcode`, `/set_day_task`, `/staging`,
+  `/start`) темами не ограничены — гейт только на диалоговых/кнопочных
+  входах.
+
+### Живая проверка
+
+Тот же приём, что Phase 81 — локальные Postgres/Redis, реальный
+Telegram Bot API тем же токеном:
+- `alembic upgrade head` — миграция `c4a8e1f7d205` применена
+  (`b7e2c4f9a103 -> c4a8e1f7d205`).
+- `get_or_create_topic` вызван напрямую для всех трёх новых ключей
+  (`tasks`/`notes`/`planning`) — реально создал три темы в настоящем
+  личном чате с ботом с ожидаемыми названиями и вернул настоящие
+  `message_thread_id`; повторный вызов для каждого ключа вернул тот же
+  id (кэш в БД сработал, не создал дубликат); все три тестовые темы
+  сразу удалены (`delete_forum_topic`) — в проде колонки ещё `NULL`,
+  канонические темы создадутся заново на первое реальное обращение.
+- `docker compose build/up bot api` — чистый старт: все apscheduler-
+  джобы зарегистрированы (включая `_finance_reminder_job` и
+  `_habit_reminders`), ни одной ошибки импорта; `TelegramConflictError`
+  при polling — ожидаемо (конфликт с работающим прод-инстансом), не
+  признак поломки. `api` поднимается и слушает без ошибок.
+- `pytest` (164, без изменений) и `ruff check`/`ruff format` — чисто.
+
 ## 3. Нефункциональные требования
 
 ### 3.1 Безопасность

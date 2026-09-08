@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from src.core.auth import is_authorized
 from src.core.config import settings
 from src.core.day_reviews import save_diary_entry
+from src.core.topics import get_or_create_topic
 from src.core.user_location import user_today
 from src.integrations.claude_client import summarize_diary
 
@@ -87,7 +88,17 @@ async def ask_question(bot: Bot, state: FSMContext, target: State) -> None:
     _, text, kind, _ = _QUESTIONS_BY_STATE[target]
     field = _FIELD_NAMES[target]
     reply_markup = _rating_keyboard(field) if kind == "rating" else _skip_keyboard(field)
-    await bot.send_message(chat_id=settings.telegram_user_id, text=text, reply_markup=reply_markup)
+    # Тема "Планирование" (Phase 82, Threaded Mode) — дневник делит её с
+    # финансами/целями/привычками, как и попросили. Инициирует джоба, не
+    # ответ на входящее сообщение — bot.send_message не наследует тему
+    # сам (в отличие от message.answer()), поэтому указываем явно.
+    topic_id = await get_or_create_topic(bot, settings.telegram_user_id, "planning")
+    await bot.send_message(
+        chat_id=settings.telegram_user_id,
+        message_thread_id=topic_id,
+        text=text,
+        reply_markup=reply_markup,
+    )
     await state.set_state(target)
 
 
@@ -124,8 +135,10 @@ async def _finish(bot: Bot, state: FSMContext) -> None:
         )
     except Exception:
         logger.exception("Не удалось сохранить дневник за %s", today)
+        topic_id = await get_or_create_topic(bot, settings.telegram_user_id, "planning")
         await bot.send_message(
             chat_id=settings.telegram_user_id,
+            message_thread_id=topic_id,
             text="Не получилось сохранить дневник, ответы потеряны — извини.",
         )
         await state.clear()
@@ -134,7 +147,10 @@ async def _finish(bot: Bot, state: FSMContext) -> None:
     reply = f"Записал дневник за {today.strftime('%d.%m.%Y')}."
     if summary:
         reply += f"\n{summary}"
-    await bot.send_message(chat_id=settings.telegram_user_id, text=reply)
+    topic_id = await get_or_create_topic(bot, settings.telegram_user_id, "planning")
+    await bot.send_message(
+        chat_id=settings.telegram_user_id, message_thread_id=topic_id, text=reply
+    )
     await state.clear()
 
 

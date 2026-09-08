@@ -12,6 +12,7 @@ from src.core.auth import is_authorized
 from src.core.db import async_session
 from src.core.goals import create_goal, list_goals_for_period
 from src.core.projects import create_project, find_project_by_title, list_projects
+from src.core.topics import get_or_create_topic
 from src.core.user_location import user_today
 from src.integrations.claude_client import generate_tasks_from_goals, propose_projects_from_goals
 from src.models.task import Task
@@ -67,8 +68,13 @@ async def start_goal_flow(
         done_spheres=[],
     )
     label = _TIER_LABELS[tier]
+    # Тема "Планирование" (Phase 82, Threaded Mode) — цели делят её с
+    # дневником/финансами/привычками. Инициирует джоба, не ответ на
+    # входящее — bot.send_message тему сам не наследует.
+    topic_id = await get_or_create_topic(bot, user_id, "planning")
     await bot.send_message(
         chat_id=user_id,
+        message_thread_id=topic_id,
         text=f"Пора поставить цели на {label}. Выбери сферу — напишешь цель, я её сохраню.",
         reply_markup=_sphere_keyboard([]),
     )
@@ -163,10 +169,13 @@ async def handle_goal_done(callback: CallbackQuery, state: FSMContext) -> None:
 async def _finish_tier(
     bot: Bot, user_id: int, tier: str, period_start: date | None, period_end: date | None
 ) -> None:
+    # Тема "Планирование" (Phase 82) — та же, что у start_goal_flow.
+    topic_id = await get_or_create_topic(bot, user_id, "planning")
     goals = await list_goals_for_period(user_id, tier, period_start, period_end)
     if tier not in _TASK_GENERATING_TIERS:
         await bot.send_message(
             chat_id=user_id,
+            message_thread_id=topic_id,
             text=f"Цели на {_TIER_LABELS[tier]} сохранены.",
         )
         return
@@ -218,11 +227,13 @@ async def _finish_tier(
         names = "\n".join(f"— {t}" for t in created_titles)
         await bot.send_message(
             chat_id=user_id,
+            message_thread_id=topic_id,
             text=f"Цели на {_TIER_LABELS[tier]} сохранены. Добавил задачи в инбокс:\n{names}",
         )
     else:
         await bot.send_message(
             chat_id=user_id,
+            message_thread_id=topic_id,
             text=f"Цели на {_TIER_LABELS[tier]} сохранены.",
         )
 
@@ -238,7 +249,9 @@ async def _propose_projects_for_month(bot: Bot, user_id: int, goals: list[dict])
             user_id, p.title, p.description or None, [p.sphere], p.start_date, p.end_date
         )
         names.append(f"— {p.title} ({p.start_date.isoformat()} – {p.end_date.isoformat()})")
+    topic_id = await get_or_create_topic(bot, user_id, "planning")
     await bot.send_message(
         chat_id=user_id,
+        message_thread_id=topic_id,
         text="По итогам месячных целей создал проекты:\n" + "\n".join(names),
     )
