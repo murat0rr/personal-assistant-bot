@@ -1077,3 +1077,88 @@ async def suggest_tasks_for_entity(
     if tool_use is None:
         return []
     return [t.title for t in SuggestedEntityTasks.model_validate(tool_use.input).tasks]
+
+
+# ---- Заметки: метаданные и карта знаний (Phase 84) -----------------------
+# Макет: https://claude.ai/code/artifact/163711b9-8bdc-4b0c-bc03-03bb3b7e2354
+
+
+async def generate_note_title(text: str) -> str:
+    """Заголовок заметки, оставленной без него (core/notes.py — и с бота,
+    и из Mini App при пустом поле). Обычный текстовый ответ, без forced
+    tool-use — как generate_task_description: название почти всегда есть
+    чем предложить, structured "null"-развилка тут не нужна."""
+    response = await client.messages.create(
+        model=settings.claude_model_sonnet,
+        max_tokens=60,
+        system=prompts.GENERATE_NOTE_TITLE,
+        messages=[{"role": "user", "content": text}],
+    )
+    title = "".join(block.text for block in response.content if block.type == "text").strip()
+    # На случай, если модель всё же обернула ответ в кавычки вопреки
+    # промпту — снимаем, чтобы в Mini App не отображались лишние « ».
+    return title.strip("«»\"'")
+
+
+_SUGGEST_NOTE_TAGS_TOOL = {
+    "name": "suggest_tags",
+    "description": "Предложить теги для заметки по её содержимому.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "2-5 тегов, нижний регистр, без решётки. Предпочитай "
+                    "уже существующие теги пользователя (см. пул в "
+                    "сообщении) точному совпадению по смыслу вместо "
+                    "нового синонима."
+                ),
+            },
+        },
+        "required": ["tags"],
+    },
+}
+
+
+class SuggestedTags(BaseModel):
+    tags: list[str]
+
+
+async def suggest_note_tags(text: str, pool_tags: list[str], current_tags: list[str]) -> list[str]:
+    """Кнопка "✨ Предложить теги" (явное действие пользователя, не
+    вызывается автоматически при каждом открытии заметки — см.
+    core/notes.py::suggest_tags_for_note). pool_tags — существующие теги
+    ПОЛЬЗОВАТЕЛЯ (не текущей заметки), чтобы модель предпочитала их
+    новым синонимам; current_tags — уже стоящие на этой заметке, чтобы
+    не предлагать их повторно."""
+    pool_text = ", ".join(f"#{t}" for t in pool_tags) if pool_tags else "(пока пусто)"
+    current_text = ", ".join(f"#{t}" for t in current_tags) if current_tags else "(нет)"
+    response = await client.messages.create(
+        model=settings.claude_model_haiku,
+        max_tokens=200,
+        system=prompts.SUGGEST_NOTE_TAGS,
+        tools=[_SUGGEST_NOTE_TAGS_TOOL],
+        tool_choice={"type": "tool", "name": "suggest_tags"},
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    f"Текст заметки: {text}\n"
+                    f"Уже стоят на ней: {current_text}\n"
+                    f"Пул тегов пользователя: {pool_text}"
+                ),
+            }
+        ],
+    )
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+    if tool_use is None:
+        return []
+    tags = SuggestedTags.model_validate(tool_use.input).tags
+    current_set = set(current_tags)
+    return [
+        t.strip().lstrip("#").lower()
+        for t in tags
+        if t.strip().lstrip("#").lower() not in current_set
+    ]

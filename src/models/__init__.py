@@ -4,7 +4,7 @@ from src.models.chat_message import ChatMessage
 from src.models.day_review import DayReview
 from src.models.google_calendar_account import GoogleCalendarAccount
 from src.models.habit import Habit
-from src.models.note import Note
+from src.models.note import Note, NoteLink, NoteTag, Tag
 from src.models.project import Project
 from src.models.recurring_task_rule import RecurringTaskRule
 from src.models.reminder import Reminder
@@ -31,5 +31,8 @@ __all__ = [
     "AiAnalyticsCache",
     "TaskNagSettings",
     "Note",
+    "NoteLink",
+    "Tag",
+    "NoteTag",
     "GoogleCalendarAccount",
 ]

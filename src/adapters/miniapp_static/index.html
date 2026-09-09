@@ -302,6 +302,18 @@
     </div>
   </div>
 
+  <!-- "Заметки" (Phase 84) — метаданные (сфера/проект-цель/теги) и карта
+       знаний. Одобренный макет:
+       https://claude.ai/code/artifact/163711b9-8bdc-4b0c-bc03-03bb3b7e2354
+       #notes-body целиком перерисовывается JS-ом (список/деталь/граф —
+       три подэкрана одной вкладки, переключаются без смены #ext-panel-*),
+       тот же приём, что у #analytics-widgets. -->
+  <div id="ext-panel-notes" style="display:none">
+    <div class="section">
+      <div id="notes-body"></div>
+    </div>
+  </div>
+
   </div>
 
   <!-- Нижняя панель вкладок (Phase 35) — вне .screen-content, обычный
@@ -342,6 +354,10 @@
     <button type="button" class="ext-tab-btn" data-tab="projects" aria-label="Проекты">
       <svg class="ext-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
       <span>Проекты</span>
+    </button>
+    <button type="button" class="ext-tab-btn" data-tab="notes" aria-label="Заметки">
+      <svg class="ext-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h8l4 4v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z"/><path d="M15 3v4h4"/><path d="M9 12h6M9 16h6"/></svg>
+      <span>Заметки</span>
     </button>
     <!-- "Канбан" (Phase 78, фидбек: "канбан доску для компа тоже
          реализовывай") — только для широкого экрана (CSS media query,
@@ -826,6 +842,19 @@
     // Цели (Phase 26) — отдельная коллекция, тиры фильтруются на
     // фронтенде (см. GOAL_TIERS/renderGoalsPages).
     let goalsData = [];
+
+    // Заметки (Phase 84) — та же "загрузили один раз, дальше всё локально"
+    // модель, что у остальных вкладок (см. loadNotes/loadTags ниже,
+    // renderNotesScreen). notesView — какой из трёх подэкранов вкладки
+    // сейчас показан; notesHistory — куда вернуться по "назад" (список
+    // или граф — тот же приём, что был в одобренном макете).
+    let notesData = [];
+    let tagsData = [];
+    let notesView = "list";
+    let notesActiveId = null;
+    let notesHistory = [];
+    let notesOpenFilter = null;
+    const notesFilters = { sphere: null, projectId: undefined, tags: new Set() };
 
     // Окно проекта/цели по тапу (Phase 56) — хранит ТОЛЬКО id/kind, не
     // саму сущность: editProject/editGoal перезагружают
@@ -5935,6 +5964,7 @@
       calendar: document.getElementById("ext-panel-calendar"),
       tasks: document.getElementById("ext-panel-tasks"),
       projects: document.getElementById("ext-panel-projects"),
+      notes: document.getElementById("ext-panel-notes"),
       kanban: document.getElementById("ext-panel-kanban"),
     };
     const extTabBtns = Array.from(document.querySelectorAll(".ext-tab-btn"));
@@ -5962,6 +5992,7 @@
       if (tab === "calendar") recenterMonthCarousel();
       if (tab === "projects") recenterAllGoalPeriodCarousels();
       if (tab === "kanban") renderKanbanBoard();
+      if (tab === "notes") renderNotesScreen();
     }
 
     extTabBtns.forEach((btn) => {
@@ -7191,6 +7222,887 @@
       }
     }
 
+    // ============================================================
+    // "Заметки" (Phase 84) — метаданные и карта знаний. Одобренный
+    // макет: https://claude.ai/code/artifact/163711b9-8bdc-4b0c-bc03-03bb3b7e2354
+    // Тот же принцип хранения/рендера, что у остальных вкладок —
+    // notesData/tagsData загружены один раз (loadNotes/loadTags),
+    // дальше все действия (фильтры, открытие заметки, граф) работают
+    // локально, без похода в сеть; в сеть идёт только мутация
+    // (создание/сохранение/удаление/ИИ-кнопки).
+    // ============================================================
+
+    async function loadNotes() {
+      try {
+        notesData = await api("/miniapp/api/notes");
+      } catch (e) {
+        notesData = [];
+      }
+      if (extendedActiveTab === "notes") renderNotesScreen();
+    }
+
+    async function loadTags() {
+      try {
+        tagsData = await api("/miniapp/api/tags");
+      } catch (e) {
+        tagsData = [];
+      }
+    }
+
+    function noteById(id) {
+      return notesData.find((n) => n.id === id);
+    }
+    function noteOutgoing(n) {
+      return (n.link_ids || []).map(noteById).filter(Boolean);
+    }
+    function noteBacklinks(n) {
+      return notesData.filter((o) => (o.link_ids || []).includes(n.id));
+    }
+    function noteDegree(n) {
+      return noteOutgoing(n).length + noteBacklinks(n).length;
+    }
+    // "Нерешённые" ссылки — не хранятся на бэкенде вообще (см.
+    // core/notes.py::_sync_links), сверяем текст со списком уже
+    // известных заметок прямо тут, на клиенте.
+    function noteUnresolvedLinks(n) {
+      const matches = [...n.text.matchAll(/\[\[([^\]]+)\]\]/g)].map((m) => m[1].trim());
+      const known = new Set(notesData.filter((o) => o.title).map((o) => o.title.toLowerCase()));
+      return [...new Set(matches.filter((t) => !known.has(t.toLowerCase())))];
+    }
+    // Проект и цель — одна и та же сущность на бэкенде (Project.tier),
+    // фронтенд уже держит их в двух отдельных коллекциях
+    // (projectsData/goalsData) под нужды вкладки "Проекты" — здесь
+    // просто ищем по обеим.
+    function projectOrGoalById(id) {
+      return projectsData.find((p) => p.id === id) || goalsData.find((g) => g.id === id) || null;
+    }
+    function projectOrGoalLabel(id) {
+      const p = projectOrGoalById(id);
+      if (!p) return null;
+      return (p.tier ? "🎯 " : "📁 ") + p.title;
+    }
+    // Топ-5 тегов за последние ~30 дней, без учёта уже стоящих на
+    // заметке — та же логика, что в макете (client-side, пул одного
+    // пользователя небольшой).
+    function notesTopRecentTags(excludeSet, limit) {
+      const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      return tagsData
+        .filter((t) => !excludeSet.has(t.name) && new Date(t.last_used_at).getTime() >= cutoff)
+        .sort((a, b) => b.usage_count - a.usage_count)
+        .slice(0, limit || 5)
+        .map((t) => t.name);
+    }
+    function notesFilteredList() {
+      const f = notesFilters;
+      return notesData.filter((n) => {
+        if (f.sphere && n.sphere !== f.sphere) return false;
+        if (f.projectId !== undefined && n.project_id !== f.projectId) return false;
+        if (f.tags.size && ![...f.tags].some((t) => (n.tags || []).includes(t))) return false;
+        return true;
+      });
+    }
+    function notesPreviewText(n) {
+      return escapeHtml(n.text.replace(/\[\[([^\]]+)\]\]/g, "$1")).replace(
+        /#([\wа-яА-ЯёЁ-]+)/g,
+        '<span style="color:var(--accent)">#$1</span>'
+      );
+    }
+    function notesRelativeDate(iso) {
+      const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+      if (days <= 0) return "сегодня";
+      if (days === 1) return "вчера";
+      if (days < 7) return `${days} дн. назад`;
+      if (days < 30) return `${Math.floor(days / 7)} нед. назад`;
+      return `${Math.floor(days / 30)} мес. назад`;
+    }
+
+    // ---- рендер: список ----
+    function renderNotesScreen() {
+      const root = document.getElementById("notes-body");
+      const wrap = document.createElement("div");
+      wrap.className = "notes-view-enter";
+      if (notesView === "graph") renderNotesGraphView(wrap);
+      else if (notesView === "detail" && notesActiveId !== null) {
+        renderNotesDetailView(wrap, notesActiveId === "new" ? notesNewDraft : noteById(notesActiveId));
+      } else {
+        renderNotesListView(wrap);
+        notesView = "list";
+      }
+      root.innerHTML = "";
+      root.appendChild(wrap);
+    }
+
+    let notesNewDraft = null;
+
+    function notesOpenDetail(id, fromView) {
+      notesHistory.push(notesView === "graph" ? "graph" : "list");
+      notesView = "detail";
+      notesActiveId = id;
+      renderNotesScreen();
+    }
+    function notesGoBack() {
+      const prev = notesHistory.pop();
+      notesView = prev === "graph" ? "graph" : "list";
+      notesActiveId = null;
+      renderNotesScreen();
+    }
+    function notesStartNew() {
+      notesHistory.push(notesView === "graph" ? "graph" : "list");
+      notesNewDraft = {
+        id: "new",
+        title: "",
+        title_is_ai: false,
+        text: "",
+        sphere: null,
+        project_id: null,
+        tags: [],
+        creating: true,
+      };
+      notesView = "detail";
+      notesActiveId = "new";
+      renderNotesScreen();
+    }
+
+    function renderNotesListView(root) {
+      const visible = notesFilteredList();
+      const div = document.createElement("div");
+      div.innerHTML = `
+        <div class="notes-header">
+          <div class="notes-title">Заметки</div>
+          <button class="notes-add-btn" id="notes-add-btn" aria-label="Новая заметка">+</button>
+        </div>
+        <div class="notes-view-seg" id="notes-seg">
+          <button data-v="list" class="active">Список</button>
+          <button data-v="graph">Граф</button>
+        </div>
+        <div class="filter-bar" id="notes-filter-bar">
+          <button class="filter-chip${notesFilters.sphere ? " active" : ""}" data-f="sphere"><span>Сфера${notesFilters.sphere ? ": " + escapeHtml(notesFilters.sphere) : ""}</span><span class="filter-chip-caret">▾</span></button>
+          <button class="filter-chip${notesFilters.projectId !== undefined ? " active" : ""}" data-f="project"><span>Проект/цель${notesFilters.projectId !== undefined ? (notesFilters.projectId === null ? ": без" : ": " + escapeHtml((projectOrGoalById(notesFilters.projectId) || {}).title || "")) : ""}</span><span class="filter-chip-caret">▾</span></button>
+          <button class="filter-chip${notesFilters.tags.size ? " active" : ""}" data-f="tags"><span>Теги${notesFilters.tags.size ? ": " + notesFilters.tags.size : ""}</span><span class="filter-chip-caret">▾</span></button>
+        </div>
+        <div class="filter-dropdown" id="notes-dd-sphere">
+          <button class="filter-option${!notesFilters.sphere ? " selected" : ""}" data-v="">Все сферы</button>
+          ${SPHERES.map((s) => `<button class="filter-option${notesFilters.sphere === s ? " selected" : ""}" data-v="${escapeHtml(s)}">${escapeHtml(s)}</button>`).join("")}
+        </div>
+        <div class="filter-dropdown" id="notes-dd-project">
+          <button class="filter-option${notesFilters.projectId === undefined ? " selected" : ""}" data-v="__all">Все заметки</button>
+          <button class="filter-option${notesFilters.projectId === null ? " selected" : ""}" data-v="__none">Без проекта/цели</button>
+          ${projectsData.map((p) => `<button class="filter-option${notesFilters.projectId === p.id ? " selected" : ""}" data-v="${p.id}">📁 ${escapeHtml(p.title)}</button>`).join("")}
+          ${goalsData.map((p) => `<button class="filter-option${notesFilters.projectId === p.id ? " selected" : ""}" data-v="${p.id}">🎯 ${escapeHtml(p.title)}</button>`).join("")}
+        </div>
+        <div class="filter-dropdown" id="notes-dd-tags">
+          ${[...tagsData].sort((a, b) => b.usage_count - a.usage_count).map((t) => `<button class="filter-option${notesFilters.tags.has(t.name) ? " selected" : ""}" data-v="${escapeHtml(t.name)}">#${escapeHtml(t.name)} <span class="fo-check">✓</span></button>`).join("") || '<div class="note-ac-empty">Тегов пока нет</div>'}
+        </div>
+        <div class="notes-grid" id="notes-grid"></div>`;
+      root.appendChild(div);
+
+      const grid = div.querySelector("#notes-grid");
+      if (!visible.length) {
+        grid.outerHTML = `<p class="notes-empty-hint">${notesData.length ? "Ничего не подходит под фильтр." : "Пока нет ни одной заметки — жми «+»."}</p>`;
+      } else {
+        visible.forEach((n, i) => {
+          const card = document.createElement("button");
+          card.type = "button";
+          card.className = "note-card";
+          card.style.animationDelay = Math.min(i, 9) * 26 + "ms";
+          const linkCount = noteDegree(n) + noteUnresolvedLinks(n).length;
+          const tags = n.tags || [];
+          card.innerHTML = `
+            <div class="note-card-title">${n.title_is_ai ? '<span class="note-spark">✨</span>' : ""}${escapeHtml(n.title || "Без названия")}</div>
+            <div class="note-card-text">${notesPreviewText(n)}</div>
+            ${tags.length ? `<div class="note-card-tags">${tags.slice(0, 2).map((t) => `<span class="note-card-tag">#${escapeHtml(t)}</span>`).join("")}${tags.length > 2 ? `<span class="note-card-tag more">+${tags.length - 2}</span>` : ""}</div>` : ""}
+            <div class="note-card-foot">
+              <span>${linkCount ? "🔗 " + linkCount : ""}</span>
+              <span>${notesRelativeDate(n.created_at)}</span>
+            </div>`;
+          card.addEventListener("click", () => notesOpenDetail(n.id, "list"));
+          grid.appendChild(card);
+        });
+      }
+
+      div.querySelector("#notes-seg").addEventListener("click", (e) => {
+        const b = e.target.closest("button[data-v]");
+        if (!b || b.dataset.v !== "graph") return;
+        notesView = "graph";
+        renderNotesScreen();
+      });
+      div.querySelector("#notes-add-btn").addEventListener("click", notesStartNew);
+      notesWireFilterBar(div);
+      if (notesOpenFilter) {
+        const map = { sphere: "notes-dd-sphere", project: "notes-dd-project", tags: "notes-dd-tags" };
+        div.querySelector("#" + map[notesOpenFilter]).classList.add("open");
+        div.querySelector(`.filter-chip[data-f="${notesOpenFilter}"]`).classList.add("active");
+      }
+    }
+
+    function notesWireFilterBar(root) {
+      const dds = {
+        sphere: root.querySelector("#notes-dd-sphere"),
+        project: root.querySelector("#notes-dd-project"),
+        tags: root.querySelector("#notes-dd-tags"),
+      };
+      root.querySelectorAll(".filter-chip").forEach((chip) => {
+        chip.addEventListener("click", () => {
+          const key = chip.dataset.f;
+          notesOpenFilter = notesOpenFilter === key ? null : key;
+          Object.values(dds).forEach((d) => d.classList.remove("open"));
+          root.querySelectorAll(".filter-chip").forEach((c) => c.classList.remove("active"));
+          if (notesOpenFilter) {
+            dds[notesOpenFilter].classList.add("open");
+            chip.classList.add("active");
+          }
+        });
+      });
+      dds.sphere.addEventListener("click", (e) => {
+        const b = e.target.closest("button[data-v]");
+        if (!b) return;
+        notesFilters.sphere = b.dataset.v || null;
+        notesOpenFilter = null;
+        renderNotesScreen();
+      });
+      dds.project.addEventListener("click", (e) => {
+        const b = e.target.closest("button[data-v]");
+        if (!b) return;
+        notesFilters.projectId =
+          b.dataset.v === "__all" ? undefined : b.dataset.v === "__none" ? null : Number(b.dataset.v);
+        notesOpenFilter = null;
+        renderNotesScreen();
+      });
+      dds.tags.addEventListener("click", (e) => {
+        const b = e.target.closest("button[data-v]");
+        if (!b) return;
+        if (notesFilters.tags.has(b.dataset.v)) notesFilters.tags.delete(b.dataset.v);
+        else notesFilters.tags.add(b.dataset.v);
+        notesOpenFilter = "tags";
+        renderNotesScreen();
+      });
+    }
+
+    // ---- рендер: деталь/редактор ----
+    function renderNotesDetailView(root, note) {
+      const draft = {
+        title: note.title || "",
+        titleIsAi: note.title_is_ai,
+        text: note.text,
+        sphere: note.sphere,
+        projectId: note.project_id,
+        tags: new Set(note.tags || []),
+      };
+      const div = document.createElement("div");
+      div.innerHTML = `
+        <div class="note-detail-head">
+          <button class="note-icon-btn" id="note-back-btn" aria-label="Назад">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          ${note.creating
+            ? '<button class="note-icon-btn" id="note-save-btn" aria-label="Сохранить"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></button>'
+            : '<button class="note-icon-btn" id="note-del-btn" aria-label="Удалить"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></button>'}
+        </div>
+        <input class="note-title-input" id="note-title-input" placeholder="Без названия…" value="${escapeHtml(draft.title)}">
+        <div class="note-ai-row" id="note-ai-row"></div>
+        <div class="note-meta-row" id="note-meta-row"></div>
+        <textarea class="note-textarea" id="note-textarea">${escapeHtml(draft.text)}</textarea>
+        <div id="note-ac-holder"></div>
+        <p class="note-hint">Набери <code style="font-family:inherit">[[</code> — ссылка на заметку, <code style="font-family:inherit">#</code> — тег</p>
+        <div class="note-link-section" id="note-out-section"></div>
+        <div class="note-link-section" id="note-back-section"></div>
+        <div class="note-tags-block" id="note-tags-block"></div>`;
+      root.appendChild(div);
+
+      const delBtn = div.querySelector("#note-del-btn");
+      if (delBtn)
+        delBtn.addEventListener("click", async () => {
+          delBtn.disabled = true;
+          try {
+            await api(`/miniapp/api/notes/${note.id}`, { method: "DELETE" });
+            notesData = notesData.filter((n) => n.id !== note.id);
+            notesGoBack();
+          } catch (e) {
+            alert("Не удалось удалить заметку.");
+            delBtn.disabled = false;
+          }
+        });
+
+      notesUpdateAiRow(div, note, draft);
+      notesRenderMetaRow(div, note, draft);
+      notesRenderLinkSections(div, note, draft);
+      notesRenderTagsBlock(div, note, draft);
+
+      const titleInput = div.querySelector("#note-title-input");
+      titleInput.addEventListener("input", () => {
+        draft.titleIsAi = false;
+        draft.title = titleInput.value;
+        notesUpdateAiRow(div, note, draft);
+      });
+
+      const ta = div.querySelector("#note-textarea");
+      ta.addEventListener("input", () => {
+        draft.text = ta.value;
+        notesHandleAutocomplete(div, ta, note, draft);
+      });
+      ta.addEventListener("blur", () => notesRenderLinkSections(div, note, draft));
+
+      const saveBtn = div.querySelector("#note-save-btn");
+      const backBtn = div.querySelector("#note-back-btn");
+      if (saveBtn) {
+        saveBtn.addEventListener("click", () => notesSaveNew(div, draft, titleInput, ta));
+        backBtn.addEventListener("click", notesGoBack);
+      } else {
+        // Существующая заметка — сохраняем при уходе с экрана (назад),
+        // а не отдельной кнопкой: заметка и так "просто текст", лишняя
+        // кнопка "сохранить" на каждое изменение была бы избыточной.
+        // Сохранение — ДО навигации назад, иначе список успевал бы
+        // отрисоваться со старыми данными раньше, чем придёт ответ.
+        backBtn.addEventListener(
+          "click",
+          async () => {
+            backBtn.disabled = true;
+            await notesSaveExisting(note, draft);
+            notesGoBack();
+          },
+          { once: true }
+        );
+      }
+    }
+
+    function notesTypeInto(input, text, cb) {
+      input.value = "";
+      let i = 0;
+      (function step() {
+        input.value = text.slice(0, i + 1);
+        i++;
+        if (i < text.length) setTimeout(step, 15 + Math.random() * 14);
+        else cb && cb();
+      })();
+    }
+
+    function notesUpdateAiRow(root, note, draft) {
+      const row = root.querySelector("#note-ai-row");
+      if (note.creating) {
+        row.innerHTML = "";
+        return;
+      }
+      row.innerHTML = draft.titleIsAi
+        ? '<span><span class="note-spark-pop">✨</span> название придумал ИИ</span><span class="note-regen" id="note-regen-btn">🔄 другое</span>'
+        : "";
+      const regen = root.querySelector("#note-regen-btn");
+      if (regen)
+        regen.addEventListener("click", async () => {
+          regen.classList.add("spinning");
+          try {
+            const { title } = await api(`/miniapp/api/notes/${note.id}/regenerate-title`, {
+              method: "POST",
+            });
+            draft.title = title;
+            notesTypeInto(root.querySelector("#note-title-input"), title, () => {});
+          } catch (e) {
+            alert("Не получилось придумать другое название.");
+          }
+        });
+    }
+
+    // ---- метаданные: сфера / проект-цель ----
+    function notesRenderMetaRow(root, note, draft) {
+      const row = root.querySelector("#note-meta-row");
+      row.innerHTML = `
+        <button class="note-meta-chip${draft.sphere ? "" : " empty"}" id="note-sphere-chip">${draft.sphere ? escapeHtml(draft.sphere) : "+ сфера"}<span class="note-meta-caret">▾</span></button>
+        <button class="note-meta-chip${draft.projectId ? "" : " empty"}" id="note-proj-chip">${draft.projectId ? escapeHtml(projectOrGoalLabel(draft.projectId) || "") : "+ проект/цель"}<span class="note-meta-caret">▾</span></button>
+        <span class="note-meta-date">${note.creating ? "создаётся сейчас" : "создано " + notesRelativeDate(note.created_at)}</span>`;
+      row.querySelector("#note-sphere-chip").addEventListener("click", (e) => {
+        e.stopPropagation();
+        notesOpenMetaPopover(
+          root,
+          e.currentTarget,
+          [{ label: "без сферы", v: null }, ...SPHERES.map((s) => ({ label: s, v: s }))],
+          draft.sphere,
+          (v) => {
+            draft.sphere = v;
+            notesRenderMetaRow(root, note, draft);
+          }
+        );
+      });
+      row.querySelector("#note-proj-chip").addEventListener("click", (e) => {
+        e.stopPropagation();
+        const items = [{ label: "без проекта/цели", v: null }];
+        if (projectsData.length)
+          items.push({ group: "Проекты" }, ...projectsData.map((p) => ({ label: p.title, v: p.id })));
+        if (goalsData.length)
+          items.push(
+            { group: "Цели" },
+            ...goalsData.map((p) => ({
+              label: `${p.title} (${p.tier === "weekly" ? "неделя" : p.tier === "monthly" ? "месяц" : "год"})`,
+              v: p.id,
+            }))
+          );
+        notesOpenMetaPopover(root, e.currentTarget, items, draft.projectId, (v) => {
+          draft.projectId = v;
+          notesRenderMetaRow(root, note, draft);
+        });
+      });
+    }
+
+    function notesOpenMetaPopover(root, anchor, items, current, onPick) {
+      root.querySelectorAll(".note-meta-popover").forEach((p) => p.remove());
+      const pop = document.createElement("div");
+      pop.className = "note-meta-popover";
+      pop.innerHTML = items
+        .map((it) =>
+          it.group
+            ? `<div class="note-mp-group">${escapeHtml(it.group)}</div>`
+            : `<div class="note-mp-item${it.v === current ? " sel" : ""}" data-v="${it.v === null ? "" : it.v}">${escapeHtml(it.label)}</div>`
+        )
+        .join("");
+      anchor.appendChild(pop);
+      pop.querySelectorAll(".note-mp-item").forEach((el) => {
+        el.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          onPick(el.dataset.v === "" ? null : isNaN(Number(el.dataset.v)) ? el.dataset.v : Number(el.dataset.v));
+          pop.remove();
+        });
+      });
+      setTimeout(
+        () =>
+          document.addEventListener("click", function closeOnce(ev) {
+            if (!pop.contains(ev.target)) {
+              pop.remove();
+              document.removeEventListener("click", closeOnce);
+            }
+          }),
+        0
+      );
+    }
+
+    // Сохраняет черновик текущей заметки (если это уже существующая,
+    // сохранённая заметка) ПЕРЕД тем, как уйти с экрана редактора —
+    // нужно на каждом выходе из детального экрана, не только по кнопке
+    // "назад": тап по ссылке/бэклинку на другую заметку тоже уводит с
+    // экрана и точно так же не должен молча терять правки.
+    async function notesLeaveNoteEditor(note, draft, after) {
+      if (!note.creating && typeof note.id === "number") {
+        await notesSaveExisting(note, draft);
+      }
+      after();
+    }
+
+    // ---- ссылки [[...]] ----
+    function notesRenderLinkSections(root, note, draft) {
+      const out = root.querySelector("#note-out-section");
+      const back = root.querySelector("#note-back-section");
+      const liveNote = { ...note, text: draft.text };
+      const resolvedTitles = [...draft.text.matchAll(/\[\[([^\]]+)\]\]/g)].map((m) => m[1].trim());
+      const resolved = resolvedTitles
+        .map((t) => notesData.find((n) => n.title && n.title.toLowerCase() === t.toLowerCase() && n.id !== note.id))
+        .filter(Boolean);
+      const unresolved = noteUnresolvedLinks(liveNote);
+      if (resolved.length || unresolved.length) {
+        out.innerHTML = `<span class="note-lbl">Ссылки отсюда</span><div class="note-pill-wrap">
+          ${resolved.map((t) => `<button class="note-pill" data-goto="${t.id}">${escapeHtml(t.title)}</button>`).join("")}
+          ${unresolved.map((t) => `<button class="note-pill unresolved" data-broken="${escapeHtml(t)}">+ ${escapeHtml(t)}</button>`).join("")}
+        </div>`;
+        out.querySelectorAll("[data-goto]").forEach((b) =>
+          b.addEventListener("click", () =>
+            notesLeaveNoteEditor(note, draft, () => notesOpenDetail(Number(b.dataset.goto), "list"))
+          )
+        );
+        out.querySelectorAll("[data-broken]").forEach((b) =>
+          b.addEventListener("click", () => notesCreateStubFromLink(note, draft, b.dataset.broken))
+        );
+      } else out.innerHTML = "";
+
+      const bl = typeof note.id === "number" ? noteBacklinks(note) : [];
+      back.innerHTML = bl.length
+        ? `<span class="note-lbl">Упоминается в</span><div class="note-pill-wrap">
+            ${bl.map((s) => `<button class="note-pill backlink" data-goto="${s.id}">${escapeHtml(s.title || "Без названия")}</button>`).join("")}
+          </div>`
+        : "";
+      back.querySelectorAll("[data-goto]").forEach((b) =>
+        b.addEventListener("click", () =>
+          notesLeaveNoteEditor(note, draft, () => notesOpenDetail(Number(b.dataset.goto), "list"))
+        )
+      );
+    }
+
+    async function notesCreateStubFromLink(sourceNote, sourceDraft, title) {
+      if (!confirm(`Создать заметку «${title}» и связать?`)) return;
+      try {
+        const created = await api("/miniapp/api/notes", {
+          method: "POST",
+          body: JSON.stringify({ text: "", title }),
+        });
+        notesData.unshift(created);
+        // Заметка-источник ссылалась на ещё не существовавшее название —
+        // теперь, когда оно появилось, пересохраняем источник (если это
+        // уже существующая, сохранённая заметка), чтобы связь реально
+        // легла в note_links при следующем открытии/просмотре.
+        if (typeof sourceNote.id === "number") {
+          try {
+            const updated = await api(`/miniapp/api/notes/${sourceNote.id}`, {
+              method: "PATCH",
+              body: JSON.stringify({
+                title: sourceDraft.title || null,
+                title_is_ai: sourceDraft.titleIsAi,
+                text: sourceDraft.text,
+                sphere: sourceDraft.sphere,
+                project_id: sourceDraft.projectId,
+                tags: [...sourceDraft.tags],
+              }),
+            });
+            notesData = notesData.map((n) => (n.id === updated.id ? updated : n));
+          } catch (e) {
+            /* заметка-источник ещё не была сохранена — ничего страшного */
+          }
+        }
+        notesOpenDetail(created.id, "list");
+      } catch (e) {
+        alert("Не удалось создать заметку.");
+      }
+    }
+
+    function notesHandleAutocomplete(root, ta, note, draft) {
+      const holder = root.querySelector("#note-ac-holder");
+      const pos = ta.selectionStart;
+      const upToCaret = ta.value.slice(0, pos);
+      const match = upToCaret.match(/\[\[([^\]]*)$/);
+      if (!match) {
+        holder.innerHTML = "";
+        return;
+      }
+      const query = match[1].toLowerCase();
+      const results = notesData
+        .filter((n) => n.id !== note.id && n.title && n.title.toLowerCase().includes(query))
+        .slice(0, 5);
+      holder.innerHTML = `<div class="note-ac-dropdown">${
+        results.length
+          ? results.map((n) => `<div class="note-ac-item" data-id="${n.id}">${escapeHtml(n.title)}</div>`).join("")
+          : '<div class="note-ac-empty">Совпадений нет — свяжется, когда появится заметка с таким названием</div>'
+      }</div>`;
+      holder.querySelectorAll(".note-ac-item").forEach((item) => {
+        item.addEventListener("click", () => {
+          const n = noteById(Number(item.dataset.id));
+          const val = ta.value,
+            caret = ta.selectionStart;
+          const idx = val.slice(0, caret).lastIndexOf("[[");
+          ta.value = val.slice(0, idx) + "[[" + n.title + "]]" + val.slice(caret);
+          draft.text = ta.value;
+          holder.innerHTML = "";
+          notesRenderLinkSections(root, note, draft);
+          ta.focus();
+        });
+      });
+    }
+
+    // ---- теги ----
+    function notesRenderTagsBlock(root, note, draft, justAdded, suggestions) {
+      const block = root.querySelector("#note-tags-block");
+      const attached = [...draft.tags];
+      const frequent = notesTopRecentTags(draft.tags, 5);
+      block.innerHTML = `
+        <span class="notes-row-label">Теги</span>
+        <div class="note-pill-wrap" id="note-attached-tags">
+          ${attached.map((t) => `<button class="note-tag-chip${t === justAdded ? " pop" : ""}" data-remove="${escapeHtml(t)}">#${escapeHtml(t)}<span class="note-tag-x">✕</span></button>`).join("") || '<span class="note-hint" style="margin:0">Пока нет — напиши #тег в тексте или добавь ниже</span>'}
+        </div>
+        ${frequent.length ? `<span class="notes-row-label">Частые теги</span><div class="note-pill-wrap">${frequent.map((t) => `<button class="note-tag-chip freq" data-add="${escapeHtml(t)}">#${escapeHtml(t)}</button>`).join("")}</div>` : ""}
+        ${suggestions ? `<span class="notes-row-label">Предложил ИИ</span><div class="note-pill-wrap">${suggestions.map((t) => `<button class="note-tag-chip ghost" data-add="${escapeHtml(t)}">+ #${escapeHtml(t)}</button>`).join("")}</div>` : ""}
+        <div><button class="note-ai-tags-btn" id="note-ai-tags-btn">✨ Предложить теги</button></div>`;
+
+      block.querySelectorAll("[data-remove]").forEach((b) =>
+        b.addEventListener("click", () => {
+          draft.tags.delete(b.dataset.remove);
+          notesRenderTagsBlock(root, note, draft);
+        })
+      );
+      block.querySelectorAll("[data-add]").forEach((b) =>
+        b.addEventListener("click", () => {
+          draft.tags.add(b.dataset.add);
+          notesRenderTagsBlock(root, note, draft, b.dataset.add, suggestions);
+        })
+      );
+      const aiBtn = block.querySelector("#note-ai-tags-btn");
+      aiBtn.addEventListener("click", async () => {
+        if (note.creating) {
+          alert("Сначала сохрани заметку — тогда можно будет попросить ИИ предложить теги.");
+          return;
+        }
+        aiBtn.disabled = true;
+        aiBtn.innerHTML = '<span class="note-spark-pop">✨</span> Думаю…';
+        try {
+          const tags = await api(`/miniapp/api/notes/${note.id}/suggest-tags`, { method: "POST" });
+          notesRenderTagsBlock(root, note, draft, null, tags.filter((t) => !draft.tags.has(t)));
+        } catch (e) {
+          alert("Не получилось предложить теги.");
+          notesRenderTagsBlock(root, note, draft);
+        }
+      });
+    }
+
+    // ---- сохранение ----
+    async function notesSaveNew(root, draft, titleInput, ta) {
+      const saveBtn = root.querySelector("#note-save-btn");
+      saveBtn.disabled = true;
+      const finish = async (title) => {
+        try {
+          const created = await api("/miniapp/api/notes", {
+            method: "POST",
+            body: JSON.stringify({
+              text: ta.value,
+              title: title || null,
+              sphere: draft.sphere,
+              project_id: draft.projectId,
+              tags: [...draft.tags],
+            }),
+          });
+          notesData.unshift(created);
+          loadTags();
+          notesHistory = ["list"];
+          notesGoBack();
+        } catch (e) {
+          alert("Не удалось сохранить заметку.");
+          saveBtn.disabled = false;
+        }
+      };
+      if (titleInput.value.trim()) {
+        await finish(titleInput.value.trim());
+        return;
+      }
+      const row = root.querySelector("#note-ai-row");
+      row.innerHTML = '<span class="note-shimmer"></span><span style="margin-left:6px">ИИ придумывает название…</span>';
+      titleInput.disabled = true;
+      try {
+        const created = await api("/miniapp/api/notes", {
+          method: "POST",
+          body: JSON.stringify({
+            text: ta.value,
+            sphere: draft.sphere,
+            project_id: draft.projectId,
+            tags: [...draft.tags],
+          }),
+        });
+        if (created.title) {
+          row.innerHTML = '<span class="note-spark-pop">✨</span><span>подбирает буквы…</span>';
+          notesTypeInto(titleInput, created.title, () => {
+            row.innerHTML = '<span class="note-spark-pop">✨</span><span>название придумал ИИ</span>';
+            setTimeout(() => {
+              notesData.unshift(created);
+              loadTags();
+              notesHistory = ["list"];
+              notesGoBack();
+            }, 600);
+          });
+        } else {
+          notesData.unshift(created);
+          loadTags();
+          notesHistory = ["list"];
+          notesGoBack();
+        }
+      } catch (e) {
+        alert("Не удалось сохранить заметку.");
+        saveBtn.disabled = false;
+        titleInput.disabled = false;
+      }
+    }
+
+    async function notesSaveExisting(note, draft) {
+      // Ничего не менялось — не дёргаем сеть зря.
+      if (
+        draft.text === note.text &&
+        (draft.title || null) === note.title &&
+        draft.titleIsAi === note.title_is_ai &&
+        draft.sphere === note.sphere &&
+        draft.projectId === note.project_id &&
+        draft.tags.size === (note.tags || []).length &&
+        [...draft.tags].every((t) => (note.tags || []).includes(t))
+      ) {
+        return;
+      }
+      try {
+        const updated = await api(`/miniapp/api/notes/${note.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            title: draft.title || null,
+            title_is_ai: draft.titleIsAi,
+            text: draft.text,
+            sphere: draft.sphere,
+            project_id: draft.projectId,
+            tags: [...draft.tags],
+          }),
+        });
+        notesData = notesData.map((n) => (n.id === updated.id ? updated : n));
+        loadTags();
+      } catch (e) {
+        alert("Не удалось сохранить изменения в заметке.");
+      }
+    }
+
+    // ---- граф (собственная лёгкая физика, без внешних зависимостей —
+    // приложение нигде больше не тянет сторонние JS-библиотеки) ----
+    function renderNotesGraphView(root) {
+      const div = document.createElement("div");
+      div.innerHTML = `
+        <div class="notes-header">
+          <div class="notes-title">Заметки</div>
+          <button class="notes-add-btn" id="notes-add-btn" aria-label="Новая заметка">+</button>
+        </div>
+        <div class="notes-view-seg" id="notes-seg">
+          <button data-v="list">Список</button>
+          <button data-v="graph" class="active">Граф</button>
+        </div>
+        <p class="notes-graph-hint">Таскай узлы · тап открывает заметку</p>
+        <div class="notes-graph-wrap" id="notes-graph-wrap"></div>`;
+      root.appendChild(div);
+      div.querySelector("#notes-seg").addEventListener("click", (e) => {
+        const b = e.target.closest("button[data-v]");
+        if (!b || b.dataset.v !== "list") return;
+        notesView = "list";
+        renderNotesScreen();
+      });
+      div.querySelector("#notes-add-btn").addEventListener("click", notesStartNew);
+      notesBuildGraph(div.querySelector("#notes-graph-wrap"));
+    }
+
+    function notesBuildGraph(container) {
+      const width = container.clientWidth || 320;
+      const height = 460;
+      const nodeR = (deg) => 8 + Math.min(deg, 5) * 3.2;
+      const nodes = notesData.map((n, i) => ({
+        id: n.id,
+        title: n.title || "Без названия",
+        deg: noteDegree(n),
+        x: width / 2 + Math.cos(i) * 60 + (Math.random() - 0.5) * 20,
+        y: height / 2 + Math.sin(i) * 60 + (Math.random() - 0.5) * 20,
+        vx: 0,
+        vy: 0,
+      }));
+      const byId = new Map(nodes.map((n) => [n.id, n]));
+      const edges = [];
+      notesData.forEach((n) => (n.link_ids || []).forEach((to) => {
+        if (byId.has(to)) edges.push({ source: n.id, target: to });
+      }));
+
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      container.appendChild(svg);
+      const edgeEls = edges.map(() => {
+        const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        l.setAttribute("class", "note-graph-edge");
+        svg.appendChild(l);
+        return l;
+      });
+      const nodeEls = nodes.map((n) => {
+        const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        g.setAttribute("class", "note-graph-node" + (n.deg === 0 ? " isolated" : ""));
+        const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        c.setAttribute("r", nodeR(n.deg));
+        const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        t.setAttribute("text-anchor", "middle");
+        t.setAttribute("y", nodeR(n.deg) + 10);
+        t.textContent = n.title.length > 14 ? n.title.slice(0, 13) + "…" : n.title;
+        g.appendChild(c);
+        g.appendChild(t);
+        svg.appendChild(g);
+        return g;
+      });
+
+      let alpha = 1;
+      let raf = null;
+      function tick() {
+        for (let i = 0; i < nodes.length; i++) {
+          for (let j = i + 1; j < nodes.length; j++) {
+            const a = nodes[i], b = nodes[j];
+            const dx = a.x - b.x, dy = a.y - b.y;
+            const distSq = Math.max(dx * dx + dy * dy, 4);
+            const dist = Math.sqrt(distSq);
+            const force = (Math.min(420 / distSq, 6)) * alpha;
+            const fx = (dx / dist) * force, fy = (dy / dist) * force;
+            a.vx += fx; a.vy += fy;
+            b.vx -= fx; b.vy -= fy;
+          }
+        }
+        edges.forEach((e) => {
+          const a = byId.get(e.source), b = byId.get(e.target);
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.01);
+          const force = (dist - 68) * 0.05 * alpha;
+          const fx = (dx / dist) * force, fy = (dy / dist) * force;
+          a.vx += fx; a.vy += fy;
+          b.vx -= fx; b.vy -= fy;
+        });
+        nodes.forEach((n) => {
+          if (n.fixed) return;
+          n.vx += (width / 2 - n.x) * 0.01 * alpha;
+          n.vy += (height / 2 - n.y) * 0.01 * alpha;
+          n.vx *= 0.82; n.vy *= 0.82;
+          n.x += n.vx; n.y += n.vy;
+          const r = nodeR(n.deg);
+          n.x = Math.max(r, Math.min(width - r, n.x));
+          n.y = Math.max(r, Math.min(height - r, n.y));
+        });
+        alpha = Math.max(alpha * 0.985, 0.04);
+
+        edgeEls.forEach((el, i) => {
+          const a = byId.get(edges[i].source), b = byId.get(edges[i].target);
+          el.setAttribute("x1", a.x); el.setAttribute("y1", a.y);
+          el.setAttribute("x2", b.x); el.setAttribute("y2", b.y);
+        });
+        nodeEls.forEach((el, i) => el.setAttribute("transform", `translate(${nodes[i].x},${nodes[i].y})`));
+
+        raf = requestAnimationFrame(tick);
+      }
+      raf = requestAnimationFrame(tick);
+      // Останавливаем цикл при уходе со вкладки/переоткрытии — без
+      // этого висящие requestAnimationFrame-циклы от предыдущих
+      // открытий графа продолжали бы копиться (заметная просадка после
+      // нескольких заходов на вкладку).
+      const stopObserver = new MutationObserver(() => {
+        if (!document.body.contains(svg)) {
+          cancelAnimationFrame(raf);
+          stopObserver.disconnect();
+        }
+      });
+      stopObserver.observe(document.getElementById("notes-body"), { childList: true, subtree: true });
+
+      nodeEls.forEach((g, i) => {
+        const n = nodes[i];
+        let dragging = false, moved = false;
+        g.addEventListener("pointerdown", (e) => {
+          dragging = true; moved = false; n.fixed = true;
+          alpha = Math.max(alpha, 0.5);
+          g.setPointerCapture(e.pointerId);
+        });
+        g.addEventListener("pointermove", (e) => {
+          if (!dragging) return;
+          moved = true;
+          const rect = svg.getBoundingClientRect();
+          const scale = width / rect.width;
+          n.x = (e.clientX - rect.left) * scale;
+          n.y = (e.clientY - rect.top) * scale;
+        });
+        const release = () => {
+          dragging = false;
+          n.fixed = false;
+        };
+        g.addEventListener("pointerup", release);
+        g.addEventListener("pointercancel", release);
+        g.addEventListener("click", () => {
+          if (moved) return;
+          const r = nodeR(n.deg);
+          const ring = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          ring.setAttribute("r", r);
+          ring.setAttribute("fill", "none");
+          ring.setAttribute("stroke", "var(--accent)");
+          ring.setAttribute("stroke-width", "2");
+          g.appendChild(ring);
+          ring.animate(
+            [
+              { r: r, opacity: 1 },
+              { r: r + 18, opacity: 0 },
+            ],
+            { duration: 280, easing: "cubic-bezier(.22,1,.36,1)" }
+          ).onfinish = () => ring.remove();
+          setTimeout(() => notesOpenDetail(n.id, "graph"), 130);
+        });
+      });
+    }
+
     // Двухэтапная загрузка (Phase 75, фидбек: "приложение слишком долго
     // загружается, хотя пользователю нужен только основной экран") —
     // раньше все вызовы ниже стартовали одновременно, и данные для
@@ -7211,6 +8123,8 @@
       loadGoals();
       loadGoalYearFloor();
       loadMonthEvents();
+      loadNotes();
+      loadTags();
     }
     initMiniApp();
   </script>

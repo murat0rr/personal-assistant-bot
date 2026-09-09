@@ -18,10 +18,17 @@ async def handle_note(message: Message, text: str) -> None:
         return
 
     try:
-        await create_note(message.from_user.id, text)
+        note = await create_note(message.from_user.id, text)
     except Exception:
         logger.exception("Не удалось сохранить заметку: %r", text)
         await message.answer("Не получилось сохранить заметку, попробуй ещё раз.")
         return
 
-    await message.answer("Записал заметку.")
+    # Заголовок (Phase 84) — почти всегда есть, ИИ подбирает синхронно
+    # внутри create_note; None — редкий случай сбоя самого вызова к
+    # Claude (см. core/notes.py::_maybe_generate_title, отдельно
+    # отловлен там же, не валит создание заметки целиком).
+    reply = f"Записал заметку «{note['title']}»." if note["title"] else "Записал заметку."
+    if note["tags"]:
+        reply += " Теги: " + ", ".join(f"#{t}" for t in note["tags"])
+    await message.answer(reply)

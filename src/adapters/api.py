@@ -22,6 +22,7 @@ from src.core import analytics as analytics_repo
 from src.core import day_reviews as day_reviews_repo
 from src.core import goals as goals_repo
 from src.core import habits as habits_repo
+from src.core import notes as notes_repo
 from src.core import projects as projects_repo
 from src.core import recurring_tasks as recurring_tasks_repo
 from src.core import task_templates as templates_repo
@@ -1176,6 +1177,126 @@ async def diary_day_endpoint(
         "highlight": entry["highlight"],
         "review": entry["summary"],
     }
+
+
+# Заметки: метаданные и карта знаний (Phase 84, макет:
+# https://claude.ai/code/artifact/163711b9-8bdc-4b0c-bc03-03bb3b7e2354) —
+# тот же "только владелец" гейт, что у дневника (_NOT_READY_FOR_OTHERS
+# уже упоминал заметки заранее). GET-ручки (список заметок/тегов) на
+# загрузке вкладки у не-владельца тихо отдают пустой список — тот же
+# приём, что у calendar_month_moods_endpoint (вспомогательная загрузка
+# при открытии экрана, не должна показывать ошибку всем остальным
+# авторизованным); мутации и ИИ-кнопки — явное действие, поэтому 403 с
+# понятным текстом, как у самого дневника.
+class CreateNoteRequest(BaseModel):
+    text: str
+    title: str | None = None
+    sphere: SphereField = None
+    project_id: int | None = None
+    tags: list[str] | None = None
+
+
+class UpdateNoteRequest(BaseModel):
+    title: str | None = None
+    title_is_ai: bool = False
+    text: str
+    sphere: SphereField = None
+    project_id: int | None = None
+    tags: list[str] | None = None
+
+
+@app.get("/miniapp/api/notes")
+async def list_notes_endpoint(user: dict = Depends(get_authorized_user)) -> list[dict]:
+    if not _is_owner(user["id"]):
+        return []
+    return await notes_repo.list_notes(user["id"])
+
+
+@app.get("/miniapp/api/tags")
+async def list_tags_endpoint(user: dict = Depends(get_authorized_user)) -> list[dict]:
+    if not _is_owner(user["id"]):
+        return []
+    return await notes_repo.list_tags(user["id"])
+
+
+@app.post("/miniapp/api/notes")
+async def create_note_endpoint(
+    payload: CreateNoteRequest, user: dict = Depends(get_authorized_user)
+) -> dict:
+    # Синхронный вызов ИИ-заголовка внутри (если title пуст) — см.
+    # core/notes.py::_maybe_generate_title: фронтенд уже показывает
+    # шиммер/печатающийся заголовок, ждущий именно этот ответ, отдельная
+    # фоновая джоба с опросом здесь не нужна (в отличие от описания
+    # задачи — см. _fill_task_description ниже, у того другая форма UX).
+    if not _is_owner(user["id"]):
+        raise HTTPException(status_code=403, detail=_NOT_READY_FOR_OTHERS)
+    return await notes_repo.create_note(
+        user["id"],
+        payload.text,
+        title=payload.title,
+        sphere=payload.sphere,
+        project_id=payload.project_id,
+        tags=payload.tags,
+    )
+
+
+@app.patch("/miniapp/api/notes/{note_id}")
+async def update_note_endpoint(
+    note_id: int, payload: UpdateNoteRequest, user: dict = Depends(get_authorized_user)
+) -> dict:
+    if not _is_owner(user["id"]):
+        raise HTTPException(status_code=403, detail=_NOT_READY_FOR_OTHERS)
+    try:
+        return await notes_repo.update_note(
+            note_id,
+            user["id"],
+            title=payload.title,
+            title_is_ai=payload.title_is_ai,
+            text=payload.text,
+            sphere=payload.sphere,
+            project_id=payload.project_id,
+            tags=payload.tags,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="note not found") from exc
+
+
+@app.delete("/miniapp/api/notes/{note_id}")
+async def delete_note_endpoint(
+    note_id: int, user: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    if not _is_owner(user["id"]):
+        raise HTTPException(status_code=403, detail=_NOT_READY_FOR_OTHERS)
+    try:
+        await notes_repo.delete_note(note_id, user["id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="note not found") from exc
+    return {"status": "ok"}
+
+
+@app.post("/miniapp/api/notes/{note_id}/regenerate-title")
+async def regenerate_note_title_endpoint(
+    note_id: int, user: dict = Depends(get_authorized_user)
+) -> dict[str, str]:
+    if not _is_owner(user["id"]):
+        raise HTTPException(status_code=403, detail=_NOT_READY_FOR_OTHERS)
+    try:
+        title = await notes_repo.regenerate_note_title(note_id, user["id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="note not found") from exc
+    return {"title": title}
+
+
+@app.post("/miniapp/api/notes/{note_id}/suggest-tags")
+async def suggest_note_tags_endpoint(
+    note_id: int, user: dict = Depends(get_authorized_user)
+) -> list[str]:
+    if not _is_owner(user["id"]):
+        raise HTTPException(status_code=403, detail=_NOT_READY_FOR_OTHERS)
+    try:
+        return await notes_repo.suggest_tags_for_note(note_id, user["id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="note not found") from exc
 
 
 # Аналитика (Phase 24) — гант по проектам переиспользует уже готовый
