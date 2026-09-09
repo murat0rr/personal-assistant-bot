@@ -47,15 +47,3 @@ class AuthorizedUser(Base):
     # (открывает "Помощь"), либо крестиком — после этого не показывается
     # больше никогда никаким способом.
     guide_banner_shown: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
-    # Темы (Phase 81/82, Threaded Mode — Bot API 9.3, темы теперь
-    # работают и в личных чатах, не только в супергруппах) — id темы в
-    # личном чате ЭТОГО пользователя с ботом, каждая создаётся один раз
-    # лениво (см. core/topics.py::get_or_create_topic). NULL — ещё не
-    # создавалась. questions — вопросы; tasks — задачи/напоминалки/
-    # повторяющиеся; notes — заметки; planning — дневник/финансы/цели/
-    # привычки (Phase 82, один общий раздел на все четыре, как и
-    # попросили).
-    questions_topic_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    tasks_topic_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    notes_topic_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    planning_topic_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -4,7 +4,6 @@ from aiogram import F, Router
 from aiogram.types import Message
 
 from src.core.auth import is_authorized
-from src.core.topics import TOPIC_STUBS, ensure_in_topic, get_or_create_topic
 from src.integrations.claude_client import summarize_finance_csv
 
 logger = logging.getLogger(__name__)
@@ -42,14 +41,6 @@ def _decode_csv(raw: bytes) -> str:
 async def handle_finance_csv(message: Message) -> None:
     if not message.from_user or not await is_authorized(message.from_user.id):
         await message.answer("Извините, этот бот вам недоступен.")
-        return
-
-    # Тема "Планирование" (Phase 82) — финансовая выписка делит её с
-    # дневником/целями/привычками. Этот хендлер — глобальный F.document,
-    # не привязан к состоянию, поэтому проверяем тему прямо тут, до
-    # разбора содержимого файла.
-    topic_id = await get_or_create_topic(message.bot, message.from_user.id, "planning")
-    if not await ensure_in_topic(message, topic_id, TOPIC_STUBS["planning"]):
         return
 
     document = message.document

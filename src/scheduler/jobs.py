@@ -21,7 +21,6 @@ from src.core.google_calendar_sync import sync_user_calendar
 from src.core.habits import list_habits
 from src.core.recurring_tasks import materialize_due_rules
 from src.core.task_templates import create_ai_template, list_templates
-from src.core.topics import get_or_create_topic
 from src.core.user_location import (
     morning_digest_enabled,
     user_schedule_hours,
@@ -233,12 +232,7 @@ async def _finance_reminder_job(bot: Bot) -> None:
     # Только владелец (см. _OWNER_ONLY_JOB_NAMES) — инструкция специфична
     # для его собственного банка.
     logger.info("Напоминаю про выписку за месяц")
-    # Тема "Планирование" (Phase 82) — финансы делят её с дневником/
-    # целями/привычками, как и попросили.
-    topic_id = await get_or_create_topic(bot, settings.telegram_user_id, "planning")
-    await bot.send_message(
-        chat_id=settings.telegram_user_id, message_thread_id=topic_id, text=FINANCE_GUIDE
-    )
+    await bot.send_message(chat_id=settings.telegram_user_id, text=FINANCE_GUIDE)
 
 
 async def _screen_time_digest(bot: Bot) -> None:
@@ -276,12 +270,8 @@ async def _habit_reminders(bot: Bot, user_id: int) -> None:
     if not missed:
         return
     names = "\n".join(f"— {h['name']}" for h in missed)
-    # Тема "Планирование" (Phase 82) — привычки делят её с дневником/
-    # финансами/целями, как и попросили.
-    topic_id = await get_or_create_topic(bot, user_id, "planning")
     await bot.send_message(
         chat_id=user_id,
-        message_thread_id=topic_id,
         text=f"⏰ Не забудь отметить привычки за сегодня:\n{names}",
     )
 

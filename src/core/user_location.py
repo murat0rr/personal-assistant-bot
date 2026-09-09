@@ -157,40 +157,6 @@ async def mark_guide_banner_shown(user_id: int) -> None:
         await session.commit()
 
 
-# Тема Telegram (Phase 81/82, Threaded Mode) на группу сценариев —
-# ключ здесь совпадает с ключом в core/topics.py::TOPIC_NAMES, значение
-# — имя колонки AuthorizedUser, которая его хранит.
-_TOPIC_COLUMNS = {
-    "questions": "questions_topic_id",
-    "tasks": "tasks_topic_id",
-    "notes": "notes_topic_id",
-    "planning": "planning_topic_id",
-}
-
-
-async def topic_id(user_id: int, topic_key: str) -> int | None:
-    """id темы этого пользователя для группы сценариев topic_key — None,
-    если ещё не создавалась (см. core/topics.py::get_or_create_topic)."""
-    location = await get_user_location(user_id)
-    if location is None:
-        return None
-    return getattr(location, _TOPIC_COLUMNS[topic_key])
-
-
-async def save_topic_id(user_id: int, topic_key: str, thread_id: int) -> None:
-    """Та же защита "строки может не быть", что и save_schedule_hour
-    выше."""
-    async with async_session() as session:
-        existing = await session.get(AuthorizedUser, user_id)
-        if existing is None:
-            existing = AuthorizedUser(
-                telegram_user_id=user_id, added_at=datetime.now(await user_timezone(user_id))
-            )
-            session.add(existing)
-        setattr(existing, _TOPIC_COLUMNS[topic_key], thread_id)
-        await session.commit()
-
-
 async def save_location_for(
     telegram_user_id: int,
     latitude: float,

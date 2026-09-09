@@ -11,7 +11,6 @@ from sqlalchemy import select
 from src.core.auth import is_authorized
 from src.core.config import settings
 from src.core.db import async_session
-from src.core.topics import get_or_create_topic
 from src.core.user_location import user_timezone, user_today
 from src.integrations.claude_client import ReminderPlan, parse_reminder
 from src.integrations.geocoding import geocode
@@ -152,15 +151,8 @@ async def check_reminders(bot: Bot, user_id: int, today: date) -> None:
         result = await session.execute(select(Reminder).where(Reminder.user_id == user_id))
         due = [r for r in result.scalars().all() if _is_due(r, today)]
 
-        # Тема "Задачи" (Phase 82) — напоминалки делят её с задачами и
-        # повторяющимися, как и попросили. Считаем один раз на всю
-        # пачку, не в цикле — не должно быть due-напоминаний без темы,
-        # но лишний поход в БД тоже незачем.
-        topic_id = await get_or_create_topic(bot, user_id, "tasks") if due else None
         for reminder in due:
-            await bot.send_message(
-                chat_id=user_id, message_thread_id=topic_id, text=f"🔔 {reminder.text}"
-            )
+            await bot.send_message(chat_id=user_id, text=f"🔔 {reminder.text}")
             if reminder.schedule_kind == "once":
                 await session.delete(reminder)
             else:
@@ -187,11 +179,8 @@ async def check_location_reminders(bot: Bot, lat: float, lon: float) -> None:
         )
         matched = [r for r in result.scalars().all() if _is_within_radius(r, lat, lon)]
 
-        topic_id = await get_or_create_topic(bot, owner_id, "tasks") if matched else None
         for reminder in matched:
-            await bot.send_message(
-                chat_id=owner_id, message_thread_id=topic_id, text=f"🔔 {reminder.text}"
-            )
+            await bot.send_message(chat_id=owner_id, text=f"🔔 {reminder.text}")
             # Гео-напоминания одноразовые — сработало и удалилось, как "once".
             await session.delete(reminder)
 
