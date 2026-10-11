@@ -39,9 +39,27 @@ _PAGE_STYLE = """
 """
 
 
+_PAGE_HEAD = """
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="manifest" href="/miniapp/manifest.json">
+<meta name="theme-color" content="#4F46E5">
+<link rel="icon" href="/miniapp/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="/miniapp/icons/apple-touch-icon.png">
+"""
+
+
 def _page(body: str) -> HTMLResponse:
+    # Манифест/иконки — те же, что у самого приложения (miniapp_static,
+    # Phase 88), и здесь тоже: без логина это первая и единственная
+    # страница, которую видит Chrome при "Установить" — без манифеста
+    # именно на ней критерии установки не проходят, предлагается только
+    # обычный ярлык (живой баг-репорт владельца). start_url в манифесте
+    # всё равно ведёт на /app/, залогиненность сама страница не даёт —
+    # просто делает установку возможной независимо от того, авторизован
+    # человек в этот конкретный момент или нет.
     return HTMLResponse(
-        f"<!doctype html><html><head>{_PAGE_STYLE}</head><body>{body}</body></html>"
+        f"<!doctype html><html><head>{_PAGE_HEAD}{_PAGE_STYLE}</head><body>{body}</body></html>"
     )
 
 
