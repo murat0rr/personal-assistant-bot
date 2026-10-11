@@ -60,9 +60,14 @@ async def _ai_analytics_refresh_job(bot: Bot, user_id: int) -> None:
     вкладки "Аналитика" заново дёргал сам эндпоинт — теперь он просто
     читает то, что здесь посчитано. Не отчитывается в чат (в отличие от
     большинства джоб) — это тихий фоновый пересчёт кэша, не то, что
-    пользователю нужно видеть каждое утро."""
+    пользователю нужно видеть каждое утро.
+
+    Phase 89 — кэш стал помесячным (banner-свайп на вкладке
+    "Аналитика"), но джоба по-прежнему трогает только СЕГОДНЯШНИЙ
+    месяц — не начинает задним числом пересчитывать историю."""
     logger.info("Обновляю кэш ИИ-аналитики (%s)", user_id)
-    await ai_analytics.refresh_summary(user_id)
+    today = await user_today(user_id)
+    await ai_analytics.refresh_summary(user_id, today)
 
 
 async def _materialize_recurring_tasks_job(bot: Bot, user_id: int) -> None:

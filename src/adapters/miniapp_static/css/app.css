@@ -944,6 +944,26 @@
     .period-carousel { overflow: hidden; }
     .period-track { display: flex; touch-action: pan-y; }
     .period-panel { flex: 0 0 100%; min-width: 0; }
+    /* Банер месяца на вкладке "Аналитика" (Phase 89) — тот же приём,
+       что .period-header/.period-carousel выше, но панели трека несут
+       сам текст месяца (не отдельный статичный label) — свайп реально
+       двигает подпись, не только пересчитывает данные после отпускания. */
+    .analytics-month-banner {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 8px;
+    }
+    .analytics-month-carousel { flex: 1; overflow: hidden; }
+    .analytics-month-track { display: flex; touch-action: pan-y; user-select: none; }
+    .analytics-month-panel {
+      flex: 0 0 100%;
+      min-width: 0;
+      text-align: center;
+      font-size: 14px;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
     .period-bound-hint {
       font-size: 11px;
       color: var(--accent);

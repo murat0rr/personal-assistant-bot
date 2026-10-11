@@ -9,6 +9,11 @@
 // все тиры сразу, см. index.html::loadGoals), фильтруются по tier
 // здесь же — отдельного похода в сеть не нужно, тот же источник, что
 // уже кормит вкладку "Проекты".
+//
+// Phase 89: ТОЛЬКО тир "monthly" дополнительно следует за банером месяца
+// на вкладке "Аналитика" (bus-событие "analytics:month-changed") —
+// weekly/yearly его не видят и не фильтруются, владелец явно просил не
+// трогать их.
 
 const TIER_TITLES = {
   weekly: "Цели — неделя",
@@ -17,9 +22,11 @@ const TIER_TITLES = {
 };
 
 export function createGoalProgressChartWidget(ctx, tier) {
-  const { escapeHtml, getGoalsData, bus } = ctx;
+  const { escapeHtml, getGoalsData, bus, getAnalyticsSelectedMonth, pad2 } = ctx;
   let container = null;
   let onGoalsChanged = null;
+  let onMonthChanged = null; // только для tier === "monthly"
+  let selectedMonthKey = null; // только для tier === "monthly"
 
   function percentDone(goal) {
     if (!goal.task_count) return null; // нет задач — не 0%, а "нечего оценивать"
@@ -27,7 +34,10 @@ export function createGoalProgressChartWidget(ctx, tier) {
   }
 
   function render() {
-    const goals = getGoalsData().filter((g) => g.tier === tier);
+    let goals = getGoalsData().filter((g) => g.tier === tier);
+    if (tier === "monthly" && selectedMonthKey) {
+      goals = goals.filter((g) => g.start_date && g.start_date.slice(0, 7) === selectedMonthKey);
+    }
     container.innerHTML = `<p class="chart-title">${TIER_TITLES[tier]}</p>`;
     if (goals.length === 0) {
       container.innerHTML += '<div class="chart-empty">Нет целей на этот период</div>';
@@ -81,13 +91,24 @@ export function createGoalProgressChartWidget(ctx, tier) {
     id: `goal-progress-${tier}`,
     async mount(el) {
       container = el;
+      if (tier === "monthly") {
+        const sel = getAnalyticsSelectedMonth();
+        selectedMonthKey = `${sel.year}-${pad2(sel.month)}`;
+        onMonthChanged = ({ detail }) => {
+          selectedMonthKey = `${detail.year}-${pad2(detail.month)}`;
+          this.refresh();
+        };
+        bus.addEventListener("analytics:month-changed", onMonthChanged);
+      }
       render();
       onGoalsChanged = () => this.refresh();
       bus.addEventListener("goals:changed", onGoalsChanged);
     },
     unmount() {
       if (onGoalsChanged) bus.removeEventListener("goals:changed", onGoalsChanged);
+      if (onMonthChanged) bus.removeEventListener("analytics:month-changed", onMonthChanged);
       onGoalsChanged = null;
+      onMonthChanged = null;
       container = null;
     },
     async refresh() {

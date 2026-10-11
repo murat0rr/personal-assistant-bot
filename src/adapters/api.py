@@ -1340,22 +1340,47 @@ async def analytics_month_endpoint(
 # генерация — только аварийный фолбэк на случай, если для пользователя
 # ещё нет ни одной строки в кэше (первый день, джоба ещё не успела
 # отработать), а не обычный путь.
+#
+# Phase 89 — кэш теперь помесячный (banner-свайп на вкладке
+# "Аналитика"). month — тот же "YYYY-MM"/без параметра = текущий месяц
+# приём, что у /analytics/spheres и /month. Аварийный фолбэк (живой
+# вызов Claude) — ТОЛЬКО для текущего месяца (его и так почти всегда
+# держит тёплым ночная джоба); для любого другого месяца без кэша —
+# честный {"text": None}, фронтенд сам покажет кнопку "Сгенерировать"
+# вместо того, чтобы свайп по истории бил пачкой запросов к Claude.
 @app.get("/miniapp/api/analytics/summary")
-async def analytics_summary_endpoint(user: dict = Depends(get_authorized_user)) -> dict:
+async def analytics_summary_endpoint(
+    month: str | None = None, user: dict = Depends(get_authorized_user)
+) -> dict:
     uid = user["id"]
-    text = await ai_analytics.get_cached_summary(uid)
-    if text is None:
-        text = await ai_analytics.refresh_summary(uid)
+    today = await user_today(uid)
+    if month:
+        year_str, month_str = month.split("-")
+        anchor = date(int(year_str), int(month_str), 1)
+    else:
+        anchor = today
+    text = await ai_analytics.get_cached_summary(uid, anchor)
+    if text is None and anchor.year == today.year and anchor.month == today.month:
+        text = await ai_analytics.refresh_summary(uid, anchor)
     return {"text": text}
 
 
-# Кнопка "перегенерировать" в виджете "ИИ-аналитика" (Phase 67, фидбек) —
-# раньше кэш обновлялся только по расписанию (_ai_analytics_refresh_job,
-# раз в день), без ручного способа обновить прямо сейчас. Тот же
-# refresh_summary, что и джоба — просто по явному запросу пользователя.
+# Кнопка "перегенерировать"/"сгенерировать" в виджете "ИИ-аналитика"
+# (Phase 67, фидбек; Phase 89 — всегда для выбранного в банере месяца,
+# не обязательно текущего) — раньше кэш обновлялся только по
+# расписанию (_ai_analytics_refresh_job, раз в день), без ручного
+# способа обновить прямо сейчас. Тот же refresh_summary, что и джоба —
+# просто по явному запросу пользователя, для любого месяца.
 @app.post("/miniapp/api/analytics/summary/regenerate")
-async def analytics_summary_regenerate_endpoint(user: dict = Depends(get_authorized_user)) -> dict:
-    text = await ai_analytics.refresh_summary(user["id"])
+async def analytics_summary_regenerate_endpoint(
+    month: str | None = None, user: dict = Depends(get_authorized_user)
+) -> dict:
+    if month:
+        year_str, month_str = month.split("-")
+        anchor = date(int(year_str), int(month_str), 1)
+    else:
+        anchor = await user_today(user["id"])
+    text = await ai_analytics.refresh_summary(user["id"], anchor)
     return {"text": text}
 
 

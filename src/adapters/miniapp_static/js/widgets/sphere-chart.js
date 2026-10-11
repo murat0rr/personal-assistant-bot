@@ -1,6 +1,9 @@
-// Виджет "Задачи по сферам" — листаемый по месяцам (Phase 53, тот же
-// приём навигации/свайпа, что уже есть у month-chart.js), сама
+// Виджет "Задачи по сферам" — листаемый по месяцам (Phase 53), сама
 // столбчатая диаграмма — без изменений в логике (Phase 24/33/34).
+// Phase 89: свой прев/некст + свайп убраны — месяцем теперь управляет
+// общий банер на вкладке "Аналитика" (index.html, bus-событие
+// "analytics:month-changed"), тот же приём, что уже был у
+// goal-progress-chart.js/gantt-chart.js для своих bus-событий.
 
 // Тот же порядок, что SPHERES на бэкенде — фиксированная палитра, чтобы
 // цвет сферы был одним и тем же везде, где она встречается на странице.
@@ -20,34 +23,19 @@ function sphereColor(sphere) {
 }
 
 export function createSphereChartWidget(ctx) {
-  const { api, escapeHtml, getMonthNamesFull, pad2 } = ctx;
+  const { api, escapeHtml, bus, getAnalyticsSelectedMonth, pad2 } = ctx;
   let container = null;
-  // Своё состояние месяца — не синхронизировано ни с month-chart, ни с
-  // месячным календарём, это независимые виджеты (тот же принцип, что
-  // уже описан у month-chart.js::year/month).
   let year = null;
   let month = null;
+  let onMonthChanged = null;
 
   function render(data) {
     const spheres = data.spheres || [];
-    const nav =
-      '<div class="month-chart-nav">' +
-      '<button type="button" class="small-btn" id="sphere-chart-prev" aria-label="Предыдущий месяц">‹</button>' +
-      `<span>${getMonthNamesFull()[data.month - 1]} ${data.year}</span>` +
-      '<button type="button" class="small-btn" id="sphere-chart-next" aria-label="Следующий месяц">›</button>' +
-      "</div>";
-    const header = `<p class="chart-title">Задачи по сферам</p>${nav}`;
-
-    function attachNav() {
-      document.getElementById("sphere-chart-prev").onclick = () => goTo(-1);
-      document.getElementById("sphere-chart-next").onclick = () => goTo(1);
-      attachSwipe();
-    }
+    const header = '<p class="chart-title">Задачи по сферам</p>';
 
     const total = spheres.reduce((sum, s) => sum + s.count, 0);
     if (total === 0) {
       container.innerHTML = `${header}<div class="chart-empty">В этом месяце нет задач со сферой</div>`;
-      attachNav();
       return;
     }
 
@@ -108,70 +96,43 @@ export function createSphereChartWidget(ctx) {
       )
       .join("");
     container.innerHTML = `${header}<div class="sphere-chart-row">${svg}<div class="sphere-legend">${legend}</div></div>`;
-    attachNav();
   }
 
   async function load() {
+    // Защита от гонки (Phase 89, найдена живой проверкой на
+    // ai-summary.js — тот же механизм здесь): свайп на другой месяц, пока
+    // предыдущий load() ещё в полёте, не должен дать его устаревшему
+    // ответу перезаписать уже отрисованный новый месяц.
+    const requestedKey = `${year}-${pad2(month)}`;
     container.innerHTML = '<div class="chart-empty">Загрузка…</div>';
     try {
-      const key = `${year}-${pad2(month)}`;
-      const data = await api(`/miniapp/api/analytics/spheres?month=${key}`);
+      const data = await api(`/miniapp/api/analytics/spheres?month=${requestedKey}`);
+      if (requestedKey !== `${year}-${pad2(month)}`) return;
       render(data);
     } catch (e) {
+      if (requestedKey !== `${year}-${pad2(month)}`) return;
       container.innerHTML = '<div class="chart-empty">Не удалось загрузить.</div>';
     }
-  }
-
-  async function goTo(delta) {
-    let m = month + delta;
-    let y = year;
-    if (m < 1) {
-      m = 12;
-      y -= 1;
-    } else if (m > 12) {
-      m = 1;
-      y += 1;
-    }
-    year = y;
-    month = m;
-    await load();
-  }
-
-  function attachSwipe() {
-    if (container.dataset.swipeAttached) return;
-    container.dataset.swipeAttached = "1";
-    let startX = null;
-    let startY = null;
-    let pointerId = null;
-    container.addEventListener("pointerdown", (e) => {
-      if (e.target.closest("button")) return;
-      startX = e.clientX;
-      startY = e.clientY;
-      pointerId = e.pointerId;
-    });
-    container.addEventListener("pointerup", (e) => {
-      if (startX === null || e.pointerId !== pointerId) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      startX = null;
-      if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-        goTo(dx < 0 ? 1 : -1);
-      }
-    });
   }
 
   return {
     id: "sphere-chart",
     async mount(el) {
       container = el;
-      if (year === null) {
-        const now = new Date();
-        year = now.getFullYear();
-        month = now.getMonth() + 1;
-      }
+      const sel = getAnalyticsSelectedMonth();
+      year = sel.year;
+      month = sel.month;
+      onMonthChanged = ({ detail }) => {
+        year = detail.year;
+        month = detail.month;
+        load();
+      };
+      bus.addEventListener("analytics:month-changed", onMonthChanged);
       await load();
     },
     unmount() {
+      if (onMonthChanged) bus.removeEventListener("analytics:month-changed", onMonthChanged);
+      onMonthChanged = null;
       container = null;
     },
     async refresh() {

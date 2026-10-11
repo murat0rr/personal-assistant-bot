@@ -131,6 +131,26 @@
       <div class="analytics-panel-header">
         <button type="button" class="small-btn" id="btn-open-widget-settings" aria-label="Настроить графики"></button>
       </div>
+      <!-- Банер месяца (Phase 89, фидбек: "сделай плашку с месяцем,
+           которую можно свайпать") — управляет месяцем сразу для
+           нескольких графиков ниже (sphere-chart/month-chart/gantt-chart/
+           ai-summary/goal-progress-monthly), через bus-событие
+           "analytics:month-changed", не прямым вызовом. Тот же приём
+           track+transform, что у месячного календаря/карусели периодов
+           целей (см. settleMonthCarousel ниже по файлу), но панели несут
+           реальный текст месяца (не пустые) — иначе при свайпе ничего не
+           едет вместе с пальцем, только дёргается после отпускания. -->
+      <div class="analytics-month-banner">
+        <button type="button" class="small-btn" id="analytics-month-prev" aria-label="Предыдущий месяц">‹</button>
+        <div class="analytics-month-carousel" id="analytics-month-carousel">
+          <div class="analytics-month-track" id="analytics-month-track">
+            <div class="analytics-month-panel"></div>
+            <div class="analytics-month-panel"></div>
+            <div class="analytics-month-panel"></div>
+          </div>
+        </div>
+        <button type="button" class="small-btn" id="analytics-month-next" aria-label="Следующий месяц">›</button>
+      </div>
     </div>
     <div id="analytics-widgets"></div>
   </div>
@@ -5807,6 +5827,14 @@
       // loadGoals(), функция всегда возвращает актуальную ссылку, а не
       // снимок на момент конструирования этого объекта.
       getGoalsData: () => goalsData,
+      // Банер месяца на вкладке "Аналитика" (Phase 89) — тот же приём
+      // геттера-с-отложенным-обращением, что у getMonthNamesFull выше:
+      // analyticsSelectedYear/Month объявлены как let гораздо ниже по
+      // файлу (там же, где и сам банер, рядом с adjMonth) — TDZ.
+      getAnalyticsSelectedMonth: () => ({
+        year: analyticsSelectedYear,
+        month: analyticsSelectedMonth,
+      }),
       bus: null, // подставится модулем-бутстрапом ниже, до первого реального использования
     };
     // loadAnalytics() зовётся синхронно в самом низу этого скрипта
@@ -6005,6 +6033,7 @@
       // без сети).
       if (tab === "calendar") recenterMonthCarousel();
       if (tab === "projects") recenterAllGoalPeriodCarousels();
+      if (tab === "analytics") recenterAnalyticsMonthCarousel();
       if (tab === "kanban") renderKanbanBoard();
       if (tab === "notes") renderNotesScreen();
     }
@@ -6292,6 +6321,149 @@
       }
       return { year: y, month: m };
     }
+
+    // Банер месяца на вкладке "Аналитика" (Phase 89) — та же механика
+    // перетаскивания трека, что у settleMonthCarousel/monthDrag ниже по
+    // файлу (месячный календарь), просто без сетки дней: три панели с
+    // текстом месяца вместо грида. analyticsSelectedYear/Month — общее
+    // состояние, которое читают виджеты через
+    // window.__coreBridge.getAnalyticsSelectedMonth() при монтировании,
+    // и на которое подписываются через bus-событие
+    // "analytics:month-changed" на каждую смену.
+    let analyticsSelectedYear = null;
+    let analyticsSelectedMonth = null;
+
+    function renderAnalyticsMonthPanels() {
+      const panels = document.querySelectorAll("#analytics-month-track .analytics-month-panel");
+      const prev = adjMonth(analyticsSelectedYear, analyticsSelectedMonth, -1);
+      const next = adjMonth(analyticsSelectedYear, analyticsSelectedMonth, 1);
+      panels[0].textContent = `${MONTH_NAMES_FULL[prev.month - 1]} ${prev.year}`;
+      panels[1].textContent = `${MONTH_NAMES_FULL[analyticsSelectedMonth - 1]} ${analyticsSelectedYear}`;
+      panels[2].textContent = `${MONTH_NAMES_FULL[next.month - 1]} ${next.year}`;
+    }
+
+    function initAnalyticsMonthBanner() {
+      if (analyticsSelectedYear === null) {
+        const now = new Date();
+        analyticsSelectedYear = now.getFullYear();
+        analyticsSelectedMonth = now.getMonth() + 1;
+      }
+      renderAnalyticsMonthPanels();
+    }
+    initAnalyticsMonthBanner();
+
+    const analyticsMonthCarousel = document.getElementById("analytics-month-carousel");
+    const analyticsMonthTrack = document.getElementById("analytics-month-track");
+    const ANALYTICS_MONTH_DRAG_THRESHOLD = 0.22;
+    const ANALYTICS_MONTH_FLING_VELOCITY = 0.5; // px/мс
+
+    function analyticsMonthPanelWidth() {
+      return analyticsMonthCarousel.clientWidth;
+    }
+    function analyticsMonthRestX(index) {
+      return -index * analyticsMonthPanelWidth();
+    }
+    function setAnalyticsMonthTrackTransform(x, withTransition) {
+      analyticsMonthTrack.style.transition = withTransition
+        ? "transform 240ms cubic-bezier(0.22, 1, 0.36, 1)"
+        : "none";
+      analyticsMonthTrack.style.transform = `translateX(${x}px)`;
+    }
+    function recenterAnalyticsMonthCarousel() {
+      setAnalyticsMonthTrackTransform(analyticsMonthRestX(1), false);
+    }
+    recenterAnalyticsMonthCarousel();
+
+    let analyticsMonthDrag = null;
+    let analyticsMonthSettling = false;
+
+    analyticsMonthTrack.addEventListener("pointerdown", (e) => {
+      if (analyticsMonthSettling) return;
+      analyticsMonthDrag = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        baseX: analyticsMonthRestX(1),
+        horizontal: null,
+        lastX: e.clientX,
+        lastTime: e.timeStamp,
+        velocity: 0,
+      };
+    });
+    document.addEventListener("pointermove", (e) => {
+      if (!analyticsMonthDrag || e.pointerId !== analyticsMonthDrag.pointerId) return;
+      const dx = e.clientX - analyticsMonthDrag.startX;
+      const dy = e.clientY - analyticsMonthDrag.startY;
+      if (analyticsMonthDrag.horizontal === null) {
+        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+        analyticsMonthDrag.horizontal = Math.abs(dx) > Math.abs(dy);
+        if (!analyticsMonthDrag.horizontal) {
+          analyticsMonthDrag = null; // вертикальный жест — не мешаем обычному скроллу экрана
+          return;
+        }
+      }
+      const dt = e.timeStamp - analyticsMonthDrag.lastTime;
+      if (dt > 0) analyticsMonthDrag.velocity = (e.clientX - analyticsMonthDrag.lastX) / dt;
+      analyticsMonthDrag.lastX = e.clientX;
+      analyticsMonthDrag.lastTime = e.timeStamp;
+      setAnalyticsMonthTrackTransform(analyticsMonthDrag.baseX + dx, false);
+    });
+    function endAnalyticsMonthDrag(e) {
+      if (!analyticsMonthDrag || e.pointerId !== analyticsMonthDrag.pointerId) return;
+      const drag = analyticsMonthDrag;
+      analyticsMonthDrag = null;
+      if (drag.horizontal !== true) return; // тап или вертикальный жест — трек не двигали
+      const dx = e.clientX - drag.startX;
+      const pw = analyticsMonthPanelWidth();
+      let targetIndex = 1;
+      if (Math.abs(drag.velocity) > ANALYTICS_MONTH_FLING_VELOCITY) {
+        targetIndex = drag.velocity < 0 ? 2 : 0;
+      } else if (Math.abs(dx) > pw * ANALYTICS_MONTH_DRAG_THRESHOLD) {
+        targetIndex = dx < 0 ? 2 : 0;
+      }
+      settleAnalyticsMonthCarousel(targetIndex);
+    }
+    document.addEventListener("pointerup", endAnalyticsMonthDrag);
+    document.addEventListener("pointercancel", endAnalyticsMonthDrag);
+
+    function settleAnalyticsMonthCarousel(targetIndex) {
+      analyticsMonthSettling = true;
+      setAnalyticsMonthTrackTransform(analyticsMonthRestX(targetIndex), true);
+
+      const willChange = targetIndex !== 1;
+      const delta = targetIndex === 2 ? 1 : -1;
+      const target = willChange
+        ? adjMonth(analyticsSelectedYear, analyticsSelectedMonth, delta)
+        : null;
+
+      analyticsMonthTrack.addEventListener(
+        "transitionend",
+        () => {
+          if (willChange) {
+            analyticsSelectedYear = target.year;
+            analyticsSelectedMonth = target.month;
+            renderAnalyticsMonthPanels();
+          }
+          recenterAnalyticsMonthCarousel();
+          analyticsMonthSettling = false;
+          if (willChange) {
+            window.__coreBridge.bus?.dispatchEvent(
+              new CustomEvent("analytics:month-changed", {
+                detail: { year: analyticsSelectedYear, month: analyticsSelectedMonth },
+              })
+            );
+          }
+        },
+        { once: true }
+      );
+    }
+
+    document.getElementById("analytics-month-prev").onclick = () => {
+      if (!analyticsMonthSettling) settleAnalyticsMonthCarousel(0);
+    };
+    document.getElementById("analytics-month-next").onclick = () => {
+      if (!analyticsMonthSettling) settleAnalyticsMonthCarousel(2);
+    };
 
     async function ensureMonthData(year, month) {
       const key = monthKey(year, month);

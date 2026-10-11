@@ -2,6 +2,15 @@
 // Кнопка "перегенерировать" (Phase 67, фидбог) — раньше кэш обновлялся
 // только по расписанию (_ai_analytics_refresh_job, раз в день), без
 // ручного способа обновить прямо сейчас.
+//
+// Phase 89: следует за банером месяца на вкладке "Аналитика". Кэш
+// теперь per-month (ai_analytics_cache, составной PK) — на месяц без
+// готового текста бэкенд отдаёт {text: null}, виджет показывает кнопку
+// "Сгенерировать" вместо автоматического вызова Claude на каждый свайп
+// (решение владельца — свайп по многим месяцам не должен бить по
+// кошельку пачкой запросов). Текущий месяц — исключение, как и раньше:
+// бэкенд сам подставляет его аварийным фолбэком, если ночная джоба ещё
+// не успела отработать (см. api.py::analytics_summary_endpoint).
 
 function refreshIconSvg() {
   return (
@@ -13,8 +22,10 @@ function refreshIconSvg() {
 }
 
 export function createAiSummaryWidget(ctx) {
-  const { api, escapeHtml } = ctx;
+  const { api, escapeHtml, pad2, bus, getAnalyticsSelectedMonth } = ctx;
   let container = null;
+  let onMonthChanged = null;
+  let selectedMonthKey = null;
 
   function renderShell(text, regenerating) {
     container.innerHTML =
@@ -30,13 +41,52 @@ export function createAiSummaryWidget(ctx) {
     }
   }
 
+  function renderGenerateButton() {
+    container.innerHTML =
+      '<p class="chart-title">ИИ-аналитика</p>' +
+      '<div class="chart-empty">Для этого месяца пока нет аналитики.</div>' +
+      '<button type="button" class="small-btn" id="ai-summary-generate">Сгенерировать</button>';
+    document.getElementById("ai-summary-generate").onclick = () => regenerate();
+  }
+
+  // Защита от гонки (найдена живой проверкой, Phase 89): свайп на
+  // другой месяц, пока load()/regenerate() предыдущего ещё в полёте —
+  // запрос сам по себе не отменяется, но его результат больше не
+  // актуален. Каждый вызов запоминает "свой" месяц в requestedMonth и
+  // перед записью в DOM сверяет его с текущим selectedMonthKey — если
+  // пользователь успел свайпнуть ещё раз, более старый ответ просто
+  // отбрасывается (newer load() для актуального месяца либо уже
+  // отрисовал своё, либо вот-вот отрисует).
+  async function load() {
+    const requestedMonth = selectedMonthKey;
+    container.innerHTML = '<div class="chart-empty">Загрузка…</div>';
+    try {
+      const summary = await api(`/miniapp/api/analytics/summary?month=${requestedMonth}`);
+      if (requestedMonth !== selectedMonthKey) return;
+      if (summary.text === null) {
+        renderGenerateButton();
+      } else {
+        renderShell(summary.text, false);
+      }
+    } catch (e) {
+      if (requestedMonth !== selectedMonthKey) return;
+      container.innerHTML = '<div class="chart-empty">Не удалось загрузить.</div>';
+    }
+  }
+
   async function regenerate() {
+    const requestedMonth = selectedMonthKey;
     const current = container.querySelector(".ai-summary-text")?.textContent || null;
     renderShell(current, true);
     try {
-      const summary = await api("/miniapp/api/analytics/summary/regenerate", { method: "POST" });
+      const summary = await api(
+        `/miniapp/api/analytics/summary/regenerate?month=${requestedMonth}`,
+        { method: "POST" }
+      );
+      if (requestedMonth !== selectedMonthKey) return;
       renderShell(summary.text, false);
     } catch (e) {
+      if (requestedMonth !== selectedMonthKey) return;
       renderShell(current, false);
       alert("Не удалось перегенерировать.");
     }
@@ -46,19 +96,22 @@ export function createAiSummaryWidget(ctx) {
     id: "ai-summary",
     async mount(el) {
       container = el;
-      container.innerHTML = '<div class="chart-empty">Загрузка…</div>';
-      try {
-        const summary = await api("/miniapp/api/analytics/summary");
-        renderShell(summary.text, false);
-      } catch (e) {
-        container.innerHTML = '<div class="chart-empty">Не удалось загрузить.</div>';
-      }
+      const sel = getAnalyticsSelectedMonth();
+      selectedMonthKey = `${sel.year}-${pad2(sel.month)}`;
+      onMonthChanged = ({ detail }) => {
+        selectedMonthKey = `${detail.year}-${pad2(detail.month)}`;
+        load();
+      };
+      bus.addEventListener("analytics:month-changed", onMonthChanged);
+      await load();
     },
     unmount() {
+      if (onMonthChanged) bus.removeEventListener("analytics:month-changed", onMonthChanged);
+      onMonthChanged = null;
       container = null;
     },
     async refresh() {
-      if (container) await this.mount(container);
+      if (container) await load();
     },
   };
 }

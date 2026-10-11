@@ -1,33 +1,21 @@
 // Виджет "Выполнено задач" — листаемый график месяца (перенесён из
 // renderMonthChart/loadMonthChart/goToAnalyticsMonth/attachMonthChartSwipe,
-// Phase 24/29/41, без изменений в логике). Сохранены оба бага-фикса
-// Phase 41: единственное присваивание innerHTML за рендер (иначе
-// += пересоздаёт узлы кнопок навигации и рвёт уже назначенный .onclick
-// — баг, пойманный на живой проверке) и dataset.swipeAttached-защита от
-// повторного навешивания слушателей свайпа при каждом рендере.
+// Phase 24/29/41, без изменений в логике). Сохранён бага-фикс Phase 41:
+// единственное присваивание innerHTML за рендер.
+// Phase 89: свой прев/некст + свайп убраны — месяцем теперь управляет
+// общий банер на вкладке "Аналитика" (index.html, bus-событие
+// "analytics:month-changed"), тот же приём, что уже был у
+// goal-progress-chart.js/gantt-chart.js для своих bus-событий.
 
 export function createMonthChartWidget(ctx) {
-  const { api, escapeHtml, getMonthNamesFull, pad2, getBoardState } = ctx;
+  const { api, escapeHtml, pad2, getBoardState, bus, getAnalyticsSelectedMonth } = ctx;
   let container = null;
-  // Своё состояние месяца — не синхронизировано с месячным календарём,
-  // это разные виджеты (см. исходный комментарий у analyticsMonthYear).
   let year = null;
   let month = null;
+  let onMonthChanged = null;
 
   function render(data) {
-    const nav =
-      '<div class="month-chart-nav">' +
-      '<button type="button" class="small-btn" id="analytics-month-prev" aria-label="Предыдущий месяц">‹</button>' +
-      `<span>${getMonthNamesFull()[data.month - 1]} ${data.year}</span>` +
-      '<button type="button" class="small-btn" id="analytics-month-next" aria-label="Следующий месяц">›</button>' +
-      "</div>";
-    const header = `<p class="chart-title">Выполнено задач</p>${nav}`;
-
-    function attachNav() {
-      document.getElementById("analytics-month-prev").onclick = () => goTo(-1);
-      document.getElementById("analytics-month-next").onclick = () => goTo(1);
-      attachSwipe();
-    }
+    const header = '<p class="chart-title">Выполнено задач</p>';
 
     const counts = data.all_counts || [];
     // Плановая нагрузка на день (Phase 67, фидбек) — независимо от
@@ -37,7 +25,6 @@ export function createMonthChartWidget(ctx) {
     const scheduled = data.scheduled_counts || [];
     if (counts.every((c) => c === 0) && scheduled.every((c) => c === 0)) {
       container.innerHTML = `${header}<div class="chart-empty">В этом месяце пока ничего не отмечено</div>`;
-      attachNav();
       return;
     }
 
@@ -160,70 +147,43 @@ export function createMonthChartWidget(ctx) {
     }
 
     container.innerHTML = `${header}${svg}${projectsHtml}`;
-    attachNav();
   }
 
   async function load() {
+    // Защита от гонки (Phase 89, найдена живой проверкой на
+    // ai-summary.js — тот же механизм здесь): свайп на другой месяц, пока
+    // предыдущий load() ещё в полёте, не должен дать его устаревшему
+    // ответу перезаписать уже отрисованный новый месяц.
+    const requestedKey = `${year}-${pad2(month)}`;
     container.innerHTML = '<div class="chart-empty">Загрузка…</div>';
     try {
-      const key = `${year}-${pad2(month)}`;
-      const data = await api(`/miniapp/api/analytics/month?month=${key}`);
+      const data = await api(`/miniapp/api/analytics/month?month=${requestedKey}`);
+      if (requestedKey !== `${year}-${pad2(month)}`) return;
       render(data);
     } catch (e) {
+      if (requestedKey !== `${year}-${pad2(month)}`) return;
       container.innerHTML = '<div class="chart-empty">Не удалось загрузить.</div>';
     }
-  }
-
-  async function goTo(delta) {
-    let m = month + delta;
-    let y = year;
-    if (m < 1) {
-      m = 12;
-      y -= 1;
-    } else if (m > 12) {
-      m = 1;
-      y += 1;
-    }
-    year = y;
-    month = m;
-    await load();
-  }
-
-  function attachSwipe() {
-    if (container.dataset.swipeAttached) return;
-    container.dataset.swipeAttached = "1";
-    let startX = null;
-    let startY = null;
-    let pointerId = null;
-    container.addEventListener("pointerdown", (e) => {
-      if (e.target.closest("button")) return;
-      startX = e.clientX;
-      startY = e.clientY;
-      pointerId = e.pointerId;
-    });
-    container.addEventListener("pointerup", (e) => {
-      if (startX === null || e.pointerId !== pointerId) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      startX = null;
-      if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-        goTo(dx < 0 ? 1 : -1);
-      }
-    });
   }
 
   return {
     id: "month-chart",
     async mount(el) {
       container = el;
-      if (year === null) {
-        const now = new Date();
-        year = now.getFullYear();
-        month = now.getMonth() + 1;
-      }
+      const sel = getAnalyticsSelectedMonth();
+      year = sel.year;
+      month = sel.month;
+      onMonthChanged = ({ detail }) => {
+        year = detail.year;
+        month = detail.month;
+        load();
+      };
+      bus.addEventListener("analytics:month-changed", onMonthChanged);
       await load();
     },
     unmount() {
+      if (onMonthChanged) bus.removeEventListener("analytics:month-changed", onMonthChanged);
+      onMonthChanged = null;
       container = null;
     },
     async refresh() {

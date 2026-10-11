@@ -5,6 +5,13 @@
 // index.html дёргали renderGanttChart() по имени напрямую; теперь
 // виджет сам подписывается на bus ("projects:changed") и обновляется
 // собой — код задач/проектов вообще не знает о существовании Ганта.
+//
+// Phase 89: банер месяца на вкладке "Аналитика" НЕ фильтрует бары (вся
+// шкала всегда видна целиком — иначе теряется смысл диаграммы, не
+// видно, что проект растянут на несколько месяцев) — только двигает
+// точку, на которую центрируется горизонтальный скролл. Вертикальная
+// линия "сегодня" — отдельное понятие, остаётся на реальном Date.now()
+// независимо от выбранного месяца.
 
 const GANTT_PX_PER_DAY = 10; // фиксированный масштаб — только так есть, что скроллить
 
@@ -47,9 +54,10 @@ export function packGanttRows(projects) {
 }
 
 export function createGanttChartWidget(ctx) {
-  const { escapeHtml, getMonthNamesFull, getProjectsData, bus } = ctx;
+  const { escapeHtml, getMonthNamesFull, getProjectsData, bus, getAnalyticsSelectedMonth } = ctx;
   let container = null;
   let onProjectsChanged = null;
+  let onMonthChanged = null;
 
   function render() {
     container.innerHTML = '<p class="chart-title">Проекты</p>';
@@ -97,6 +105,14 @@ export function createGanttChartWidget(ctx) {
     const todayLineHtml =
       todayX >= 0 && todayX <= canvasW ? `<div class="gantt-today-line" style="left:${todayX}px"></div>` : "";
 
+    // Точка центрирования скролла — ОТДЕЛЬНО от todayX выше (та красит
+    // только вертикальную линию "сегодня", не зависит от выбранного
+    // месяца). До первого свайпа банера getAnalyticsSelectedMonth() уже
+    // равен текущему месяцу (см. index.html::initAnalyticsMonthBanner),
+    // так что это естественно совпадает с "сегодня" на первом монтировании.
+    const sel = getAnalyticsSelectedMonth();
+    const selectedMonthX = dayToPx(new Date(sel.year, sel.month - 1, 1).getTime());
+
     const packedRows = packGanttRows(withDates);
     const rowsHtml = packedRows
       .map((items) => {
@@ -136,10 +152,10 @@ export function createGanttChartWidget(ctx) {
       `<div class="gantt-body">${todayLineHtml}${rowsHtml}</div>` +
       "</div></div>";
 
-    // Центрируем на "сегодня" сразу — иначе можно оказаться в самом
-    // начале шкалы, далеко от актуального.
+    // Центрируем на выбранный месяц сразу — иначе можно оказаться в
+    // самом начале шкалы, далеко от актуального.
     const scrollEl = document.getElementById("gantt-scroll");
-    scrollEl.scrollLeft = Math.max(0, todayX - scrollEl.clientWidth / 2);
+    scrollEl.scrollLeft = Math.max(0, selectedMonthX - scrollEl.clientWidth / 2);
   }
 
   return {
@@ -149,10 +165,14 @@ export function createGanttChartWidget(ctx) {
       render();
       onProjectsChanged = () => this.refresh();
       bus.addEventListener("projects:changed", onProjectsChanged);
+      onMonthChanged = () => this.refresh();
+      bus.addEventListener("analytics:month-changed", onMonthChanged);
     },
     unmount() {
       if (onProjectsChanged) bus.removeEventListener("projects:changed", onProjectsChanged);
+      if (onMonthChanged) bus.removeEventListener("analytics:month-changed", onMonthChanged);
       onProjectsChanged = null;
+      onMonthChanged = null;
       container = null;
     },
     async refresh() {
