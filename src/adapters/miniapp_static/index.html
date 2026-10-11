@@ -4,8 +4,22 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Ассистент</title>
+  <!-- Абсолютные пути (не относительные) — этот же index.html отдаётся
+       и по /miniapp/ (внутри Telegram), и по /app/ (вне Telegram,
+       Phase 45, web_app_entry в api.py). Относительный "css/app.css"
+       резолвился бы в /app/css/app.css, а туда ничего не смонтировано
+       — 404 (баг, который PWA-фаза заодно и вскрыла). /miniapp/
+       смонтирован как StaticFiles на весь каталог — путь рабочий из
+       любого входа. -->
+  <link rel="manifest" href="/miniapp/manifest.json">
+  <meta name="theme-color" content="#4F46E5">
+  <link rel="icon" href="/miniapp/icons/favicon-32.png">
+  <link rel="apple-touch-icon" href="/miniapp/icons/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="/miniapp/css/app.css">
 </head>
 <body>
 <div id="screen-stack">
@@ -708,7 +722,7 @@
     <button type="button" id="date-picker-clear">Не указывать</button>
   </div>
 
-  <script src="js/core/icons.js"></script>
+  <script src="/miniapp/js/core/icons.js"></script>
   <script>
     const tg = window.Telegram?.WebApp;
     tg?.ready();
@@ -8142,9 +8156,9 @@
       setEnabledIds,
       getWidgetOrder,
       setWidgetOrder,
-    } from "./js/widgets/panel.js";
-    import { WIDGET_REGISTRY } from "./js/widgets/registry.js";
-    import { bus } from "./js/core/bus.js";
+    } from "/miniapp/js/widgets/panel.js";
+    import { WIDGET_REGISTRY } from "/miniapp/js/widgets/registry.js";
+    import { bus } from "/miniapp/js/core/bus.js";
 
     window.__registerAnalyticsPanel(
       {
@@ -8157,6 +8171,16 @@
       },
       bus
     );
+  </script>
+
+  <script>
+    // Регистрация service worker (Phase 88) — только вне Telegram
+    // (/app/, обычный браузер): внутри Telegram-клиента страница и так
+    // живёт в его WebView, отдельная установка/offline не нужны и не
+    // имеют смысла.
+    if ("serviceWorker" in navigator && !window.Telegram?.WebApp?.initData) {
+      navigator.serviceWorker.register("/miniapp/service-worker.js").catch(() => {});
+    }
   </script>
 </body>
 </html>
