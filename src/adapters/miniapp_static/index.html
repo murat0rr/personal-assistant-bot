@@ -115,7 +115,12 @@
     <div class="kanban-inbox-row" id="kanban-inbox-row"></div>
   </div>
 
-  <div class="section">
+  <!-- На десктопе этот раздел скрыт целиком (app.css, @media
+       (min-width: 900px)) — Phase 90 завела здесь дублирующий "второй
+       инбокс" (чипы), фидбек: один функционал — у #kanban-inbox-row
+       слева от канбана (баг-фикс, этот же прогон). На телефоне —
+       единственный Inbox, без изменений. -->
+  <div class="section" id="main-inbox-block">
     <p class="section-label section-header" id="inbox-header">
       <span id="inbox-title">Инбокс</span>
       <span class="chevron" id="inbox-chevron"></span>
@@ -3910,16 +3915,39 @@
       row.innerHTML = "";
       if (!boardState.inbox.length) {
         renderEmpty(row);
-        return;
       }
       for (const task of sortByOrder(boardState.inbox)) {
         const chip = document.createElement("div");
         chip.className = "kanban-inbox-chip" + (task.done ? " done" : "");
         chip.dataset.id = task.id;
-        chip.innerHTML = `<span class="chip-dot"></span><span>${escapeHtml(task.title)}</span>`;
+        // Кнопка "выполнить" (фидбек) — отдельный элемент ПЕРЕД точкой,
+        // сама точка+заголовок не меняются (span:last-child в CSS
+        // по-прежнему целит заголовок). Клик по ней не должен стартовать
+        // drag — см. исключение в attachKanbanInboxDrag ниже.
+        const checkbox = document.createElement("button");
+        checkbox.className = "checkbox" + (task.done ? " done" : "");
+        checkbox.setAttribute("aria-label", task.done ? "Снять отметку" : "Отметить выполненной");
+        if (task.done) checkbox.innerHTML = checkIcon();
+        checkbox.onclick = (e) => {
+          e.stopPropagation();
+          toggleTaskDone(task);
+        };
+        chip.append(checkbox);
+        const dot = document.createElement("span");
+        dot.className = "chip-dot";
+        chip.append(dot);
+        const label = document.createElement("span");
+        label.textContent = task.title;
+        chip.append(label);
         attachKanbanInboxDrag(chip, task);
         row.append(chip);
       }
+      // Чип "новая задача" (фидбек) — тот же renderAddTaskRow, что у
+      // обычных списков (без даты — ровно "в инбокс", тот же смысл, что
+      // dateFor() === null у остальных списков без ctx.dateFor).
+      row.append(
+        renderAddTaskRow({ listKey: "kanban-inbox", withDatePicker: false, dateFor: () => null })
+      );
     }
 
     // Перенос карточки дня — в другую колонку (меняет due_date, время
@@ -3996,13 +4024,20 @@
     }
 
     // Перенос из инбокс-ряда вверх, в любую колонку дня — зеркало
-    // attachKanbanCardDrag выше, только источник без даты.
+    // attachKanbanCardDrag выше, только источник без даты. Фидбек:
+    // можно отпустить и прямо на часовой слот Таймлайна (десктоп,
+    // справа от канбана) — ставит именно это время на сегодня, тот же
+    // приём hover-детекции/снэпа, что у attachTimelineDrag внутри
+    // renderTimelinePage (не переиспользуем саму функцию — она
+    // замкнута на свои chip/block элементы — просто тот же алгоритм).
     function attachKanbanInboxDrag(chip, task) {
       let dragging = false;
       let pointerId = null;
       let hoveredList = null;
+      let hoveredSlot = null;
 
       chip.addEventListener("pointerdown", (e) => {
+        if (e.target.closest(".checkbox")) return;
         dragging = true;
         pointerId = e.pointerId;
         chip.classList.add("dragging");
@@ -4026,7 +4061,15 @@
         if (!dragging || e.pointerId !== pointerId) return;
         positionGhost(e.clientX, e.clientY);
         const under = document.elementFromPoint(e.clientX, e.clientY);
-        const list = under && under.closest(".kanban-card-list");
+        const slot = under && under.closest(".hour-slot");
+        if (slot !== hoveredSlot) {
+          if (hoveredSlot) hoveredSlot.classList.remove("drag-target");
+          hoveredSlot = slot;
+          if (hoveredSlot) hoveredSlot.classList.add("drag-target");
+        }
+        // Часовой слот и колонка канбана — взаимоисключающие цели, одна
+        // точка не может быть над обеими сразу (разные колонки сетки).
+        const list = slot ? null : under && under.closest(".kanban-card-list");
         if (list !== hoveredList) {
           if (hoveredList) hoveredList.classList.remove("drag-over");
           hoveredList = list;
@@ -4040,7 +4083,17 @@
         dragging = false;
         chip.classList.remove("dragging");
         timelineGhostEl.classList.remove("visible");
-        if (hoveredList) {
+        if (hoveredSlot) {
+          const hour = Number(hoveredSlot.dataset.hour);
+          const rect = hoveredSlot.getBoundingClientRect();
+          const offsetMin = ((e.clientY - rect.top) / TIMELINE_HOUR_PX) * 60;
+          const minutes = timelineSnapMinutes(hour * 60 + offsetMin);
+          hoveredSlot.classList.remove("drag-target");
+          hoveredSlot = null;
+          hapticImpact("light");
+          const todayIso = boardState.days.today ? boardState.days.today.date : null;
+          if (todayIso) setTaskDueDate(task, `${todayIso}T${timelineMinutesToLabel(minutes)}`);
+        } else if (hoveredList) {
           const targetIso = hoveredList.dataset.iso;
           hoveredList.classList.remove("drag-over");
           hoveredList = null;
@@ -4075,34 +4128,18 @@
         const tomorrowIso = addDaysIso(boardState.days.today.date, 1);
         renderList(document.getElementById("tomorrow-list"), tasksForDate(tomorrowIso), _dayOpts.tomorrow);
       }
-      // Десктоп (Phase 90) — чистые чипы вместо полной строки: дата/
-      // корзина/"на сегодня"/грип скрыты (не рендерятся вовсе, не просто
-      // CSS display:none), чекбокс остаётся кликабельным как обычно,
-      // attachLongPress у renderTaskRow всё равно безусловно открывает
-      // openTaskEditSheet — все действия доступны через него. Мобильная
-      // ветка — буквально то, что было раньше, без изменений.
-      renderList(
-        document.getElementById("inbox-list"),
-        boardState.inbox,
-        isDesktopLayout()
-          ? {
-              listKey: "inbox",
-              showDateButton: false,
-              showTrashButton: false,
-              showMoveToToday: false,
-              showGrip: false,
-              withDatePicker: true,
-              tapTogglesDone: false,
-            }
-          : {
-              listKey: "inbox",
-              showDateButton: true,
-              showTrashButton: true,
-              showMoveToToday: true,
-              withDatePicker: true,
-              tapTogglesDone: false,
-            }
-      );
+      // #main-inbox-block скрыт целиком на десктопе (app.css) — там
+      // единственный Inbox теперь #kanban-inbox-row слева от канбана
+      // (баг-фикс "два инбокса", тот же прогон, что и перенос канбана,
+      // Phase 90). Эта ветка — всегда мобильный вариант, без условий.
+      renderList(document.getElementById("inbox-list"), boardState.inbox, {
+        listKey: "inbox",
+        showDateButton: true,
+        showTrashButton: true,
+        showMoveToToday: true,
+        withDatePicker: true,
+        tapTogglesDone: false,
+      });
       renderInboxHeader();
       renderCalInboxHeader();
       renderCalInboxList();

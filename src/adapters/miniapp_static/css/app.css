@@ -1470,6 +1470,24 @@
     .kanban-inbox-chip span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .kanban-inbox-chip.dragging { opacity: 0.35; }
     .kanban-inbox-chip.done { opacity: 0.6; text-decoration: line-through; }
+    /* Кнопка "выполнить" на чипе (фидбек) — тот же .checkbox, что везде
+       в приложении, просто меньше, чтобы не раздувать чип. */
+    .kanban-inbox-chip .checkbox { width: 16px; height: 16px; }
+    .kanban-inbox-chip .checkbox svg { width: 9px; height: 9px; }
+    /* Чип "новая задача" (фидбек) — тот же renderAddTaskRow, что у
+       обычных списков, просто сжат под ширину чипа вместо растягивания
+       на всю строку (родитель — flex-row с overflow-x, не .list). */
+    #kanban-inbox-row .add-task-row {
+      flex: 0 0 auto;
+      width: 190px;
+      min-height: 0;
+      background: var(--card-bg);
+      border: 1px solid var(--hairline);
+      border-bottom: 1px solid var(--hairline);
+      border-radius: 999px;
+      padding: 5px 6px 5px 12px;
+    }
+    #kanban-inbox-row .add-task-row input[type="text"] { font-size: 12.5px; }
     .fan-trigger.pressed { background: var(--accent); color: var(--accent-text); }
     /* Один общий (singleton) оверлей на всё приложение — JS позиционирует
        под конкретную кнопку при каждом жесте (attachFanMenu). z-index 50
@@ -2252,13 +2270,16 @@
 
     /* Канбан+таймлайн на главном экране (п.1) — на телефоне просто
        обычный блочный контейнер, виден только день-карусель (второй
-       ребёнок), канбан-блок скрыт. */
+       ребёнок), канбан-блок скрыт. Второй Inbox (#main-inbox-block) —
+       тоже скрыт на телефоне? НЕТ: это единственный Inbox на телефоне,
+       прячется только на десктопе ниже (баг-фикс "два инбокса"). */
     #main-kanban-block, #main-kanban-inbox-block { display: none; }
 
     @media (min-width: 900px) {
       .desktop-board-row {
         display: grid;
-        grid-template-columns: minmax(300px, 1fr) minmax(360px, 1.3fr);
+        /* Таймлайн — 1/4 ширины (фидбек), канбан забирает остальное. */
+        grid-template-columns: minmax(300px, 3fr) minmax(220px, 1fr);
         gap: 16px;
         align-items: start;
       }
@@ -2267,29 +2288,10 @@
          точки-пагинация и подпись "Сегодня"/"Неделя" не нужны. */
       #day-dots, #day-label { display: none; }
 
-      /* Inbox на главном экране (п.3) — чистые чипы, оборачиваются по
-         ширине, без горизонтального скролла. */
-      #inbox-list {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        background: transparent;
-        padding: 4px 0;
-      }
-      #inbox-list .task-row {
-        width: auto;
-        flex: 0 0 auto;
-        max-width: 260px;
-        border-radius: 999px;
-        padding: 7px 12px;
-        background: var(--card-bg);
-        border: 1px solid var(--hairline);
-      }
-      #inbox-list .task-row .title {
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
+      /* Баг-фикс "два инбокса" — на десктопе единственный Inbox это
+         #kanban-inbox-row (слева от канбана, см. ниже), дублирующий
+         раздел на главном экране скрыт целиком. */
+      #main-inbox-block { display: none; }
 
       /* Аналитика — сетка 2 колонки (п.4). */
       #analytics-widgets {
