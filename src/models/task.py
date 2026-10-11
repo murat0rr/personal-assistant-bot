@@ -1,7 +1,17 @@
 import time
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -24,7 +34,7 @@ class Task(Base):
     # пользователя). При миграции все существующие строки получили
     # settings.telegram_user_id (владелец) — ничего не потерялось.
     user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False
+        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False, index=True
     )
     legacy_notion_id: Mapped[str | None] = mapped_column(String, nullable=True)
     title: Mapped[str] = mapped_column(String)
@@ -51,7 +61,7 @@ class Task(Base):
     # без проекта — обычный случай, не исключение.
     sphere: Mapped[str | None] = mapped_column(String, nullable=True)
     project_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("projects.id"), nullable=True
+        Integer, ForeignKey("projects.id"), nullable=True, index=True
     )
     # Google Calendar (Phase 64) — id события в Google, вместе с
     # source="google_calendar" (поле выше) это ключ поиска "какая задача
@@ -85,7 +95,10 @@ class Task(Base):
     # задачи — остаться (см. core/recurring_tasks.py::archive_rule) —
     # ondelete="SET NULL", чтобы это не мешало.
     recurring_rule_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("recurring_task_rules.id", ondelete="SET NULL"), nullable=True
+        Integer,
+        ForeignKey("recurring_task_rules.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     # Phase 78 — длительность в минутах, для блока на "Таймлайне дня"
     # (Mini App, главный экран). NULL значит "не задана явно" — блок на
@@ -99,4 +112,18 @@ class Task(Base):
     duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Составной — под дайджест/таймлайн дня/аналитику/календарь (все
+    # фильтруют по user_id+archived и диапазону due_date, см. core/tasks.py).
+    # Частичный по google_event_id — под google_calendar_sync.py::_find_task_by_event,
+    # ненулевой он только у задач, синхронизированных с календарём.
+    __table_args__ = (
+        Index("ix_tasks_user_id_archived_due_date", "user_id", "archived", "due_date"),
+        Index(
+            "ix_tasks_user_id_google_event_id",
+            "user_id",
+            "google_event_id",
+            postgresql_where=text("google_event_id IS NOT NULL"),
+        ),
     )

@@ -5,6 +5,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -49,12 +50,16 @@ class Note(Base):
     text: Mapped[str] = mapped_column(String)
     sphere: Mapped[str | None] = mapped_column(String, nullable=True)
     project_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("projects.id"), nullable=True
+        Integer, ForeignKey("projects.id"), nullable=True, index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+    # Под ленту заметок (core/notes.py::list_notes — user_id + order by
+    # created_at desc).
+    __table_args__ = (Index("ix_notes_user_id_created_at", "user_id", "created_at"),)
 
 
 class NoteLink(Base):
@@ -71,7 +76,7 @@ class NoteLink(Base):
         Integer, ForeignKey("notes.id", ondelete="CASCADE"), nullable=False
     )
     to_note_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("notes.id", ondelete="CASCADE"), nullable=False
+        Integer, ForeignKey("notes.id", ondelete="CASCADE"), nullable=False, index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -115,5 +120,5 @@ class NoteTag(Base):
         Integer, ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True
     )
     tag_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True
+        Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True, index=True
     )

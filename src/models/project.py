@@ -14,7 +14,7 @@ class Project(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     # Многопользовательность (Phase 40) — см. Task.user_id.
     user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False
+        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False, index=True
     )
     title: Mapped[str] = mapped_column(String)
     description: Mapped[str | None] = mapped_column(String, nullable=True)

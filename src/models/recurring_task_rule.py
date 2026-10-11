@@ -19,14 +19,14 @@ class RecurringTaskRule(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     # Многопользовательность (Phase 40) — см. Task.user_id.
     user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False
+        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False, index=True
     )
     title: Mapped[str] = mapped_column(String)
     schedule_kind: Mapped[str] = mapped_column(String)
     schedule_value: Mapped[dict] = mapped_column(JSON)
     sphere: Mapped[str | None] = mapped_column(String, nullable=True)
     project_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("projects.id"), nullable=True
+        Integer, ForeignKey("projects.id"), nullable=True, index=True
     )
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     last_materialized_date: Mapped[date | None] = mapped_column(Date, nullable=True)

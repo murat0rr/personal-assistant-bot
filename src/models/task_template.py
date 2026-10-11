@@ -14,7 +14,7 @@ class TaskTemplate(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     # Многопользовательность (Phase 40) — см. Task.user_id.
     user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False
+        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False, index=True
     )
     title: Mapped[str] = mapped_column(String)
     # Ручной порядок (тот же приём, что Task.sort_order, Phase 13) — новый

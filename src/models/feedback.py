@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -28,7 +28,7 @@ class Feedback(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False
+        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False, index=True
     )
     text: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -45,3 +45,7 @@ class Feedback(Base):
     resolution_note: Mapped[str | None] = mapped_column(String, nullable=True)
     commit_sha: Mapped[str | None] = mapped_column(String, nullable=True)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Под выборку агента по статусу в хронологическом порядке
+    # (core/feedback.py — select(Feedback).where(status == ...).order_by(created_at)).
+    __table_args__ = (Index("ix_feedback_status_created_at", "status", "created_at"),)

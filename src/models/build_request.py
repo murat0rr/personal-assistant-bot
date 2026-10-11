@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -46,3 +46,11 @@ class BuildRequest(Base):
     plan_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     result_summary: Mapped[str | None] = mapped_column(String, nullable=True)
     commit_sha: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Под f_build.py (активный запрос владельца — user_id+status) и
+    # internal_api.py (следующий в очереди — status+created_at, см.
+    # core/build.py).
+    __table_args__ = (
+        Index("ix_build_requests_user_id_status_created_at", "user_id", "status", "created_at"),
+        Index("ix_build_requests_status_created_at", "status", "created_at"),
+    )

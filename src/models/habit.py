@@ -13,7 +13,7 @@ class Habit(Base):
     # Многопользовательность (Phase 40) — см. Task.user_id за подробным
     # комментарием, тот же принцип везде.
     user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False
+        BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String)
     streak: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

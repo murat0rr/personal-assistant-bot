@@ -5063,6 +5063,70 @@ Telegram initData, НЕ SSH, отдельный секрет `AGENT_WEBHOOK_SECR
 - `docker compose build/up bot api` — чистый старт после фикса, ошибок
   импорта нет. `pytest` (164, без изменений) и `ruff` — чисто.
 
+## Phase 86 — индексы под частые запросы (`/build`)
+
+Запрос владельца через `/build`: "индексы на базу данных... подумай
+сам, что в будущем может понадобиться" — одна Alembic-миграция
+(`b8ab5e137d31`), только `CREATE INDEX`, без изменения данных.
+
+**Синхронизация дрифта (Phase 48/84, см. §5).** `ix_*_user_id` на
+`tasks`/`habits`/`projects`/`reminders`/`task_templates`/
+`recurring_task_rules` физически существовали с Phase 40
+(`a7c3e9f1b2d4`), но не были отражены в моделях — `alembic
+--autogenerate` раньше предлагал их удалить. Добавлен `index=True` на
+`user_id` в соответствующих моделях — чисто синхронизация, без новых
+`CREATE/DROP INDEX` (autogenerate на чистой БД подтвердил: именно эти
+индексы в диффе не появились).
+
+**Новые индексы:**
+- `tasks`: составной `(user_id, archived, due_date)` — под дайджест/
+  таймлайн дня/аналитику/календарь (`core/tasks.py`); частичный
+  `(user_id, google_event_id) WHERE google_event_id IS NOT NULL` — под
+  `google_calendar_sync.py::_find_task_by_event` (ненулевой он только у
+  синхронизированных с календарём задач, частичный — чтобы не индексировать
+  NULL у всех остальных); `project_id`/`recurring_rule_id` — FK
+  (join/`ON DELETE SET NULL`).
+- `notes`: `(user_id, created_at)` — лента заметок (`core/notes.py::
+  list_notes`); `project_id` — FK.
+- `note_links.to_note_id` — обратные связи (прямое направление уже
+  покрыто уникальным индексом пары `uq_note_link_pair`); на сегодня нет
+  запроса, который бы его использовал (backlinks не выведены в API) —
+  добавлен на будущее по просьбе владельца, FK всё равно стоило
+  индексировать для дешёвого `ON DELETE CASCADE`.
+- `note_tags.tag_id` — обратный поиск "заметки по тегу" (прямое
+  направление уже покрыто составным PK `(note_id, tag_id)`).
+- `feedback`: `(status, created_at)` — выборка агента по статусу
+  (`core/feedback.py`); `user_id` — FK.
+- `build_requests`: `(user_id, status, created_at)` — активный запрос
+  владельца (`core/build.py::_ACTIVE_STATUSES`); `(status, created_at)`
+  — следующий в очереди (`GET /internal/build/next`).
+
+### Живая проверка
+
+Докер был доступен в этом прогоне (`dockerd` запустился, образ
+`postgres:16-alpine` подтянулся) — реальный Postgres, не только
+юнит-тесты:
+- `alembic upgrade head` на полной цепочке миграций с нуля — чисто,
+  затем `downgrade -1` → `upgrade head` снова — оба раза без ошибок.
+- `alembic revision --autogenerate` на пустой свежей БД сразу после
+  `upgrade head` сгенерировал ПУСТУЮ миграцию (`pass`/`pass`) — значит,
+  модели и реальная схема полностью синхронизированы, никакого скрытого
+  дрифта не осталось ни от этой фазы, ни от старого Phase 48/84.
+- `EXPLAIN` на реалистичном объёме (20k строк `tasks`, 20k `notes`, 5k
+  `build_requests`, `ANALYZE` перед замером) — каждый целевой запрос
+  реально использует именно новый индекс, не последовательное
+  сканирование: таймлайн дня → `Index Scan` по
+  `ix_tasks_user_id_archived_due_date`; лента заметок → `Index Scan
+  Backward` по `ix_notes_user_id_created_at` (сортировка бесплатно, без
+  отдельного `Sort`); `GET /internal/build/next` → `Index Scan` по
+  `ix_build_requests_status_created_at`; активный запрос владельца →
+  `Index Scan` по `ix_build_requests_user_id_status_created_at`; поиск
+  задачи по событию календаря → `Index Scan` по частичному
+  `ix_tasks_user_id_google_event_id`.
+- `pytest` (164, без изменений) и `ruff check`/`ruff format` — чисто
+  (кроме уже существовавшего до этой фазы форматирования в
+  `TECHDEBT.md`, не тронуто — не в рамках запроса).
+
 ## 3. Нефункциональные требования
 
 ### 3.1 Безопасность
