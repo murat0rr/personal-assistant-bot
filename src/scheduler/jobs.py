@@ -12,7 +12,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 
-from src.core import ai_analytics
+from src.core import ai_analytics, chat_watch
 from src.core.auth import list_authorized_user_ids
 from src.core.config import settings
 from src.core.db import async_session
@@ -466,6 +466,19 @@ async def register_jobs_for_user(
         IntervalTrigger(minutes=20),
         args=[bot, user_id],
         id=f"google_calendar_sync:{user_id}",
+        replace_existing=True,
+    )
+    # Наблюдение за внешними чатами (Phase 87) — тот же приём, что
+    # task_nag_sweep/google_calendar_sync выше: таймаут батча не привязан
+    # к тихому часу/расписанию дня, IntervalTrigger, не CronTrigger из
+    # _job_specs. Час — грубое разрешение против дефолтного
+    # batch_timeout_hours=5 (см. models/chat_watch.py), дешевле частого
+    # опроса. No-op, если у пользователя нет watched_chats.
+    scheduler.add_job(
+        chat_watch.sweep_timed_out_batches,
+        IntervalTrigger(hours=1),
+        args=[user_id],
+        id=f"chat_watch_sweep:{user_id}",
         replace_existing=True,
     )
 

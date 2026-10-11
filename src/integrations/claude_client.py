@@ -1231,3 +1231,51 @@ async def triage_feedback(text: str) -> FeedbackTriage:
             rationale="триаж не вернул ответ",
         )
     return FeedbackTriage.model_validate(tool_use.input)
+
+
+# ---- Наблюдение за чатами (Phase 87) -------------------------------------
+
+_ANALYZE_CHAT_BATCH_TOOL = {
+    "name": "analyze_chat_batch",
+    "description": "Извлечь заметки и задачи из пачки сообщений наблюдаемого чата.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "notes": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Тексты кандидатов в заметки (может быть пустым списком).",
+            },
+            "tasks": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Заголовки кандидатов в задачи (может быть пустым списком).",
+            },
+        },
+        "required": ["notes", "tasks"],
+    },
+}
+
+
+class ChatBatchAnalysis(BaseModel):
+    notes: list[str]
+    tasks: list[str]
+
+
+async def analyze_chat_batch(custom_prompt: str, transcript: str) -> ChatBatchAnalysis:
+    """Haiku, forced tool-use — тот же идиом, что triage_feedback выше.
+    Безопасный дефолт при неудаче — пустые списки, никогда не бросает
+    исключение (core/chat_watch.py::process_batch не должен упасть на
+    разборе батча, следующий триггер просто повторит попытку)."""
+    response = await client.messages.create(
+        model=settings.claude_model_haiku,
+        max_tokens=2000,
+        system=prompts.chat_watch_system_prompt(custom_prompt),
+        tools=[_ANALYZE_CHAT_BATCH_TOOL],
+        tool_choice={"type": "tool", "name": "analyze_chat_batch"},
+        messages=[{"role": "user", "content": transcript}],
+    )
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+    if tool_use is None:
+        return ChatBatchAnalysis(notes=[], tasks=[])
+    return ChatBatchAnalysis.model_validate(tool_use.input)

@@ -64,6 +64,18 @@ class Settings(BaseSettings):
     # эндпоинты недоступны, тот же принцип, что у остальных опциональных
     # секретов в этом файле.
     agent_webhook_secret: str = ""
+    # MTProto-клиент под личным аккаунтом владельца (Phase 87, наблюдение
+    # за чужими чатами, куда бота как Bot API не добавить) — api_id/
+    # api_hash с my.telegram.org (тип "обычное API", не путать с
+    # TELEGRAM_BOT_TOKEN). session_string получается РАЗОВЫМ
+    # интерактивным логином (scripts/telethon_login.py) на машине
+    # владельца — номер телефона и код подтверждения не вводятся через
+    # CI/агента. Пусто = MTProto-слушатель не запускается вообще (см.
+    # adapters/telegram_bot.py::main), тот же принцип "пусто — выключено",
+    # что у остальных опциональных секретов здесь.
+    telethon_api_id: int = 0
+    telethon_api_hash: str = ""
+    telethon_session_string: str = ""
 
 
 settings = Settings()
