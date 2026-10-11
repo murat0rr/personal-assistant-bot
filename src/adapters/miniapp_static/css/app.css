@@ -195,15 +195,6 @@
     }
     .ext-tab-btn.active { color: var(--accent); }
     .ext-tab-icon { width: 20px; height: 20px; }
-    /* "Канбан" (Phase 78) — только для широкого экрана (фидбек: "канбан
-       доску для компа"), сама кнопка вкладки не показывается на узком,
-       а не ведёт в "здесь не работает". 900px — тот же порог, что
-       обычно отделяет "телефон/маленький таблет" от "планшет пошире/
-       комп" в подобных responsive-развилках; отдельного экспериментально
-       подобранного значения для этого Mini App ещё не было. */
-    @media (max-width: 899px) {
-      .ext-tab-btn[data-tab="kanban"] { display: none; }
-    }
     /* "Основной экран" — тот же #pill-extended, что и раньше (см.
        setupPill), просто в общей панели кнопок вместо отдельной плашки
        внизу экрана (Phase 35). Тот же размер, что у остальных трёх
@@ -2247,3 +2238,112 @@
         animation: none !important;
       }
     }
+
+    /* ==================================================================
+       Десктопная раскладка (Phase 90) — ПК-сайт и веб-приложение
+       Телеграма, открытое на ПК. 900px — тот же порог, что раньше
+       отделял кнопку вкладки "Канбан" (Phase 78) от телефона; весь
+       новый код этой фазы использует то же число. На телефоне ни одно
+       из правил ниже не применяется — здесь только новые селекторы
+       (desktop-board-row, main-kanban-block и т.п.) либо точечные
+       переопределения внутри media query, глобальные классы вроде
+       .bottom-sheet/.row/.list не трогаются вне media query.
+       ================================================================== */
+
+    /* Канбан+таймлайн на главном экране (п.1) — на телефоне просто
+       обычный блочный контейнер, виден только день-карусель (второй
+       ребёнок), канбан-блок скрыт. */
+    #main-kanban-block, #main-kanban-inbox-block { display: none; }
+
+    @media (min-width: 900px) {
+      .desktop-board-row {
+        display: grid;
+        grid-template-columns: minmax(300px, 1fr) minmax(360px, 1.3fr);
+        gap: 16px;
+        align-items: start;
+      }
+      #main-kanban-block, #main-kanban-inbox-block { display: block; }
+      /* Единственная принудительная страница карусели (Таймлайн) —
+         точки-пагинация и подпись "Сегодня"/"Неделя" не нужны. */
+      #day-dots, #day-label { display: none; }
+
+      /* Inbox на главном экране (п.3) — чистые чипы, оборачиваются по
+         ширине, без горизонтального скролла. */
+      #inbox-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        background: transparent;
+        padding: 4px 0;
+      }
+      #inbox-list .task-row {
+        width: auto;
+        flex: 0 0 auto;
+        max-width: 260px;
+        border-radius: 999px;
+        padding: 7px 12px;
+        background: var(--card-bg);
+        border: 1px solid var(--hairline);
+      }
+      #inbox-list .task-row .title {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* Аналитика — сетка 2 колонки (п.4). */
+      #analytics-widgets {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        align-items: start;
+      }
+      #analytics-widgets .section { margin-bottom: 0; }
+
+      /* Настройки графиков — боковая панель справа, ~25% (п.5). Только
+         этот конкретный id — остальные .bottom-sheet (date-picker,
+         day-view-settings, templates) не затронуты. */
+      #widget-settings-sheet.bottom-sheet {
+        left: auto;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        width: 25%;
+        min-width: 280px;
+        border-radius: 16px 0 0 16px;
+        box-shadow: -8px 0 28px rgba(0, 0, 0, 0.35);
+      }
+
+      /* Проекты — карточки с прогресс-баром, 2 колонки (п.6). Карусели
+         целей на той же вкладке не затронуты (другие id). */
+      #pg-projects {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        background: transparent;
+      }
+      #pg-projects .row {
+        flex-direction: column;
+        align-items: flex-start;
+        background: var(--card-bg);
+        border-radius: 12px;
+        padding: 14px;
+        gap: 8px;
+      }
+      #pg-projects .project-progress-bar { display: block; }
+
+      /* Заметки — 4 колонки (п.7). */
+      .notes-grid { grid-template-columns: repeat(4, 1fr); }
+    }
+
+    /* Полоса прогресса проекта (п.6) — в DOM всегда (renderEntityRow),
+       видна только в десктоп-карточке выше. */
+    .project-progress-bar {
+      display: none;
+      width: 100%;
+      height: 6px;
+      background: var(--hairline);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .project-progress-fill { height: 100%; background: var(--accent); }

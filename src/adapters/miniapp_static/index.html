@@ -35,6 +35,25 @@
     <span class="guide-banner-text">Новое здесь? Загляните в гайд по приложению</span>
     <span class="guide-banner-close" id="guide-banner-close" aria-label="Скрыть">✕</span>
   </button>
+  <!-- Десктопная раскладка (Phase 90, только ПК/широкий экран — см.
+       app.css @media (min-width: 900px)) — канбан слева (перенесён
+       сюда из расширенной аналитики, см. #main-kanban-block ниже),
+       день-карусель справа принудительно показывает только "Таймлайн"
+       (см. effectiveEnabledDayViewIds). На телефоне .desktop-board-row
+       остаётся обычным блочным контейнером без какого-либо CSS-правила
+       — виден только второй ребёнок (день-карусель), #main-kanban-block
+       скрыт по умолчанию — ни разметка, ни поведение карусели на
+       телефоне не меняются ни на пиксель. -->
+  <div class="desktop-board-row">
+  <div class="section" id="main-kanban-block">
+    <p class="section-label">Канбан</p>
+    <div class="kanban-header">
+      <button class="small-btn" id="kanban-prev-week" aria-label="Предыдущая неделя">‹</button>
+      <span class="kanban-range-label" id="kanban-range-label"></span>
+      <button class="small-btn" id="kanban-next-week" aria-label="Следующая неделя">›</button>
+    </div>
+    <div class="kanban-board" id="kanban-board"></div>
+  </div>
   <div class="section">
     <p class="section-label" id="day-label">Сегодня</p>
     <!-- Карусель и точки-индикаторы больше не статичны (Phase 50) — их
@@ -87,6 +106,13 @@
         </div>
       </div>
     </div>
+  </div>
+  </div>
+  <!-- Инбокс канбана (Phase 90) — отдельным рядом ниже кanban+таймлайна,
+       тот же #main-kanban-block-принцип скрытия на телефоне. -->
+  <div class="section" id="main-kanban-inbox-block">
+    <p class="section-label" id="kanban-inbox-title">Инбокс</p>
+    <div class="kanban-inbox-row" id="kanban-inbox-row"></div>
   </div>
 
   <div class="section">
@@ -310,32 +336,6 @@
     </div>
   </div>
 
-  <!-- "Канбан" (Phase 78, фидбек: "канбан доску для компа тоже
-       реализовывай, но сделай внизу инбокс") — неделя колонками (см.
-       renderKanbanBoard), из одобренного макета
-       https://claude.ai/code/artifact/71fb9949-41fb-4a05-a399-4e96c494e16d,
-       но без переключателя "комп/телефон" самого макета: сама вкладка
-       уже показывается только на широком экране (CSS media query, см.
-       app.css), мобильная версия осталась в бэклоге (TECHDEBT.md).
-       Инбокс — новый ряд снизу (в макете его не было, фидбек добавил
-       его отдельно), карточки перетаскиваются из него в любую колонку
-       и обратно. -->
-  <div id="ext-panel-kanban" style="display:none">
-    <div class="section">
-      <p class="section-label">Канбан</p>
-      <div class="kanban-header">
-        <button class="small-btn" id="kanban-prev-week" aria-label="Предыдущая неделя">‹</button>
-        <span class="kanban-range-label" id="kanban-range-label"></span>
-        <button class="small-btn" id="kanban-next-week" aria-label="Следующая неделя">›</button>
-      </div>
-      <div class="kanban-board" id="kanban-board"></div>
-    </div>
-    <div class="section">
-      <p class="section-label" id="kanban-inbox-title">Инбокс</p>
-      <div class="kanban-inbox-row" id="kanban-inbox-row"></div>
-    </div>
-  </div>
-
   <!-- "Заметки" (Phase 84) — метаданные (сфера/проект-цель/теги) и карта
        знаний. Одобренный макет:
        https://claude.ai/code/artifact/163711b9-8bdc-4b0c-bc03-03bb3b7e2354
@@ -392,16 +392,6 @@
     <button type="button" class="ext-tab-btn" data-tab="notes" aria-label="Заметки">
       <svg class="ext-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h8l4 4v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z"/><path d="M15 3v4h4"/><path d="M9 12h6M9 16h6"/></svg>
       <span>Заметки</span>
-    </button>
-    <!-- "Канбан" (Phase 78, фидбек: "канбан доску для компа тоже
-         реализовывай") — только для широкого экрана (CSS media query,
-         см. app.css .ext-tab-btn[data-tab="kanban"]): на телефоне сама
-         кнопка не показывается вообще, а не просто ведёт в "здесь не
-         работает" — мобильная версия (один день на экран) осталась в
-         бэклоге, см. TECHDEBT.md. -->
-    <button type="button" class="ext-tab-btn" data-tab="kanban" aria-label="Канбан">
-      <svg class="ext-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="5" height="16" rx="1.2"/><rect x="9.5" y="4" width="5" height="10" rx="1.2"/><rect x="16" y="4" width="5" height="13" rx="1.2"/></svg>
-      <span>Канбан</span>
     </button>
   </div>
   </div>
@@ -2393,6 +2383,24 @@
       meta.textContent = projectMeta(entity, hideDates);
       row.append(meta);
 
+      // Полоса прогресса для десктопной карточки проекта (Phase 90) —
+      // только kind === "project" (цели на той же вкладке используют
+      // этот же renderEntityRow с kind === "goal", их не трогаем).
+      // В DOM всегда (не только на десктопе) — на телефоне просто
+      // display:none по умолчанию, см. app.css .project-progress-bar.
+      // task_count/done_count уже приходят в данных проекта (тот же
+      // источник, что кормит gantt-chart.js).
+      if (kind === "project") {
+        const bar = document.createElement("div");
+        bar.className = "project-progress-bar";
+        const pct = entity.task_count ? Math.round((entity.done_count / entity.task_count) * 100) : 0;
+        const fill = document.createElement("div");
+        fill.className = "project-progress-fill";
+        fill.style.width = pct + "%";
+        bar.append(fill);
+        row.append(bar);
+      }
+
       attachLongPress(row, () => openEditEntitySheet(entity, kind), ".checkbox");
       // Обычный тап — открывает окно проекта/цели (Phase 56). Долгое
       // нажатие по-прежнему сразу ведёт в форму правки — гонки нет:
@@ -4067,14 +4075,34 @@
         const tomorrowIso = addDaysIso(boardState.days.today.date, 1);
         renderList(document.getElementById("tomorrow-list"), tasksForDate(tomorrowIso), _dayOpts.tomorrow);
       }
-      renderList(document.getElementById("inbox-list"), boardState.inbox, {
-        listKey: "inbox",
-        showDateButton: true,
-        showTrashButton: true,
-        showMoveToToday: true,
-        withDatePicker: true,
-        tapTogglesDone: false,
-      });
+      // Десктоп (Phase 90) — чистые чипы вместо полной строки: дата/
+      // корзина/"на сегодня"/грип скрыты (не рендерятся вовсе, не просто
+      // CSS display:none), чекбокс остаётся кликабельным как обычно,
+      // attachLongPress у renderTaskRow всё равно безусловно открывает
+      // openTaskEditSheet — все действия доступны через него. Мобильная
+      // ветка — буквально то, что было раньше, без изменений.
+      renderList(
+        document.getElementById("inbox-list"),
+        boardState.inbox,
+        isDesktopLayout()
+          ? {
+              listKey: "inbox",
+              showDateButton: false,
+              showTrashButton: false,
+              showMoveToToday: false,
+              showGrip: false,
+              withDatePicker: true,
+              tapTogglesDone: false,
+            }
+          : {
+              listKey: "inbox",
+              showDateButton: true,
+              showTrashButton: true,
+              showMoveToToday: true,
+              withDatePicker: true,
+              tapTogglesDone: false,
+            }
+      );
       renderInboxHeader();
       renderCalInboxHeader();
       renderCalInboxList();
@@ -6007,7 +6035,6 @@
       tasks: document.getElementById("ext-panel-tasks"),
       projects: document.getElementById("ext-panel-projects"),
       notes: document.getElementById("ext-panel-notes"),
-      kanban: document.getElementById("ext-panel-kanban"),
     };
     const extTabBtns = Array.from(document.querySelectorAll(".ext-tab-btn"));
 
@@ -6034,7 +6061,6 @@
       if (tab === "calendar") recenterMonthCarousel();
       if (tab === "projects") recenterAllGoalPeriodCarousels();
       if (tab === "analytics") recenterAnalyticsMonthCarousel();
-      if (tab === "kanban") renderKanbanBoard();
       if (tab === "notes") renderNotesScreen();
     }
 
@@ -7306,6 +7332,24 @@
       }
     }
 
+    // Десктопная раскладка (Phase 90) — единственный JS-предикат
+    // desktop/mobile во всём файле, остальная десктоп-логика решается
+    // чистым CSS (см. app.css @media (min-width: 900px)). Порог 900px —
+    // тот же, что уже был у кнопки вкладки "Канбан" (Phase 78), не новое
+    // число.
+    function isDesktopLayout() {
+      return window.matchMedia("(min-width: 900px)").matches;
+    }
+
+    // На десктопе карусель дня принудительно показывает только
+    // "Таймлайн" (слева уже стоит канбан на неделю, см.
+    // .desktop-board-row в разметке) — хранимое мобильное
+    // предпочтение (getEnabledDayViewIds) НЕ читается и не
+    // перезаписывается, просто игнорируется для десктоп-раскладки.
+    function effectiveEnabledDayViewIds() {
+      return isDesktopLayout() ? ["timeline"] : getEnabledDayViewIds();
+    }
+
     const carousel = document.getElementById("day-carousel");
     const dayLabel = document.getElementById("day-label");
     const dayPagePool = document.getElementById("day-page-pool");
@@ -7326,7 +7370,7 @@
     // Точки-индикаторы, в отличие от страниц, ничего не хранят и не
     // помнят — их проще каждый раз пересоздавать целиком.
     function rebuildDayCarousel() {
-      currentDayViewIds = getEnabledDayViewIds();
+      currentDayViewIds = effectiveEnabledDayViewIds();
       const enabledSet = new Set(currentDayViewIds);
       // Каждая страница ищется через document, не через пул: после
       // первой пересборки часть страниц уже физически лежит в карусели,
@@ -7397,6 +7441,19 @@
       });
     });
     rebuildDayCarousel();
+    // Живая реакция на пересечение desktop/mobile-порога при ресайзе окна
+    // (Phase 90) — срабатывает только при смене matches, не на каждый
+    // пиксель. render() — опции Inbox (чипы/полная строка) решаются
+    // внутри него по isDesktopLayout(), без повторного вызова они
+    // остались бы такими, какими были при самой первой загрузке страницы
+    // (БАГ, пойманный живой проверкой: открыл страницу уже в desktop-
+    // размере — всё верно, но ресайз уже открытой страницы через порог
+    // не перерисовывал Inbox). render() работает по уже загруженному
+    // boardState, сеть заново не дёргает.
+    window.matchMedia("(min-width: 900px)").addEventListener("change", () => {
+      rebuildDayCarousel();
+      render();
+    });
 
     async function loadDigest() {
       const el = document.getElementById("digest");
