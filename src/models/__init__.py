@@ -1,7 +1,9 @@
 from src.models.ai_analytics_cache import AiAnalyticsCache
 from src.models.authorized_user import AuthorizedUser
+from src.models.build_request import BuildRequest
 from src.models.chat_message import ChatMessage
 from src.models.day_review import DayReview
+from src.models.feedback import Feedback
 from src.models.google_calendar_account import GoogleCalendarAccount
 from src.models.habit import Habit
 from src.models.note import Note, NoteLink, NoteTag, Tag
@@ -35,4 +37,6 @@ __all__ = [
     "Tag",
     "NoteTag",
     "GoogleCalendarAccount",
+    "Feedback",
+    "BuildRequest",
 ]

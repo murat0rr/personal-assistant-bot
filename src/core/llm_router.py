@@ -4,7 +4,7 @@ from src.core import prompts
 from src.core.config import settings
 from src.integrations.claude_client import client
 
-Intent = Literal["task", "note", "question", "reminder"]
+Intent = Literal["task", "note", "question", "reminder", "feedback"]
 
 _CLASSIFY_INTENT_TOOL = {
     "name": "classify_intent",
@@ -14,13 +14,16 @@ _CLASSIFY_INTENT_TOOL = {
         "properties": {
             "intent": {
                 "type": "string",
-                "enum": ["task", "note", "question", "reminder"],
+                "enum": ["task", "note", "question", "reminder", "feedback"],
                 "description": (
                     "'task' — что-то сделать/купить (появится в Tasks со сроком и "
                     "приоритетом). 'note' — просто сохранить мысль/информацию без "
                     "действия. 'question' — рецепт, вопрос, выбор, что-то узнать "
                     "или сравнить. 'reminder' — напомнить в будущем по расписанию "
-                    "(дата, периодичность)."
+                    "(дата, периодичность). 'feedback' — баг/идея/пожелание ПРО "
+                    "САМ ЭТОТ БОТ ('не сохранилась дата', 'сделай тёмную тему', "
+                    "'было бы круто если бы...') — не про жизнь пользователя, а "
+                    "про приложение, которым он сейчас пользуется."
                 ),
             },
         },

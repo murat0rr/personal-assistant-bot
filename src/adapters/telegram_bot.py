@@ -24,6 +24,8 @@ from src.handlers.f4_diary import router as diary_router
 from src.handlers.f9_finance import router as finance_router
 from src.handlers.f_auth import AuthStates
 from src.handlers.f_auth import router as auth_router
+from src.handlers.f_build import router as build_router
+from src.handlers.f_feedback import router as feedback_router
 from src.handlers.f_goals import router as goals_router
 from src.handlers.f_google_calendar import router as google_calendar_router
 from src.handlers.f_morning_advice import router as morning_advice_router
@@ -61,6 +63,8 @@ dp.include_router(schedule_router)
 dp.include_router(set_day_task_router)
 dp.include_router(timezone_router)
 dp.include_router(web_login_router)
+dp.include_router(feedback_router)
+dp.include_router(build_router)
 dp.include_router(orchestrator_router)
 
 
@@ -135,6 +139,8 @@ async def main() -> None:
                 command="set_day_task", description="[прототип] Задачи на сегодня одним сообщением"
             ),
             BotCommand(command="staging", description="Открыть staging Mini App"),
+            BotCommand(command="feedback", description="Баг, идея или пожелание по боту"),
+            BotCommand(command="build", description="[только владелец] Реализовать по запросу"),
         ]
     )
 

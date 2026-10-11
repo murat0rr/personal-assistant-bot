@@ -1162,3 +1162,72 @@ async def suggest_note_tags(text: str, pool_tags: list[str], current_tags: list[
         for t in tags
         if t.strip().lstrip("#").lower() not in current_set
     ]
+
+
+# ---- Обратная связь (Phase 85) -------------------------------------------
+# Предложение: https://claude.ai/artifact/8xwZx1gqfuuM2KRKmSrNfA
+
+_TRIAGE_FEEDBACK_TOOL = {
+    "name": "triage_feedback",
+    "description": "Классифицировать отзыв пользователя — метаданные, не исполнение.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "category": {
+                "type": "string",
+                "enum": ["bug", "feature", "idea", "question", "spam"],
+            },
+            "summary": {
+                "type": "string",
+                "description": "Пересказ сути одной фразой.",
+            },
+            "auto_applicable": {
+                "type": "boolean",
+                "description": (
+                    "True только для конкретного воспроизводимого бага с "
+                    "очевидным узким фиксом. Дефолт — False при любом сомнении."
+                ),
+            },
+            "rationale": {
+                "type": "string",
+                "description": "Коротко, почему auto_applicable именно такое.",
+            },
+        },
+        "required": ["category", "summary", "auto_applicable", "rationale"],
+    },
+}
+
+
+class FeedbackTriage(BaseModel):
+    category: Literal["bug", "feature", "idea", "question", "spam"]
+    summary: str
+    auto_applicable: bool
+    rationale: str
+
+
+async def triage_feedback(text: str) -> FeedbackTriage:
+    """Фоновый шаг сразу после сохранения отзыва (core/feedback.py) —
+    чистый классификатор: его выход — метаданные на строке, никогда не
+    исполняется напрямую ни этим вызовом, ни периодическим агентом,
+    который читает auto_applicable дальше (тот ещё и перепроверяет сам,
+    не доверяя этому полю вслепую — см. хартию агента)."""
+    response = await client.messages.create(
+        model=settings.claude_model_haiku,
+        max_tokens=250,
+        system=prompts.TRIAGE_FEEDBACK,
+        tools=[_TRIAGE_FEEDBACK_TOOL],
+        tool_choice={"type": "tool", "name": "triage_feedback"},
+        messages=[{"role": "user", "content": text}],
+    )
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+    if tool_use is None:
+        # Не смогли классифицировать — безопасный дефолт: не бросаем
+        # исключение (не валим вставку отзыва), просто отправляем на
+        # обсуждение человеком, как и любой неоднозначный случай.
+        return FeedbackTriage(
+            category="idea",
+            summary=text[:120],
+            auto_applicable=False,
+            rationale="триаж не вернул ответ",
+        )
+    return FeedbackTriage.model_validate(tool_use.input)

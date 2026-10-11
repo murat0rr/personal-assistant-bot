@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     google_oauth_redirect_uri: str = ""
+    # Обратная связь/`/build` (Phase 85) — периодический облачный агент
+    # дёргает adapters/internal_api.py по HTTPS, не SSH, этим секретом
+    # (тот же hand-rolled паттерн, что tasker_webhook_secret). Пусто =
+    # эндпоинты недоступны, тот же принцип, что у остальных опциональных
+    # секретов в этом файле.
+    agent_webhook_secret: str = ""
 
 
 settings = Settings()

@@ -7,6 +7,7 @@ from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 from src.core.auth import is_authorized
 from src.core.message_text import extract_text
 from src.handlers.f1_task_note import handle_task_note
+from src.handlers.f_feedback import submit_feedback
 from src.handlers.f_notes import handle_note
 from src.handlers.f_question import handle_question_input
 from src.handlers.f_recurring import (
@@ -25,13 +26,14 @@ class ModeStates(StatesGroup):
     question = State()
     reminder = State()
     recurring = State()
+    feedback = State()
 
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="📝 Задача"), KeyboardButton(text="🗒 Заметка")],
         [KeyboardButton(text="❓ Вопрос"), KeyboardButton(text="🔔 Напоминалка")],
-        [KeyboardButton(text="🔁 Повторяющаяся")],
+        [KeyboardButton(text="🔁 Повторяющаяся"), KeyboardButton(text="💬 Отзыв")],
     ],
     resize_keyboard=True,
 )
@@ -48,6 +50,10 @@ _BUTTON_PROMPTS: dict[str, tuple[State, str]] = {
         ModeStates.recurring,
         "Опиши задачу и как часто её делать (например «каждый понедельник разгрести почту»).",
     ),
+    "💬 Отзыв": (
+        ModeStates.feedback,
+        "Опиши баг, идею или пожелание — одним сообщением.",
+    ),
 }
 
 # ModeStates.question и ModeStates.recurring сюда не входят — у обоих
@@ -61,6 +67,7 @@ _MODE_HANDLERS = {
     ModeStates.task: handle_task_note,
     ModeStates.note: handle_note,
     ModeStates.reminder: handle_new_reminder,
+    ModeStates.feedback: submit_feedback,
 }
 
 

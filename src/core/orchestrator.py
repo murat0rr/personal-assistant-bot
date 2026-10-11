@@ -7,6 +7,7 @@ from src.core.auth import is_authorized
 from src.core.llm_router import classify_intent
 from src.core.message_text import extract_text
 from src.handlers.f1_task_note import handle_task_note
+from src.handlers.f_feedback import submit_feedback
 from src.handlers.f_notes import handle_note
 from src.handlers.f_question import handle_question
 from src.handlers.f_reminders import handle_new_reminder
@@ -38,5 +39,7 @@ async def route_message(message: Message) -> None:
         await handle_question(message, text)
     elif intent == "reminder":
         await handle_new_reminder(message, text)
+    elif intent == "feedback":
+        await submit_feedback(message, text)
     else:
         await handle_task_note(message, text)
