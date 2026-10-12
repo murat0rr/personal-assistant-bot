@@ -4270,6 +4270,16 @@
         // перезагрузке доски, не только по навигации по месяцу.
         renderMonthCalendar();
         if (calSelectedDay) showDayInfo(calSelectedDay);
+        // Google Calendar (Phase 95) — maybe_sync_now на бэкенде теперь
+        // fire-and-forget, не блокирует этот ответ. calendar_sync_pending
+        // значит "синхронизация только что стартовала в фоне" —
+        // перечитываем доску ещё раз спустя паузу, этого достаточно,
+        // чтобы увидеть появившиеся/изменившиеся события без ручной
+        // перезагрузки. Сам себя не зацикливает: повторный вызов попадёт
+        // в кулдаун на бэкенде и получит calendar_sync_pending=false.
+        if (boardState.calendar_sync_pending) {
+          setTimeout(loadBoard, 2500);
+        }
       } catch (e) {
         document.getElementById("today-list").innerHTML =
           '<div class="empty">Не удалось загрузить задачи.</div>';
@@ -6100,7 +6110,19 @@
       // отдельно) уже показывала верное значение. Пересчитываем заново
       // при каждом реальном показе вкладки — дёшево (только transform,
       // без сети).
-      if (tab === "calendar") recenterMonthCarousel();
+      if (tab === "calendar") {
+        // Первый реальный показ — данных ещё нет (Phase 95, ленивая
+        // загрузка), сперва грузим (loadMonthEvents сама вызывает
+        // renderMonthCalendar), потом центрируем; на повторных
+        // переключениях данные уже в calEventsByMonth/calMoodsByMonth —
+        // сразу центрируем, как раньше.
+        if (calendarDataLoaded) {
+          recenterMonthCarousel();
+        } else {
+          calendarDataLoaded = true;
+          loadMonthEvents().then(recenterMonthCarousel);
+        }
+      }
       if (tab === "projects") recenterAllGoalPeriodCarousels();
       if (tab === "analytics") recenterAnalyticsMonthCarousel();
       if (tab === "notes") renderNotesScreen();
@@ -6358,6 +6380,12 @@
     let calYear = today0.getFullYear();
     let calMonth = today0.getMonth() + 1; // 1-12
     let calSelectedDay = null;
+    // Ленивая загрузка календаря (Phase 95) — loadMonthEvents() больше не
+    // стартует при открытии приложения, только при первом реальном показе
+    // вкладки "Календарь" (см. switchExtendedTab). Этот флаг — чтобы не
+    // перезапрашивать те же месяцы при каждом повторном переключении на
+    // вкладку.
+    let calendarDataLoaded = false;
     // Кэш по месяцам ("YYYY-MM" -> events/moods) — карусель держит
     // пред./тек./след. месяц отрендеренными одновременно (см. ниже), так
     // что данные нужны на все три сразу; кэш экономит повторный сетевой
@@ -8407,7 +8435,12 @@
       loadAnalytics();
       loadGoals();
       loadGoalYearFloor();
-      loadMonthEvents();
+      // loadMonthEvents() убран отсюда (Phase 95, фидбек: избыточная
+      // предзагрузка) — раньше тянул события+настроения за 8 месяцев
+      // (±4 от текущего, см. prefetchSurroundingMonths) на КАЖДОЕ
+      // открытие приложения, даже если пользователь ни разу не открывал
+      // вкладку "Календарь". Теперь грузится лениво — см.
+      // switchExtendedTab, первый реальный показ вкладки "calendar".
       loadNotes();
       loadTags();
     }

@@ -1,3 +1,4 @@
+import asyncio
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -73,6 +74,16 @@ def anyio_backend():
     return "asyncio"
 
 
+async def _drain_background_sync() -> None:
+    """Phase 95 — maybe_sync_now теперь fire-and-forget (asyncio.create_task),
+    не await: тесты дожидаются фоновой таски явно через тот же набор
+    сильных ссылок, что держит сам модуль (_background_sync_tasks),
+    вместо полагания на то, что await maybe_sync_now уже всё выполнил."""
+    tasks = list(gcs._background_sync_tasks)
+    if tasks:
+        await asyncio.gather(*tasks)
+
+
 async def test_maybe_sync_now_skips_second_call_within_cooldown(monkeypatch):
     calls = []
 
@@ -82,10 +93,14 @@ async def test_maybe_sync_now_skips_second_call_within_cooldown(monkeypatch):
     monkeypatch.setattr(gcs, "sync_user_calendar", fake_sync)
     gcs._last_manual_sync.clear()
 
-    await gcs.maybe_sync_now(1)
-    await gcs.maybe_sync_now(1)
+    started_first = await gcs.maybe_sync_now(1)
+    await _drain_background_sync()
+    started_second = await gcs.maybe_sync_now(1)
+    await _drain_background_sync()
 
     assert calls == [1]
+    assert started_first is True
+    assert started_second is False
 
 
 async def test_maybe_sync_now_allows_call_after_cooldown_elapsed(monkeypatch):
@@ -98,9 +113,11 @@ async def test_maybe_sync_now_allows_call_after_cooldown_elapsed(monkeypatch):
     gcs._last_manual_sync.clear()
     gcs._last_manual_sync[2] = time.time() - gcs._MANUAL_SYNC_COOLDOWN_SECONDS - 1
 
-    await gcs.maybe_sync_now(2)
+    started = await gcs.maybe_sync_now(2)
+    await _drain_background_sync()
 
     assert calls == [2]
+    assert started is True
 
 
 async def test_maybe_sync_now_swallows_sync_errors(monkeypatch):
@@ -110,4 +127,5 @@ async def test_maybe_sync_now_swallows_sync_errors(monkeypatch):
     monkeypatch.setattr(gcs, "sync_user_calendar", failing_sync)
     gcs._last_manual_sync.clear()
 
-    await gcs.maybe_sync_now(3)  # не должно бросить исключение наружу
+    await gcs.maybe_sync_now(3)
+    await _drain_background_sync()  # не должно бросить исключение наружу

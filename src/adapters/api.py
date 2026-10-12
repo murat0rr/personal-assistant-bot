@@ -326,16 +326,15 @@ async def _get_owned_task(session, task_id: int, uid: int) -> Task:
 @app.get("/miniapp/api/tasks")
 async def list_tasks(user: dict = Depends(get_authorized_user)) -> dict:
     uid = user["id"]
-    # Google Calendar (Phase 64, довесок) — при открытии/обновлении доски
-    # дожидаемся внеочередной синхронизации, не дожидаясь 20-минутного
-    # опроса планировщика (см. core/google_calendar_sync.py::
-    # maybe_sync_now). Awaited, не fire-and-forget: иначе задачи из
-    # календаря читались бы из Postgres раньше, чем фоновая синхронизация
-    # успевала их туда записать, и появлялись бы только при следующем
-    # открытии (баг, пойманный пользователем на первой версии). Вне
-    # cooldown'а (раз в минуту на пользователя) выходит мгновенно, лишней
-    # задержки почти всегда нет.
-    await maybe_sync_now(uid)
+    # Google Calendar (Phase 64, fire-and-forget с Phase 95) — запускает
+    # внеочередную синхронизацию в фоне, не дожидаясь 20-минутного опроса
+    # планировщика (см. core/google_calendar_sync.py::maybe_sync_now —
+    # там же объяснение, почему НЕ await: живой поход в Google на
+    # критическом пути главного экрана давал ~350-400мс на каждое
+    # открытие вне кулдауна). sync_pending=True — фронтенд сам перечитает
+    # /tasks ещё раз спустя паузу (см. calendar_sync_pending ниже и
+    # index.html::loadBoard).
+    sync_pending = await maybe_sync_now(uid)
     # Кэш сырого списка задач (Redis, Phase 94) — промах пересобирает из
     # БД и кладёт в кэш; группировка по дням по-прежнему считается на
     # лету ниже, не кэшируется (см. src/core/tasks_cache.py).
@@ -355,7 +354,9 @@ async def list_tasks(user: dict = Depends(get_authorized_user)) -> dict:
     # "Europe/Moscow", реальный пользователь в другом поясе — несколько
     # часов в сутки сервер думал, что ещё вчера).
     today = await user_today(uid)
-    return build_task_board(list(tasks), today)
+    board = build_task_board(list(tasks), today)
+    board["calendar_sync_pending"] = sync_pending
+    return board
 
 
 @app.post("/miniapp/api/tasks")

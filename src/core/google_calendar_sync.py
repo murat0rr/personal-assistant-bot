@@ -23,11 +23,24 @@ Phase 66 был исключением: событие всегда сбрасы
 из Postgres раньше, чем фоновая задача вообще запускалась, поэтому
 новая задача из календаря появлялась только при СЛЕДУЮЩЕМ открытии, не
 при том же самом (баг, найденный пользователем сразу после первого
-деплоя). Раз cooldown и так ограничивает реальный поход в Google одним
-разом в минуту на пользователя, await здесь не создаёт заметной
-задержки в остальное время — дожидаемся синхронизации перед тем, как
-читать задачи, только тогда результат виден сразу."""
+деплоя). Поэтому следующая версия ждала (await) синхронизацию прямо
+здесь — но это сделало реальный, синхронный HTTP-поход в Google
+(refresh_token + события) частью критического пути ГЛАВНОГО экрана:
+живой разбор (Phase 95) показал ~350-400мс на каждое открытие вне
+кулдауна — самый заметный источник задержки загрузки из всех.
 
+Phase 95 — снова fire-and-forget (asyncio.create_task), но без возврата
+старого бага: maybe_sync_now теперь возвращает bool — True, если синк
+только что запущен в фоне. api.py::list_tasks кладёт его в ответ как
+calendar_sync_pending, а фронтенд (index.html::loadBoard), увидев
+calendar_sync_pending=true, сам перечитывает /tasks ещё раз спустя
+паузу — к этому моменту фоновая sync_user_calendar уже успевает
+отработать и (через invalidate_tasks_cache, Phase 94) сбросить кэш, так
+что повторное чтение видит свежие данные. Повторный вызов сам не
+зацикливается — он попадёт в тот же кулдаун и получит
+calendar_sync_pending=false."""
+
+import asyncio
 import logging
 import time
 from datetime import datetime, timedelta
@@ -187,24 +200,43 @@ _MANUAL_SYNC_COOLDOWN_SECONDS = 60
 _last_manual_sync: dict[int, float] = {}
 
 
-async def maybe_sync_now(user_id: int) -> None:
+# Сильные ссылки на фоновые таски (Phase 95) — тот же приём, что
+# _background_tasks в api.py: без этого asyncio вправе собрать Task
+# сборщиком мусора до завершения.
+_background_sync_tasks: set[asyncio.Task] = set()
+
+
+async def maybe_sync_now(user_id: int) -> bool:
     """Дёргается из GET /miniapp/api/tasks (см. adapters/api.py) при
-    каждом открытии/обновлении доски, ДО чтения задач из Postgres —
-    await, не fire-and-forget (см. объяснение в шапке файла: без этого
-    свежая задача из календаря появлялась только при следующем
-    открытии). Не чаще раза в минуту на пользователя — вне cooldown
-    выходит мгновенно, реального похода в Google не происходит.
+    каждом открытии/обновлении доски, ДО чтения задач из Postgres — но
+    fire-and-forget (Phase 95, см. объяснение в шапке файла), не await:
+    не блокирует ответ главного экрана реальным походом в Google. Не
+    чаще раза в минуту на пользователя — вне cooldown выходит мгновенно,
+    реального похода в Google не происходит.
+
+    Возвращает True, если синхронизация только что запущена в фоне —
+    вызывающий код (api.py::list_tasks) кладёт это в ответ как
+    calendar_sync_pending, чтобы фронтенд знал, что стоит перечитать
+    задачи ещё раз чуть позже. False — cooldown активен, ответ и так
+    уже отражает состояние не старше минуты.
 
     sync_user_calendar сама ловит свои ожидаемые ошибки (протухший
     токен, сбой запроса к Google) — но не ошибки записи в саму
-    Postgres-сессию (BEGIN/commit); их здесь дополнительно гасим, чтобы
-    временный сбой синхронизации календаря не ронял показ обычных
-    задач, для которого он вызван как побочный эффект."""
+    Postgres-сессию (BEGIN/commit); их здесь дополнительно гасим в
+    фоновой обёртке, чтобы сбой синхронизации не всплывал необработанным
+    исключением в asyncio Task."""
     now = time.time()
     last = _last_manual_sync.get(user_id, 0)
     if now - last < _MANUAL_SYNC_COOLDOWN_SECONDS:
-        return
+        return False
     _last_manual_sync[user_id] = now
+    task = asyncio.create_task(_sync_in_background(user_id))
+    _background_sync_tasks.add(task)
+    task.add_done_callback(_background_sync_tasks.discard)
+    return True
+
+
+async def _sync_in_background(user_id: int) -> None:
     try:
         await sync_user_calendar(None, user_id)
     except Exception:
