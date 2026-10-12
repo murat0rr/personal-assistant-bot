@@ -2276,14 +2276,74 @@
     #main-kanban-block, #main-kanban-inbox-block { display: none; }
 
     @media (min-width: 900px) {
+      /* Главный экран статичен (фидбек) — сам экран не скроллится,
+         скроллятся только внутренние области (канбан/инбокс-ряд/
+         дайджест/таймлайн по отдельности, каждый — свой overflow
+         ниже). .screen-content и так уже flex-column на всю высоту
+         экрана (.app-screen) — просто выключаем его СОБСТВЕННЫЙ
+         скролл здесь, остальная механика (100dvh, position:fixed)
+         не трогается вообще. */
+      #main-screen .screen-content { overflow: hidden; }
+
+      /* Канбан(+инбокс-ряд+дайджест) столбиком слева, Таймлайн — вся
+         высота справа (фидбек). flex:1 — .desktop-board-row занимает
+         всё, что осталось в .screen-content после шапки/пилюли,
+         align-items:stretch (grid-дефолт) — обе колонки растягиваются
+         на равную высоту. */
       .desktop-board-row {
         display: grid;
         /* Таймлайн — 1/4 ширины (фидбек), канбан забирает остальное. */
         grid-template-columns: minmax(300px, 3fr) minmax(220px, 1fr);
+        grid-template-rows: 1fr auto auto;
+        grid-template-areas:
+          "kanban   timeline"
+          "kinbox   timeline"
+          "digest   timeline";
         gap: 16px;
-        align-items: start;
+        flex: 1 1 auto;
+        min-height: 0;
       }
-      #main-kanban-block, #main-kanban-inbox-block { display: block; }
+      /* .section даёт margin-bottom:24px глобально — здесь интервал уже
+         держит grid-gap, лишний отступ в сетке не нужен (та же правка,
+         что уже есть у #analytics-widgets .section). */
+      .desktop-board-row > .section { margin-bottom: 0; }
+      #main-kanban-block {
+        grid-area: kanban;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+      /* .kanban-board растягивается на всё, что осталось в колонке под
+         заголовком/пейджером недели — .kanban-col внутри по-прежнему
+         скроллится сам по себе (max-height:60vh из Phase 78 тут уже не
+         решающий предел, реальная высота обычно меньше). */
+      #main-kanban-block .kanban-board { flex: 1 1 auto; min-height: 0; }
+      /* display:block явно — базовое правило выше прячет оба блока
+         (#main-kanban-block, #main-kanban-inbox-block) на телефоне
+         через display:none; grid-area сам по себе display не меняет. */
+      #main-kanban-inbox-block { grid-area: kinbox; display: block; }
+      #main-digest-block {
+        grid-area: digest;
+        /* Предохранитель на случай длинного дайджеста — весь экран не
+           скроллится, значит у дайджеста должен быть свой потолок. */
+        max-height: 26vh;
+        overflow-y: auto;
+      }
+      #main-timeline-block {
+        grid-area: timeline;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+      /* День-карусель обычно высотой "по контенту" (мобильный свайп
+         между короткими списками) — здесь контент (часовая сетка
+         Таймлайна) явно выше экрана, поэтому сама карусель становится
+         вертикальным скролл-контейнером под отведённую высоту колонки
+         (единственная видимая страница — Таймлайн, см. JS
+         effectiveEnabledDayViewIds). overflow-x не трогаем — свайпать
+         между страницами тут нечему, но сам снэп-механизм не мешает. */
+      #main-timeline-block #day-carousel { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
       /* Единственная принудительная страница карусели (Таймлайн) —
          точки-пагинация и подпись "Сегодня"/"Неделя" не нужны. */
       #day-dots, #day-label { display: none; }

@@ -35,15 +35,19 @@
     <span class="guide-banner-text">Новое здесь? Загляните в гайд по приложению</span>
     <span class="guide-banner-close" id="guide-banner-close" aria-label="Скрыть">✕</span>
   </button>
-  <!-- Десктопная раскладка (Phase 90, только ПК/широкий экран — см.
-       app.css @media (min-width: 900px)) — канбан слева (перенесён
-       сюда из расширенной аналитики, см. #main-kanban-block ниже),
-       день-карусель справа принудительно показывает только "Таймлайн"
-       (см. effectiveEnabledDayViewIds). На телефоне .desktop-board-row
-       остаётся обычным блочным контейнером без какого-либо CSS-правила
-       — виден только второй ребёнок (день-карусель), #main-kanban-block
-       скрыт по умолчанию — ни разметка, ни поведение карусели на
-       телефоне не меняются ни на пиксель. -->
+  <!-- Десктопная раскладка (Phase 90/92, только ПК/широкий экран — см.
+       app.css @media (min-width: 900px)) — .desktop-board-row теперь
+       grid с именованными областями: канбан/инбокс-канбана/дайджест
+       столбиком слева, Таймлайн занимает всю высоту справа (фидбек).
+       #main-inbox-block (мобильный Inbox) физически тоже внутри этого
+       контейнера — он скрыт на десктопе существующим правилом, но
+       должен идти СРАЗУ ПОСЛЕ #main-kanban-inbox-block в DOM, чтобы на
+       телефоне (где у .desktop-board-row вообще нет grid-правила, дети
+       просто идут друг за другом как обычные блоки) порядок остался
+       прежним: карусель дня → Inbox → дайджест, ни один из них не
+       переехал визуально. На телефоне #main-kanban-block/
+       #main-kanban-inbox-block скрыты по умолчанию — ни разметка, ни
+       поведение карусели на телефоне не меняются ни на пиксель. -->
   <div class="desktop-board-row">
   <div class="section" id="main-kanban-block">
     <p class="section-label">Канбан</p>
@@ -54,7 +58,7 @@
     </div>
     <div class="kanban-board" id="kanban-board"></div>
   </div>
-  <div class="section">
+  <div class="section" id="main-timeline-block">
     <p class="section-label" id="day-label">Сегодня</p>
     <!-- Карусель и точки-индикаторы больше не статичны (Phase 50) — их
          содержимое собирает rebuildDayCarousel() из DAY_VIEWS/настройки
@@ -107,9 +111,7 @@
       </div>
     </div>
   </div>
-  </div>
-  <!-- Инбокс канбана (Phase 90) — отдельным рядом ниже кanban+таймлайна,
-       тот же #main-kanban-block-принцип скрытия на телефоне. -->
+  <!-- Инбокс канбана (Phase 90) — столбик слева, под канбаном. -->
   <div class="section" id="main-kanban-inbox-block">
     <p class="section-label" id="kanban-inbox-title">Инбокс</p>
     <div class="kanban-inbox-row" id="kanban-inbox-row"></div>
@@ -118,8 +120,8 @@
   <!-- На десктопе этот раздел скрыт целиком (app.css, @media
        (min-width: 900px)) — Phase 90 завела здесь дублирующий "второй
        инбокс" (чипы), фидбек: один функционал — у #kanban-inbox-row
-       слева от канбана (баг-фикс, этот же прогон). На телефоне —
-       единственный Inbox, без изменений. -->
+       слева от канбана. На телефоне — единственный Inbox, без
+       изменений (см. комментарий про порядок в начале этого блока). -->
   <div class="section" id="main-inbox-block">
     <p class="section-label section-header" id="inbox-header">
       <span id="inbox-title">Инбокс</span>
@@ -130,9 +132,10 @@
     </div>
   </div>
 
-  <div class="section">
+  <div class="section" id="main-digest-block">
     <p class="section-label">Утренний дайджест</p>
     <div id="digest" class="list digest">Загрузка…</div>
+  </div>
   </div>
 
   <div class="bottom-pill-wrap" id="pill-main">
