@@ -3936,11 +3936,13 @@
           toggleTaskDone(task);
         };
         chip.append(checkbox);
-        const dot = document.createElement("span");
-        dot.className = "chip-dot";
-        chip.append(dot);
+        // Заголовок — тот же класс и разметка, что у карточки канбана
+        // (фидбек: инбокс должен выглядеть как карточки канбана по
+        // размеру/форме) — тот же перенос на несколько строк вместо
+        // обрезания многоточием одной строкой.
         const label = document.createElement("span");
-        label.textContent = task.title;
+        label.className = "kanban-card-title";
+        label.textContent = task.due_time ? `${task.due_time} · ${task.title}` : task.title;
         chip.append(label);
         attachKanbanInboxDrag(chip, task);
         row.append(chip);
