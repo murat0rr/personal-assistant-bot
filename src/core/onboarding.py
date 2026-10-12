@@ -13,6 +13,7 @@ from src.core import goals as goals_repo
 from src.core import projects as projects_repo
 from src.core import task_templates as templates_repo
 from src.core.db import async_session
+from src.core.tasks_cache import invalidate_tasks_cache
 from src.models.task import Task
 
 _SEED_SPHERE = "развитие"
@@ -71,3 +72,4 @@ async def seed_onboarding_data(user_id: int, today: date) -> None:
             )
         )
         await session.commit()
+    await invalidate_tasks_cache(user_id)

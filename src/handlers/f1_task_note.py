@@ -4,6 +4,7 @@ from datetime import datetime
 from aiogram.types import Message
 
 from src.core.db import async_session
+from src.core.tasks_cache import invalidate_tasks_cache
 from src.core.user_location import user_today
 from src.handlers.f_set_day_task import refresh_day_task_message
 from src.integrations.claude_client import extract_tasks_fields
@@ -42,6 +43,7 @@ async def handle_task_note(message: Message, text: str) -> None:
             # Один commit на все задачи сообщения — либо все создались,
             # либо (при сбое где-то выше) ни одной, не половина.
             await session.commit()
+        await invalidate_tasks_cache(message.from_user.id)
     except Exception:
         logger.exception("Не удалось создать задачу(-и) из сообщения: %r", text)
         await message.answer("Не получилось создать задачу, попробуй ещё раз.")

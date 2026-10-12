@@ -5,6 +5,7 @@ from datetime import date, datetime
 from sqlalchemy import select
 
 from src.core.db import async_session
+from src.core.tasks_cache import invalidate_tasks_cache
 from src.models.recurring_task_rule import RecurringTaskRule
 from src.models.task import Task
 
@@ -110,6 +111,7 @@ async def create_rule(
             rule.last_materialized_date = today
 
         await session.commit()
+    await invalidate_tasks_cache(user_id)
     return {"id": rule.id, "title": rule.title}
 
 
@@ -137,6 +139,7 @@ async def materialize_due_rules(user_id: int, today: date) -> list[str]:
             created_titles.append(rule.title)
 
         await session.commit()
+    await invalidate_tasks_cache(user_id)
     return created_titles
 
 

@@ -32,6 +32,7 @@ from src.core.bot_client import get_bot
 from src.core.config import settings
 from src.core.db import async_session
 from src.core.google_calendar_sync import maybe_sync_now
+from src.core.tasks_cache import get_cached_tasks, invalidate_tasks_cache, set_cached_tasks
 from src.core.telegram_auth import verify_miniapp_init_data
 from src.core.user_location import (
     apply_stored_timezone,
@@ -335,11 +336,17 @@ async def list_tasks(user: dict = Depends(get_authorized_user)) -> dict:
     # cooldown'а (раз в минуту на пользователя) выходит мгновенно, лишней
     # задержки почти всегда нет.
     await maybe_sync_now(uid)
-    async with async_session() as session:
-        result = await session.execute(
-            select(Task).where(Task.archived.is_(False), Task.user_id == uid)
-        )
-        tasks = result.scalars().all()
+    # Кэш сырого списка задач (Redis, Phase 94) — промах пересобирает из
+    # БД и кладёт в кэш; группировка по дням по-прежнему считается на
+    # лету ниже, не кэшируется (см. src/core/tasks_cache.py).
+    tasks = await get_cached_tasks(uid)
+    if tasks is None:
+        async with async_session() as session:
+            result = await session.execute(
+                select(Task).where(Task.archived.is_(False), Task.user_id == uid)
+            )
+            tasks = list(result.scalars().all())
+        await set_cached_tasks(uid, tasks)
 
     # Личный часовой пояс пользователя (Phase 39/40), не общий
     # settings.timezone — иначе "сегодня"/"вчера" и деление
@@ -372,6 +379,8 @@ async def create_task_endpoint(
         await session.commit()
         await session.refresh(task)
 
+    await invalidate_tasks_cache(user["id"])
+
     # Автоописание (Phase 65) — фоном, не блокируя ответ "+": описание
     # видно только в форме редактирования, которую открывают отдельным
     # явным действием позже, так что задержка похода в Claude здесь
@@ -381,7 +390,9 @@ async def create_task_endpoint(
     # asyncio вправе собрать Task сборщиком мусора до завершения (задача
     # реально прерывалась на полпути при проверке живьём, официальная
     # оговорка asyncio.create_task про "храните ссылку сами").
-    bg_task = asyncio.create_task(_fill_task_description(task.id, payload.title, due_date))
+    bg_task = asyncio.create_task(
+        _fill_task_description(task.id, user["id"], payload.title, due_date)
+    )
     _background_tasks.add(bg_task)
     bg_task.add_done_callback(_background_tasks.discard)
 
@@ -396,7 +407,9 @@ async def create_task_endpoint(
     return {"status": "ok", "id": task.id}
 
 
-async def _fill_task_description(task_id: int, title: str, due_date: datetime | None) -> None:
+async def _fill_task_description(
+    task_id: int, user_id: int, title: str, due_date: datetime | None
+) -> None:
     try:
         description = await maybe_generate_task_description(
             title, due_date.date() if due_date else None
@@ -408,6 +421,7 @@ async def _fill_task_description(task_id: int, title: str, due_date: datetime | 
             if task is not None:
                 task.description = description
                 await session.commit()
+        await invalidate_tasks_cache(user_id)
     except Exception:
         logger.exception("Не удалось сгенерировать описание для задачи %s", task_id)
 
@@ -420,6 +434,8 @@ async def mark_task_done(
         task = await _get_owned_task(session, task_id, user["id"])
         task.done = payload.done
         await session.commit()
+
+    await invalidate_tasks_cache(user["id"])
 
     if payload.done:
         # Намёки о незакрытых задачах (Phase 59) — любое выполнение
@@ -453,6 +469,8 @@ async def set_task_due_date(
         task.sort_order = time.time()
         await session.commit()
 
+    await invalidate_tasks_cache(user["id"])
+
     try:
         await refresh_day_task_message(get_bot(), user["id"])
     except Exception:
@@ -476,6 +494,8 @@ async def set_task_duration(
         )
         await session.commit()
 
+    await invalidate_tasks_cache(user["id"])
+
     return {"status": "ok"}
 
 
@@ -490,6 +510,8 @@ async def set_task_priority(
         # что и везде при смене группы/дня.
         task.sort_order = time.time()
         await session.commit()
+
+    await invalidate_tasks_cache(user["id"])
 
     return {"status": "ok"}
 
@@ -509,6 +531,8 @@ async def set_task_event(
         task.sort_order = time.time()
         await session.commit()
 
+    await invalidate_tasks_cache(user["id"])
+
     return {"status": "ok"}
 
 
@@ -520,6 +544,8 @@ async def reorder_task(
         task = await _get_owned_task(session, task_id, user["id"])
         task.sort_order = payload.sort_order
         await session.commit()
+
+    await invalidate_tasks_cache(user["id"])
 
     return {"status": "ok"}
 
@@ -537,6 +563,8 @@ async def set_task_title(
         task.title = title
         await session.commit()
 
+    await invalidate_tasks_cache(user["id"])
+
     return {"status": "ok"}
 
 
@@ -548,6 +576,8 @@ async def set_task_description(
         task = await _get_owned_task(session, task_id, user["id"])
         task.description = payload.description.strip() if payload.description else None
         await session.commit()
+
+    await invalidate_tasks_cache(user["id"])
 
     return {"status": "ok"}
 
@@ -582,6 +612,8 @@ async def set_task_project(
         task.project_id = payload.project_id
         await session.commit()
 
+    await invalidate_tasks_cache(user["id"])
+
     return {"status": "ok"}
 
 
@@ -594,6 +626,8 @@ async def set_task_sphere(
         task.sphere = payload.sphere
         await session.commit()
 
+    await invalidate_tasks_cache(user["id"])
+
     return {"status": "ok"}
 
 
@@ -605,6 +639,8 @@ async def archive_task_endpoint(
         task = await _get_owned_task(session, task_id, user["id"])
         task.archived = True
         await session.commit()
+
+    await invalidate_tasks_cache(user["id"])
 
     try:
         await refresh_day_task_message(get_bot(), user["id"])
@@ -634,6 +670,8 @@ async def archive_tasks_batch(
         )
         await session.commit()
 
+    await invalidate_tasks_cache(user["id"])
+
     return {"status": "ok"}
 
 
@@ -661,6 +699,8 @@ async def restore_task_endpoint(
         task = await _get_owned_task(session, task_id, user["id"])
         task.archived = False
         await session.commit()
+
+    await invalidate_tasks_cache(user["id"])
 
     return {"status": "ok"}
 
@@ -975,6 +1015,7 @@ async def create_project_suggested_tasks_endpoint(
                 )
             )
         await session.commit()
+    await invalidate_tasks_cache(uid)
     return {"created": len(titles)}
 
 
@@ -1113,6 +1154,7 @@ async def create_goal_suggested_tasks_endpoint(
                 )
             )
         await session.commit()
+    await invalidate_tasks_cache(uid)
     return {"created": len(titles)}
 
 

@@ -12,6 +12,7 @@ from src.core.auth import is_authorized
 from src.core.db import async_session
 from src.core.goals import create_goal, list_goals_for_period
 from src.core.projects import create_project, find_project_by_title, list_projects
+from src.core.tasks_cache import invalidate_tasks_cache
 from src.core.user_location import user_today
 from src.integrations.claude_client import generate_tasks_from_goals, propose_projects_from_goals
 from src.models.task import Task
@@ -213,6 +214,7 @@ async def _finish_tier(
                 session.add(task)
                 created_titles.append(item.title)
             await session.commit()
+        await invalidate_tasks_cache(user_id)
 
     if created_titles:
         names = "\n".join(f"— {t}" for t in created_titles)

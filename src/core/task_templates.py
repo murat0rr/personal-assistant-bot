@@ -4,6 +4,7 @@ from datetime import date, datetime
 from sqlalchemy import select, update
 
 from src.core.db import async_session
+from src.core.tasks_cache import invalidate_tasks_cache
 from src.models.task import Task
 from src.models.task_template import TaskTemplate
 
@@ -106,4 +107,5 @@ async def use_template(template_id: int, user_id: int, due_date: datetime) -> di
         template.last_used_date = due_date.date()
         await session.commit()
         await session.refresh(task)
-        return {"id": task.id, "title": task.title}
+    await invalidate_tasks_cache(user_id)
+    return {"id": task.id, "title": task.title}

@@ -47,6 +47,7 @@ from sqlalchemy import select
 from src.core.auth import is_authorized
 from src.core.config import settings
 from src.core.db import async_session
+from src.core.tasks_cache import invalidate_tasks_cache
 from src.core.user_location import user_today
 from src.models.task import Task
 
@@ -200,6 +201,8 @@ async def handle_toggle_task(callback: CallbackQuery) -> None:
             return
         task.done = not task.done
         await session.commit()
+
+    await invalidate_tasks_cache(user_id)
 
     # Перечитываем ВЕСЬ список заново (не только эту задачу) — заодно
     # подхватит любые изменения, случившиеся где-то ещё с прошлой

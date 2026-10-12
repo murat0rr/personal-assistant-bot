@@ -38,6 +38,7 @@ from aiogram import Bot
 from sqlalchemy import select
 
 from src.core.db import async_session
+from src.core.tasks_cache import invalidate_tasks_cache
 from src.core.user_location import user_timezone
 from src.integrations.google_calendar import GoogleAuthError, list_events, refresh_access_token
 from src.models.google_calendar_account import GoogleCalendarAccount
@@ -176,6 +177,7 @@ async def sync_user_calendar(bot: Bot | None, user_id: int) -> None:
                 task.archived = True
 
         await session.commit()
+    await invalidate_tasks_cache(user_id)
 
 
 _MANUAL_SYNC_COOLDOWN_SECONDS = 60

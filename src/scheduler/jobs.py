@@ -21,6 +21,7 @@ from src.core.google_calendar_sync import sync_user_calendar
 from src.core.habits import list_habits
 from src.core.recurring_tasks import materialize_due_rules
 from src.core.task_templates import create_ai_template, list_templates
+from src.core.tasks_cache import invalidate_tasks_cache
 from src.core.user_location import (
     morning_digest_enabled,
     user_schedule_hours,
@@ -186,6 +187,9 @@ async def _tidy_inbox_job(bot: Bot, user_id: int) -> None:
             changes.append((old_title, new_title))
         if changes:
             await session.commit()
+
+    if changes:
+        await invalidate_tasks_cache(user_id)
 
     # Уведомление в чат убрано (Phase 77, фидбек) — правки заголовков
     # по-прежнему происходят и логируются, просто больше не приходят

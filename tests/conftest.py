@@ -71,11 +71,15 @@ class FakeRedis:
 
 @pytest.fixture(autouse=True)
 def fake_redis_for_login_codes():
-    """Подменяет модульный singleton-клиент в login_codes.py на
-    FakeRedis для каждого теста — иначе _get_redis() попытался бы
-    подключиться к реальному REDIS_URL (в тестовом окружении пустой)."""
-    from src.core import login_codes
+    """Подменяет модульный singleton-клиент в login_codes.py и
+    tasks_cache.py на FakeRedis для каждого теста — иначе _get_redis()
+    попытался бы подключиться к реальному REDIS_URL (в тестовом
+    окружении пустой). Общая FakeRedis на оба модуля не нужна — у
+    каждого свой независимый store, они не пересекаются по ключам."""
+    from src.core import login_codes, tasks_cache
 
     login_codes._redis = FakeRedis()
+    tasks_cache._redis = FakeRedis()
     yield
     login_codes._redis = None
+    tasks_cache._redis = None
