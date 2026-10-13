@@ -2103,7 +2103,10 @@
        .filter-chip/.filter-dropdown/.filter-option выше (та же вкладка
        "Задачи") — здесь только то, что специфично заметкам.
        ========================================================== */
-    .notes-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    /* margin-top clears the fixed #hamburger-btn (top:12px + height:36px +
+       8px gap = 56px, same clearance #side-drawer uses below it), which
+       otherwise overlaps notes-add-btn in the same top-right corner. */
+    .notes-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; margin-top: 40px; }
     .notes-title { font-size: 19px; font-weight: 700; }
     .notes-add-btn {
       width: 32px; height: 32px; border-radius: 50%; border: none;
