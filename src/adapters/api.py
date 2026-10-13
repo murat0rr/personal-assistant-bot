@@ -8,13 +8,14 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import AfterValidator, BaseModel
 from sqlalchemy import select, update
 
 from src.adapters.google_oauth import router as google_oauth_router
 from src.adapters.internal_api import router as internal_api_router
+from src.adapters.miniapp_assets import get_asset_version, version_asset_refs
 from src.adapters.public_pages import router as public_pages_router
 from src.adapters.tasker_webhook import router as tasker_webhook_router
 from src.adapters.web_auth import router as web_auth_router
@@ -147,6 +148,9 @@ app.include_router(public_pages_router)
 app.include_router(internal_api_router)
 
 
+_VERSIONED_STATIC_PREFIXES = ("/miniapp/css/", "/miniapp/js/")
+
+
 @app.middleware("http")
 async def _no_cache_miniapp(request: Request, call_next):
     """Telegram WebView (особенно мобильные) кэширует статику Mini App
@@ -156,13 +160,35 @@ async def _no_cache_miniapp(request: Request, call_next):
     может продолжать видеть старую версию, пока вручную не очистит кэш
     приложения. StaticFiles по умолчанию шлёт только ETag/Last-Modified
     (условный GET), но не Cache-Control — WebView вправе не перепроверять
-    вообще. Правило — на весь /miniapp: там ровно один самодостаточный
-    index.html без отдельных версионируемых ассетов, экономить нечего.
-    /app — тот же index.html, поданный вне Telegram (Phase 45), той же
-    причине подвержен, хоть и не WebView — та же осторожность, пока не
-    появится повод разбираться с кэшем предметно (см. SPEC.md §5)."""
+    вообще. /app — тот же index.html, поданный вне Telegram (Phase 45),
+    той же причине подвержен, хоть и не WebView — та же осторожность.
+
+    Исключение — CSS/JS под /miniapp/css и /miniapp/js (Phase 96): эти
+    пути отдаются с версией в query-string (?v=<хэш содержимого>, см.
+    adapters/miniapp_assets.py и serve_versioned_js/_render_index_html
+    ниже) — конкретный URL с конкретным ?v= гарантированно соответствует
+    ОДНОМУ неизменному содержимому навсегда, поэтому их можно кэшировать
+    надолго без риска словить тот же баг WebView: index.html (который и
+    содержит актуальный ?v=) как был no-store, так и остался — именно
+    он гарантирует, что при каждом открытии подтягивается актуальная
+    версия ссылок на остальное. manifest.json/иконки/service-worker.js
+    — по-прежнему no-store, не версионируются (см. модуль).
+
+    Важно: immutable-кэш выдаётся, ТОЛЬКО если в запросе реально есть
+    query-параметр `v` — не просто по совпадению префикса пути. Голый
+    /miniapp/css/app.css (без ?v=) тоже технически доступен — через сам
+    StaticFiles-mount ниже (он отдаёт любой файл по имени, не только
+    через подставленные ссылки) — и так же бывает доступен голый
+    /miniapp/index.html (нередактированный, без ?v= внутри). Без этой
+    проверки такой голый запрос получил бы бессрочный immutable-кэш на
+    URL, который никогда не поменяется сам по себе при следующем деплое
+    — то есть ровно тот баг WebView, которого мы и избегаем. Без `v` —
+    безопасный откат на тот же no-store, что и раньше для всего /miniapp."""
     response = await call_next(request)
-    if request.url.path.startswith("/miniapp") or request.url.path.startswith("/app"):
+    path = request.url.path
+    if path.startswith(_VERSIONED_STATIC_PREFIXES) and "v" in request.query_params:
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif path.startswith("/miniapp") or path.startswith("/app"):
         response.headers["Cache-Control"] = "no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -1470,16 +1496,65 @@ async def set_guide_banner_setting(user: dict = Depends(get_authorized_user)) ->
 # условной логики) — обычные явные маршруты, поэтому регистрируются раньше
 # mount'ов ниже, без риска, что префикс перехватит их первым.
 _STATIC_DIR = Path(__file__).parent / "miniapp_static"
+# Phase 96 — один хэш на весь набор CSS+JS, см. adapters/miniapp_assets.py
+# за полным объяснением. Вычисляется один раз при старте процесса.
+_ASSET_VERSION = get_asset_version(_STATIC_DIR)
+
+
+def _render_index_html() -> Response:
+    """Общая логика для /app(/) и /miniapp(/) (Phase 96) — читает
+    index.html и подставляет ?v=<_ASSET_VERSION> в ссылки на CSS/JS (см.
+    version_asset_refs). Сам index.html остаётся no-store (см.
+    _no_cache_miniapp) — читается и переписывается заново на каждый
+    запрос, не кэшируется на сервере: это чистый текст, дешёвая операция,
+    а гарантия "всегда актуальный ?v=" важнее экономии на регэкспе."""
+    content = (_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    rewritten = version_asset_refs(content, _ASSET_VERSION)
+    return Response(content=rewritten, media_type="text/html; charset=utf-8")
 
 
 @app.get("/app", response_model=None)
 @app.get("/app/", response_model=None)
-async def web_app_entry(request: Request) -> FileResponse | RedirectResponse:
+async def web_app_entry(request: Request) -> Response | RedirectResponse:
     session_token = request.cookies.get(SESSION_COOKIE_NAME)
     user_id = verify_session_token(session_token) if session_token else None
     if user_id is None or not await is_authorized(user_id):
         return RedirectResponse(url="/auth/login")
-    return FileResponse(_STATIC_DIR / "index.html")
+    return _render_index_html()
+
+
+# /miniapp и /miniapp/ (Phase 96) — та же подстановка ?v=, что у /app, но
+# БЕЗ серверного гейта: здесь это вход внутри самого Telegram (WebView),
+# где авторизация идёт через initData на стороне клиента/API, а не
+# session-куку — ровно то же отсутствие гейта, что раньше давал
+# StaticFiles(html=True) для этого пути. Явный маршрут нужен, чтобы
+# перехватить ИМЕННО корень раньше mount'а ниже (тот же приём, что у
+# /app выше) — остальные пути под /miniapp (включая /miniapp/api/*)
+# mount и дальнейшие явные маршруты обрабатывают как раньше.
+@app.get("/miniapp", response_model=None)
+@app.get("/miniapp/", response_model=None)
+async def miniapp_root_entry() -> Response:
+    return _render_index_html()
+
+
+# /miniapp/js/** (Phase 96) — тоже раньше mount'а: JS-файлы версионируют
+# и свои же относительные импорты (./registry.js и т.п., см.
+# adapters/miniapp_assets.py) через тот же version_asset_refs, поэтому
+# отдаются явным маршрутом, а не голым StaticFiles (который отдал бы
+# контент как есть — без этого panel.js/registry.js оставались бы
+# закэшированы по неверсионированному URL, то есть тот же баг WebView,
+# которого Phase 88 как раз избегала). Явная проверка на path traversal
+# (.resolve() + is_relative_to) — {file_path:path} сам по себе её не
+# даёт.
+@app.get("/miniapp/js/{file_path:path}", response_model=None)
+async def serve_versioned_js(file_path: str) -> Response:
+    js_dir = (_STATIC_DIR / "js").resolve()
+    target = (js_dir / file_path).resolve()
+    if not target.is_relative_to(js_dir) or not target.is_file() or target.suffix != ".js":
+        raise HTTPException(status_code=404, detail="not found")
+    content = target.read_text(encoding="utf-8")
+    rewritten = version_asset_refs(content, _ASSET_VERSION)
+    return Response(content=rewritten, media_type="text/javascript; charset=utf-8")
 
 
 # Лёгкий staging для Mini App (SPEC.md §5) — второй, полностью отдельный от
@@ -1498,7 +1573,12 @@ app.mount(
 )
 
 # Mount регистрируем последним: Starlette матчит маршруты по порядку
-# регистрации, и mount-префикс перехватил бы /miniapp/api/... раньше,
-# чем до них дойдёт очередь, если объявить его выше. _STATIC_DIR уже
-# объявлен выше, у /app/-маршрутов (Phase 45) — тот же самый путь.
+# регистрации, и mount-префикс перехватил бы /miniapp/api/... (и, с
+# Phase 96, /miniapp, /miniapp/, /miniapp/js/**) раньше, чем до них
+# дойдёт очередь, если объявить его выше. _STATIC_DIR уже объявлен выше,
+# у /app/-маршрутов (Phase 45) — тот же самый путь. После явных
+# маршрутов выше этот mount фактически обслуживает то, что осталось:
+# manifest.json, иконки, service-worker.js, app.css (CSS не нуждается в
+# переписывании ссылок — у него их нет, см. adapters/miniapp_assets.py
+# — кэш-заголовок на него всё равно ставит middleware по префиксу пути).
 app.mount("/miniapp", StaticFiles(directory=_STATIC_DIR, html=True), name="miniapp")
