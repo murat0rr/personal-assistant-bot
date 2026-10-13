@@ -2072,7 +2072,20 @@
     }
     .project-form-dates { display: flex; gap: 8px; }
     .project-form-dates input { flex: 1; min-width: 0; }
-    .sphere-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .sphere-chips { display: flex; flex-wrap: wrap; gap: 6px; border-radius: 12px; }
+    /* Подсветка "сфера обязательна" (фидбек) — попытка сохранить цель
+       без сферы больше не проваливается молча, см.
+       flashSpherePickerRequired в index.html. */
+    @keyframes sphere-chips-required-shake {
+      0%, 100% { transform: translateX(0); }
+      20%, 60% { transform: translateX(-4px); }
+      40%, 80% { transform: translateX(4px); }
+    }
+    .sphere-chips.required-hint {
+      animation: sphere-chips-required-shake 0.4s;
+      outline: 2px solid var(--neutral-red);
+      outline-offset: 4px;
+    }
     .sphere-chip {
       border: 1px solid var(--hairline);
       background: transparent;

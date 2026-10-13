@@ -5075,21 +5075,51 @@
       render();
     }
 
+    // Подсветка блока сфер (фидбек) — цель с названием, но без сферы
+    // раньше тихо НЕ сохранялась, а форма всё равно закрывалась, будто
+    // всё прошло успешно: пользователь терял набранное без единого
+    // намёка, почему. Шейк + хаптика — тот же принцип обратной связи,
+    // что и везде в приложении (hapticImpact на значимых действиях).
+    function flashSpherePickerRequired() {
+      const el = document.getElementById("create-entity-spheres");
+      if (!el) return;
+      hapticImpact("medium");
+      el.classList.remove("required-hint");
+      // Форсируем reflow, чтобы анимация переиграла даже при повторном
+      // промахе подряд (иначе повторное добавление того же класса —
+      // no-op для уже идущей анимации).
+      void el.offsetWidth;
+      el.classList.add("required-hint");
+      // Если пользователь после этого выберет сферу, renderSphereChips
+      // пересоздаст элемент заново без этого класса (обычный render()
+      // при тапе по чипу) — но если просто проигнорирует подсказку, явно
+      // снимаем сами, чтобы красная обводка не висела на экране вечно.
+      setTimeout(() => el.classList.remove("required-hint"), 1200);
+    }
+
     // Единая точка сохранения (Phase 28) — вызывается и явной кнопкой
     // "Готово", и закрытием шторки свайпом/тапом по фону (см.
     // closeCreateEntitySheet): что бы ни закрыло форму, попытка
-    // сохранить одна и та же. Без названия/формулировки, либо без сферы
-    // у цели (единственное по-настоящему обязательное после названия) —
-    // просто ничего не создаём/не сохраняем, без алертов, форма и так
-    // уже закрывается.
+    // сохранить одна и та же. Без названия/формулировки — форма и так
+    // пустая, тихо ничего не создаём, закрытие допустимо. А вот цель С
+    // названием, но без сферы (единственное по-настоящему обязательное
+    // после названия) — это НЕ "пустая форма, нечего терять": раньше
+    // такая попытка тихо проваливалась и форма всё равно закрывалась
+    // (баг, фидбек) — теперь блокируем закрытие и подсвечиваем сферы,
+    // чтобы ввод не терялся молча. Возвращает true, если форму можно
+    // закрывать (сохранили либо она и так была пустой), false — если
+    // нужно остаться открытой.
     function commitEntityForm() {
       const kind = createEntityKind;
-      if (!kind) return;
+      if (!kind) return true;
       const draft = createEntityDraft;
       const isProject = kind === "project";
       const titleText = (draft.title || "").trim();
-      if (!titleText) return;
-      if (!isProject && !draft.spheres.length) return;
+      if (!titleText) return true;
+      if (!isProject && !draft.spheres.length) {
+        flashSpherePickerRequired();
+        return false;
+      }
 
       if (isProject) {
         if (createEntityEditingId != null) editProject(createEntityEditingId, draft);
@@ -5099,10 +5129,11 @@
       } else {
         createGoal(draft);
       }
+      return true;
     }
 
     function closeCreateEntitySheet() {
-      commitEntityForm();
+      if (!commitEntityForm()) return;
       createEntityKind = null;
       createEntityEditingId = null;
       render();
@@ -5693,14 +5724,17 @@
         container.append(tierRow);
       }
 
-      container.append(
-        renderSphereChips(createEntityDraft.spheres, (value) => {
-          const idx = createEntityDraft.spheres.indexOf(value);
-          if (idx === -1) createEntityDraft.spheres.push(value);
-          else createEntityDraft.spheres.splice(idx, 1);
-          render();
-        })
-      );
+      const sphereChipsEl = renderSphereChips(createEntityDraft.spheres, (value) => {
+        const idx = createEntityDraft.spheres.indexOf(value);
+        if (idx === -1) createEntityDraft.spheres.push(value);
+        else createEntityDraft.spheres.splice(idx, 1);
+        render();
+      });
+      // id — чтобы commitEntityForm мог подсветить именно этот блок,
+      // если цель пытаются сохранить без сферы (фидбек: раньше форма
+      // тихо закрывалась, будто сохранила).
+      sphereChipsEl.id = "create-entity-spheres";
+      container.append(sphereChipsEl);
 
       // Ручной выбор дат — только у проекта (Phase 68, фидбек): у цели
       // период теперь определяется тиром + панелью карусели, откуда
