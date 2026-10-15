@@ -302,7 +302,7 @@ TRIAGE_FEEDBACK = (
 )
 
 
-# ---- Наблюдение за чатами (Phase 87) -------------------------------------
+# ---- Наблюдение за каналами/группами (Phase 87, переписано в Phase 99) ---
 
 # Батч сообщений наблюдаемого чата (core/chat_watch.py::process_batch) —
 # текст в транскрипте написан ДРУГИМИ людьми (не владельцем), это ДАННЫЕ
@@ -325,13 +325,14 @@ _CHAT_WATCH_PREAMBLE = (
 )
 
 
-def chat_watch_system_prompt(custom_prompt: str) -> str:
+def chat_watch_system_prompt(custom_prompt: str, profile_summary: str | None = None) -> str:
     return (
         _CHAT_WATCH_PREAMBLE + custom_prompt + "\n\n"
         "Извлеки notes (список текстов заметок, пустой список — "
         "нормальный исход, если в пачке ничего заметочного) и tasks "
         "(список заголовков задач, тоже может быть пустым). Не "
         "придумывай ничего, чего буквально не было в сообщениях."
+        + _profile_context_block(profile_summary)
     )
 
 

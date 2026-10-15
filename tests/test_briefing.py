@@ -26,3 +26,16 @@ def test_all_three_combined():
     text = build_briefing_text(_TASKS_TEXT, "🌧 10°C, ветер 12 км/ч", habits)
     assert text.index(_TASKS_TEXT) < text.index("🌧 10°C")
     assert text.index("🌧 10°C") < text.index("🔥 Привычки:")
+
+
+def test_no_chat_watch_section_when_empty():
+    assert "Из каналов" not in build_briefing_text(_TASKS_TEXT, None, [], [])
+    assert "Из каналов" not in build_briefing_text(_TASKS_TEXT, None, [], None)
+
+
+def test_includes_chat_watch_section():
+    lines = ["«Новости»: 3 новых заметок", "  • превью 1", "  • превью 2"]
+    text = build_briefing_text(_TASKS_TEXT, None, [], lines)
+    assert "📡 Из каналов (24ч):" in text
+    assert "«Новости»: 3 новых заметок" in text
+    assert "превью 1" in text

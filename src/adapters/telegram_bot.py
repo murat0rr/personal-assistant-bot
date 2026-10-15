@@ -16,7 +16,6 @@ from aiogram.types import (
 )
 
 from src.core.auth import ensure_owner_authorized, is_authorized
-from src.core.chat_watch import handle_incoming_event
 from src.core.config import settings
 from src.core.message_tracking import attach_message_tracking, track_incoming
 from src.core.orchestrator import router as orchestrator_router
@@ -40,7 +39,6 @@ from src.handlers.f_timezone import router as timezone_router
 from src.handlers.f_web_login import router as web_login_router
 from src.handlers.mode_buttons import MAIN_KEYBOARD
 from src.handlers.mode_buttons import router as mode_buttons_router
-from src.integrations import telegram_reader
 from src.scheduler.jobs import setup_scheduler
 
 logger = logging.getLogger(__name__)
@@ -147,22 +145,14 @@ async def main() -> None:
             BotCommand(command="staging", description="Открыть staging Mini App"),
             BotCommand(command="feedback", description="Баг, идея или пожелание по боту"),
             BotCommand(command="build", description="[только владелец] Реализовать по запросу"),
-            BotCommand(
-                command="watch_add", description="[только владелец] Начать наблюдать за чатом"
-            ),
-            BotCommand(
-                command="watch_list", description="[только владелец] Список наблюдаемых чатов"
-            ),
-            BotCommand(
-                command="watch_prompt", description="[только владелец] Изменить критерий для чата"
-            ),
+            BotCommand(command="watch_add", description="Начать наблюдать за каналом/группой"),
+            BotCommand(command="watch_list", description="Список наблюдаемых каналов/групп"),
+            BotCommand(command="watch_prompt", description="Изменить критерий для канала/группы"),
             BotCommand(
                 command="watch_toggle",
-                description="[только владелец] Включить/выключить наблюдение",
+                description="Включить/выключить наблюдение",
             ),
-            BotCommand(
-                command="watch_remove", description="[только владелец] Снять чат с наблюдения"
-            ),
+            BotCommand(command="watch_remove", description="Снять канал/группу с наблюдения"),
         ]
     )
 
@@ -177,18 +167,6 @@ async def main() -> None:
         )
     else:
         logger.warning("MINIAPP_URL не задан — кнопка меню чата не настроена")
-
-    # Наблюдение за внешними чатами (Phase 87) — второй клиент под личным
-    # аккаунтом владельца, в том же процессе/event loop, что polling бота
-    # ниже (дальше держит update-цикл живым сам Telethon после connect(),
-    # отдельная asyncio.create_task не нужна). Пусто — фича выключена,
-    # тот же принцип, что у остальных опциональных интеграций.
-    if settings.telethon_session_string:
-        await telegram_reader.start()
-        telegram_reader.register_handler(handle_incoming_event)
-        logger.info("MTProto-клиент наблюдения за чатами подключён")
-    else:
-        logger.warning("TELETHON_SESSION_STRING не задан — наблюдение за чатами выключено")
 
     # Задачи и привычки теперь в Postgres (Phase 10) — никакого синка с
     # Notion перед стартом планировщика больше не нужно, джобы стартуют

@@ -1,15 +1,15 @@
-"""Наблюдение за внешними чатами через MTProto (Phase 87) — владелец
-регистрирует чат (личную переписку или чужую группу, куда бота как
-Bot API не позвать), сообщения копятся батчем и разбираются Claude по
-заданному для этого чата промпту на заметки/задачи. Весь телетон-код
-живёт в integrations/telegram_reader.py — этот модуль только бизнес-
-логика (CRUD, батчинг, обработка), получает от обёртки готовые dict."""
+"""Наблюдение за каналами/группами через Bot API (Phase 99, заменяет
+MTProto-подход Phase 87) — любой авторизованный пользователь
+регистрирует канал (бот — админ) или группу (бот — участник), куда он
+сам добавил бота; сообщения копятся батчем и разбираются Claude по
+заданному для этого чата промпту на заметки/задачи. Приём сообщений —
+handlers/f_chat_watch.py (channel_post/message хендлеры aiogram), этот
+модуль — только бизнес-логика (CRUD, батчинг, обработка)."""
 
 import asyncio
 import logging
 import time
 from datetime import datetime
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.sql import func
@@ -17,9 +17,10 @@ from sqlalchemy.sql import func
 from src.core.bot_client import get_bot
 from src.core.db import async_session
 from src.core.notes import create_note
-from src.integrations import telegram_reader
+from src.core.user_profile import get_profile_summary
 from src.integrations.claude_client import analyze_chat_batch
 from src.models.chat_watch import WatchedChat, WatchedMessage
+from src.models.note import Note, NoteTag, Tag
 from src.models.task import Task
 
 logger = logging.getLogger(__name__)
@@ -56,15 +57,7 @@ def _chat_tag(title: str) -> str:
     return slug or "chat"
 
 
-# ---- Поиск/регистрация ---------------------------------------------------
-
-
-async def search_watchable_chats(query: str) -> list[dict]:
-    return await telegram_reader.search_dialogs(query)
-
-
-async def resolve_forwarded_chat(forward_from_chat_id: int) -> dict | None:
-    return await telegram_reader.resolve_forwarded_chat(forward_from_chat_id)
+# ---- Регистрация ----------------------------------------------------------
 
 
 async def register_watched_chat(
@@ -149,36 +142,6 @@ async def remove_watched_chat(watched_chat_id: int, user_id: int) -> bool:
 # ---- Приём сообщений и батчинг -------------------------------------------
 
 
-def _display_name(sender: Any) -> str:
-    if sender is None:
-        return "неизвестно"
-    username = getattr(sender, "username", None)
-    if username:
-        return f"@{username}"
-    full = " ".join(
-        filter(None, [getattr(sender, "first_name", None), getattr(sender, "last_name", None)])
-    )
-    return full or str(getattr(sender, "id", "неизвестно"))
-
-
-async def handle_incoming_event(event: Any) -> None:
-    """Коллбэк для telegram_reader.register_handler — вызывается на ЛЮБОЕ
-    входящее сообщение, фильтрация на "это наблюдаемый чат?" внутри
-    ingest_message. Любая ошибка здесь не должна убить приём следующих
-    событий у Telethon."""
-    try:
-        sender = await event.get_sender()
-        await ingest_message(
-            telegram_chat_id=event.chat_id,
-            sender_telegram_id=getattr(sender, "id", None),
-            sender_display_name=_display_name(sender),
-            text=event.raw_text or "",
-            sent_at=event.message.date,
-        )
-    except Exception:
-        logger.exception("Не удалось обработать входящее сообщение наблюдаемого чата")
-
-
 async def ingest_message(
     telegram_chat_id: int,
     sender_telegram_id: int | None,
@@ -186,35 +149,44 @@ async def ingest_message(
     text: str,
     sent_at: datetime,
 ) -> None:
+    """Вызывается из handlers/f_chat_watch.py на каждый принятый пост
+    канала/сообщение группы. Один и тот же telegram_chat_id может быть
+    зарегистрирован НЕСКОЛЬКИМИ пользователями (общий публичный канал) —
+    у каждого свой критерий и свой буфер, поэтому разбираем все
+    совпадения, а не только первое."""
+    due_ids: list[int] = []
     async with async_session() as session:
         result = await session.execute(
             select(WatchedChat).where(
                 WatchedChat.telegram_chat_id == telegram_chat_id, WatchedChat.enabled.is_(True)
             )
         )
-        chat = result.scalar_one_or_none()
-        if chat is None:
-            return  # чат не зарегистрирован или наблюдение выключено — no-op
+        chats = result.scalars().all()
+        if not chats:
+            return  # чат не зарегистрирован ни у кого или наблюдение выключено — no-op
 
-        session.add(
-            WatchedMessage(
-                watched_chat_id=chat.id,
-                sender_telegram_id=sender_telegram_id,
-                sender_display_name=sender_display_name,
-                text=text,
-                sent_at=sent_at,
+        for chat in chats:
+            session.add(
+                WatchedMessage(
+                    watched_chat_id=chat.id,
+                    sender_telegram_id=sender_telegram_id,
+                    sender_display_name=sender_display_name,
+                    text=text,
+                    sent_at=sent_at,
+                )
             )
-        )
         await session.commit()
 
-        count_result = await session.execute(
-            select(func.count(WatchedMessage.id)).where(WatchedMessage.watched_chat_id == chat.id)
-        )
-        count = count_result.scalar_one()
-        watched_chat_id = chat.id
-        threshold = chat.batch_size_threshold
+        for chat in chats:
+            count_result = await session.execute(
+                select(func.count(WatchedMessage.id)).where(
+                    WatchedMessage.watched_chat_id == chat.id
+                )
+            )
+            if count_result.scalar_one() >= chat.batch_size_threshold:
+                due_ids.append(chat.id)
 
-    if count >= threshold:
+    for watched_chat_id in due_ids:
         task = asyncio.create_task(process_batch(watched_chat_id))
         _background_tasks.add(task)
         task.add_done_callback(_background_tasks.discard)
@@ -276,7 +248,8 @@ async def process_batch(watched_chat_id: int) -> None:
             title = chat.title
             custom_prompt = chat.custom_prompt
 
-        analysis = await analyze_chat_batch(custom_prompt, transcript)
+        profile_summary = await get_profile_summary(user_id)
+        analysis = await analyze_chat_batch(custom_prompt, transcript, profile_summary)
 
         tag = _chat_tag(title)
         for note_text in analysis.notes:
@@ -311,3 +284,51 @@ async def process_batch(watched_chat_id: int) -> None:
             await session.commit()
     except Exception:
         logger.exception("Не удалось обработать батч watched_chat=%s", watched_chat_id)
+
+
+# ---- Секция дайджеста (Phase 99) ------------------------------------------
+
+_DIGEST_PREVIEWS_PER_CHAT = 2
+
+
+async def digest_summary_lines(user_id: int, since: datetime) -> list[str]:
+    """Для утреннего дайджеста (handlers/f12_briefing.py) — по каждому
+    наблюдаемому чату пользователя, где после `since` появились заметки
+    (найденные через тег _chat_tag(title), которым create_note помечает
+    каждую заметку из process_batch выше), строка со счётом + пара
+    превью. Задачи сюда не попадают — они уже уходят владельцу
+    немедленно при обработке батча (process_batch выше)."""
+    async with async_session() as session:
+        chats = (
+            (
+                await session.execute(
+                    select(WatchedChat).where(
+                        WatchedChat.user_id == user_id, WatchedChat.enabled.is_(True)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not chats:
+            return []
+
+        lines: list[str] = []
+        for chat in chats:
+            result = await session.execute(
+                select(Note.text)
+                .join(NoteTag, NoteTag.note_id == Note.id)
+                .join(Tag, Tag.id == NoteTag.tag_id)
+                .where(
+                    Tag.user_id == user_id,
+                    Tag.name == _chat_tag(chat.title),
+                    Note.created_at >= since,
+                )
+                .order_by(Note.created_at.desc())
+            )
+            texts = result.scalars().all()
+            if not texts:
+                continue
+            lines.append(f"«{chat.title}»: {len(texts)} новых заметок")
+            lines.extend(f"  • {t[:80]}" for t in texts[:_DIGEST_PREVIEWS_PER_CHAT])
+        return lines

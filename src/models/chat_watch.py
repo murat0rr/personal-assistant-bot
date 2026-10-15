@@ -17,13 +17,15 @@ from src.models.task import Base
 
 
 class WatchedChat(Base):
-    """Чат (личная переписка или группа), зарегистрированный владельцем
-    для пассивного наблюдения через MTProto (Phase 87) — бот сам в этот
-    чат не входит, видит его только второй клиент под личным аккаунтом
-    владельца (src/integrations/telegram_reader.py). custom_prompt пишет
-    сам владелец при регистрации (handlers/f_chat_watch.py) — это
+    """Канал или группа, зарегистрированная авторизованным пользователем
+    для пассивного наблюдения через Bot API (Phase 99, заменяет
+    MTProto-подход Phase 87) — бот должен быть добавлен туда самим
+    пользователем (в канал — админом, в группу — участником), иначе
+    регистрация не проходит (handlers/f_chat_watch.py::_resolve_chat_type).
+    custom_prompt пишет сам пользователь при регистрации — это
     доверенная инструкция, в отличие от текста сообщений самого чата
-    (см. core/prompts.py::chat_watch_system_prompt)."""
+    (см. core/prompts.py::chat_watch_system_prompt). chat_type —
+    "channel" | "group"."""
 
     __tablename__ = "watched_chats"
 
@@ -31,12 +33,11 @@ class WatchedChat(Base):
     user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("authorized_users.telegram_user_id"), nullable=False
     )
-    # Маркированный id диалога ровно в том виде, в котором его отдаёт
-    # Telethon (dialog.id/event.chat_id) — везде в этой фиче использовать
-    # только эту форму, не смешивать с raw peer id.
+    # id чата ровно в том виде, в котором его отдаёт Bot API
+    # (message.chat.id / message.forward_from_chat.id).
     telegram_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
-    chat_type: Mapped[str] = mapped_column(String, nullable=False)  # "user" | "group" | "channel"
+    chat_type: Mapped[str] = mapped_column(String, nullable=False)  # "group" | "channel"
     custom_prompt: Mapped[str] = mapped_column(String, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     batch_size_threshold: Mapped[int] = mapped_column(Integer, default=100, server_default="100")

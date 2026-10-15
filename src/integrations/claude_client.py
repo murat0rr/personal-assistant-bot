@@ -1308,7 +1308,7 @@ async def triage_feedback(text: str) -> FeedbackTriage:
     return FeedbackTriage.model_validate(tool_use.input)
 
 
-# ---- Наблюдение за чатами (Phase 87) -------------------------------------
+# ---- Наблюдение за каналами/группами (Phase 87, переписано в Phase 99) ---
 
 _ANALYZE_CHAT_BATCH_TOOL = {
     "name": "analyze_chat_batch",
@@ -1337,15 +1337,20 @@ class ChatBatchAnalysis(BaseModel):
     tasks: list[str]
 
 
-async def analyze_chat_batch(custom_prompt: str, transcript: str) -> ChatBatchAnalysis:
+async def analyze_chat_batch(
+    custom_prompt: str, transcript: str, profile_summary: str | None = None
+) -> ChatBatchAnalysis:
     """Haiku, forced tool-use — тот же идиом, что triage_feedback выше.
     Безопасный дефолт при неудаче — пустые списки, никогда не бросает
     исключение (core/chat_watch.py::process_batch не должен упасть на
-    разборе батча, следующий триггер просто повторит попытку)."""
+    разборе батча, следующий триггер просто повторит попытку).
+    max_tokens поднят с 2000 (Phase 87) до 4000 вместе с добавлением
+    блока профиля в системный промпт — см. TECHDEBT.md про прокси
+    CLAUDE_BASE_URL и невидимый расход токенов на reasoning (Phase 98)."""
     response = await client.messages.create(
         model=settings.claude_model_haiku,
-        max_tokens=2000,
-        system=prompts.chat_watch_system_prompt(custom_prompt),
+        max_tokens=4000,
+        system=prompts.chat_watch_system_prompt(custom_prompt, profile_summary),
         tools=[_ANALYZE_CHAT_BATCH_TOOL],
         tool_choice={"type": "tool", "name": "analyze_chat_batch"},
         messages=[{"role": "user", "content": transcript}],
