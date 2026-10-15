@@ -28,6 +28,7 @@ from src.core.user_location import (
     user_timezone,
     user_today,
 )
+from src.core.user_profile import maybe_update_profile
 from src.handlers.f4_diary import DiaryStates, ask_question
 from src.handlers.f9_finance import FINANCE_GUIDE
 from src.handlers.f11_weekly_review import build_weekly_review
@@ -69,6 +70,17 @@ async def _ai_analytics_refresh_job(bot: Bot, user_id: int) -> None:
     logger.info("Обновляю кэш ИИ-аналитики (%s)", user_id)
     today = await user_today(user_id)
     await ai_analytics.refresh_summary(user_id, today)
+
+
+async def _profile_update_job(bot: Bot, user_id: int) -> None:
+    """Раз в сутки, 6:00 (Phase 98) — проверяет, не появилось ли с
+    прошлой проверки заметок/задач, которые стоит вписать в профиль
+    пользователя (см. core/user_profile.py::maybe_update_profile — там
+    же no-op, если опросник /profile вообще не пройден, и короткое
+    замыкание, если новых данных нет). Тихая, как и _ai_analytics_refresh_job
+    выше — ничего не шлёт в чат, это фоновое обслуживание."""
+    logger.info("Проверяю профиль пользователя (%s)", user_id)
+    await maybe_update_profile(user_id)
 
 
 async def _materialize_recurring_tasks_job(bot: Bot, user_id: int) -> None:
@@ -374,6 +386,11 @@ def _job_specs(
             {"hour": 7, "minute": 0},
             [bot, user_id],
         ),
+        # Профиль пользователя (Phase 98) — 6:00, перед ai_analytics_refresh
+        # (6:30) и всем остальным утренним конвейером; не зависит от
+        # того, что они делают, просто свободный слот. No-op, если
+        # опросник /profile не пройден (см. core/user_profile.py).
+        ("profile_update", _profile_update_job, {"hour": 6, "minute": 0}, [bot, user_id]),
         # Кэш ИИ-аналитики (Phase 48) — до materialize_recurring_tasks
         # (07:00) и morning_digest (08:00), чтобы к моменту, как
         # пользователь обычно открывает Mini App утром, кэш уже был свежим.

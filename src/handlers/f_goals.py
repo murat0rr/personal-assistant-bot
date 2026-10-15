@@ -14,6 +14,7 @@ from src.core.goals import create_goal, list_goals_for_period
 from src.core.projects import create_project, find_project_by_title, list_projects
 from src.core.tasks_cache import invalidate_tasks_cache
 from src.core.user_location import user_today
+from src.core.user_profile import get_profile_summary
 from src.integrations.claude_client import generate_tasks_from_goals, propose_projects_from_goals
 from src.models.task import Task
 
@@ -190,9 +191,10 @@ async def _finish_tier(
             ).all()
         ]
     active_projects = await list_projects(user_id)
+    profile_summary = await get_profile_summary(user_id)
 
     generated = await generate_tasks_from_goals(
-        goals, existing_titles, active_projects, period_start, period_end
+        goals, existing_titles, active_projects, period_start, period_end, profile_summary
     )
     created_titles: list[str] = []
     if generated:

@@ -113,11 +113,24 @@ class Task(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    # Phase 98 — "когда реально создана", не то же самое, что updated_at
+    # (та меняется при любой правке/перетаскивании). Нужна профилю
+    # пользователя (core/user_profile.py::maybe_update_profile) —
+    # находить задачи, появившиеся с прошлой проверки, не задетые
+    # недавно. До этой фазы такого поля не было вообще (в отличие от
+    # Note.created_at) — существующие строки получат миграционный
+    # server_default=now() на момент применения, не настоящую дату
+    # создания; это ожидаемо и безвредно для профиля (только слегка
+    # смещает "новизну" самых старых задач один раз, при первом прогоне
+    # джобы после миграции).
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Составной — под дайджест/таймлайн дня/аналитику/календарь (все
     # фильтруют по user_id+archived и диапазону due_date, см. core/tasks.py).
     # Частичный по google_event_id — под google_calendar_sync.py::_find_task_by_event,
     # ненулевой он только у задач, синхронизированных с календарём.
+    # По created_at — под профиль пользователя (Phase 98,
+    # core/user_profile.py), фильтрующий "задачи с прошлой проверки".
     __table_args__ = (
         Index("ix_tasks_user_id_archived_due_date", "user_id", "archived", "due_date"),
         Index(
@@ -126,4 +139,5 @@ class Task(Base):
             "google_event_id",
             postgresql_where=text("google_event_id IS NOT NULL"),
         ),
+        Index("ix_tasks_user_id_created_at", "user_id", "created_at"),
     )

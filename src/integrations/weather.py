@@ -44,9 +44,26 @@ _WEATHER_EMOJI = {
 _DEFAULT_EMOJI = "🌡"
 
 
-def _format_weather(weather_code: int, temp_c: float, wind_kmh: float) -> str:
+def _format_weather(
+    weather_code: int,
+    temp_c: float,
+    wind_kmh: float,
+    temp_max_c: float | None = None,
+    temp_min_c: float | None = None,
+    precipitation_probability: float | None = None,
+) -> str:
     emoji = _WEATHER_EMOJI.get(weather_code, _DEFAULT_EMOJI)
-    return f"{emoji} {round(temp_c)}°C, ветер {round(wind_kmh)} км/ч"
+    base = f"{emoji} {round(temp_c)}°C, ветер {round(wind_kmh)} км/ч"
+    # Phase 98, фидбек — раньше только "сейчас", без прогноза на день
+    # целиком (полезнее для планирования одежды/дел, чем мгновенная
+    # температура). Опционально — _format_weather уже тестируется без
+    # этих аргументов, старое поведение не меняется, если их не передать.
+    if temp_max_c is None or temp_min_c is None:
+        return base
+    details = f"днём до {round(temp_max_c)}°C, ночью до {round(temp_min_c)}°C"
+    if precipitation_probability is not None:
+        details += f", {round(precipitation_probability)}% осадков"
+    return f"{base} ({details})"
 
 
 async def _resolve_coordinates(
@@ -92,15 +109,29 @@ async def get_weather_summary(user_id: int) -> str | None:
                     "latitude": latitude,
                     "longitude": longitude,
                     "current": "temperature_2m,weather_code,wind_speed_10m",
+                    # Phase 98, фидбек — прогноз на день, не только "сейчас"
+                    # (один и тот же запрос, не второй вызов API).
+                    "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max",
                     "timezone": "auto",
                 },
             )
             forecast_response.raise_for_status()
-            current = forecast_response.json()["current"]
+            payload = forecast_response.json()
+            current = payload["current"]
+            daily = payload.get("daily") or {}
     except Exception:
         logger.exception("Не удалось получить погоду")
         return None
 
+    def _first(key: str) -> float | None:
+        values = daily.get(key)
+        return values[0] if values else None
+
     return _format_weather(
-        current["weather_code"], current["temperature_2m"], current["wind_speed_10m"]
+        current["weather_code"],
+        current["temperature_2m"],
+        current["wind_speed_10m"],
+        _first("temperature_2m_max"),
+        _first("temperature_2m_min"),
+        _first("precipitation_probability_max"),
     )

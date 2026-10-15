@@ -601,6 +601,50 @@ async def summarize_diary(answers_text: str) -> str:
     return "".join(block.text for block in response.content if block.type == "text")
 
 
+# Профиль пользователя (Phase 98, core/user_profile.py) — тот же приём,
+# что summarize_diary выше: обычный текст на входе/выходе, без
+# tool-use — не нужна структура, сам профиль и есть ответ. Sonnet, не
+# Haiku — профиль смысловой и персональный, не трёхстрочная сводка дня,
+# качество здесь важнее экономии.
+#
+# max_tokens=6000 (не 700, как у summarize_diary) — живой прогон
+# показал: через CLAUDE_BASE_URL-прокси этот конкретный промпт (длинная,
+# структурированная инструкция) тратит заметную часть бюджета на
+# невидимый reasoning ДО самого текста ответа — при max_tokens=700 Claude
+# стабильно упирался в лимит (stop_reason="max_tokens") с ПУСТЫМ текстом
+# в ответе, хотя формулировка промпта была корректной (проверено: тот же
+# вызов с max_tokens=4000 на тех же данных давал нормальный ответ ценой
+# ~1100-2700 output_tokens на 3-5 предложений видимого текста). Бюджет
+# взят с запасом, не впритык к замеренным ~2700.
+async def aggregate_user_profile(answers_text: str) -> str:
+    response = await client.messages.create(
+        model=settings.claude_model_sonnet,
+        max_tokens=6000,
+        system=prompts.AGGREGATE_USER_PROFILE,
+        messages=[{"role": "user", "content": answers_text}],
+    )
+    return "".join(block.text for block in response.content if block.type == "text").strip()
+
+
+async def update_user_profile(
+    current_summary: str, new_notes: list[str], new_tasks: list[str]
+) -> str:
+    notes_text = "\n".join(f"— {n}" for n in new_notes) if new_notes else "(нет)"
+    tasks_text = "\n".join(f"— {t}" for t in new_tasks) if new_tasks else "(нет)"
+    content = (
+        f"Текущий профиль:\n{current_summary}\n\n"
+        f"Новые заметки:\n{notes_text}\n\n"
+        f"Новые задачи:\n{tasks_text}"
+    )
+    response = await client.messages.create(
+        model=settings.claude_model_sonnet,
+        max_tokens=6000,
+        system=prompts.UPDATE_USER_PROFILE,
+        messages=[{"role": "user", "content": content}],
+    )
+    return "".join(block.text for block in response.content if block.type == "text").strip()
+
+
 _GENERATE_TASKS_FROM_GOALS_TOOL = {
     "name": "generate_tasks",
     "description": (
@@ -654,11 +698,14 @@ async def generate_tasks_from_goals(
     projects: list[dict],
     period_start: date,
     period_end: date,
+    profile_summary: str | None = None,
 ) -> list[GeneratedGoalTask]:
     """Раскладывает цели (недельные/месячные, см. handlers/f_goals.py) на
     конкретные выполнимые задачи, без дат — они уходят в инбокс, пользователь
     сам расставляет их по дням. `period_start`/`period_end` — только для
-    контекста (масштаб цели), на сами задачи не влияют."""
+    контекста (масштаб цели), на сами задачи не влияют. `profile_summary` —
+    персональный контекст (Phase 98, core/user_profile.py), опциональный:
+    None у тех, кто не проходил /profile."""
     goals_text = "\n".join(f"[{', '.join(g['spheres'])}] {g['title']}" for g in goals)
     projects_text = (
         "\n".join(f"- {p['title']}: {p.get('description') or ''}" for p in projects)
@@ -666,8 +713,15 @@ async def generate_tasks_from_goals(
     )
     response = await client.messages.create(
         model=settings.claude_model_sonnet,
-        max_tokens=1500,
-        system=prompts.generate_tasks_from_goals(period_start, period_end),
+        # 1500 → 5000 (Phase 98): добавление profile_summary в систем-промпт
+        # удлинило его настолько, что через CLAUDE_BASE_URL-прокси вызов
+        # стал НЕСТАБИЛЬНО уходить в большой невидимый reasoning перед
+        # tool_use (замерено живьём на соседнем suggest_tasks_for_today —
+        # тот же промпт то укладывался в 42 токена, то съедал 2700+ без
+        # видимого результата). Поведение не детерминировано — бюджет
+        # взят с запасом на худший случай, не впритык к типичному.
+        max_tokens=5000,
+        system=prompts.generate_tasks_from_goals(period_start, period_end, profile_summary),
         tools=[_GENERATE_TASKS_FROM_GOALS_TOOL],
         tool_choice={"type": "tool", "name": "generate_tasks"},
         messages=[
@@ -850,21 +904,36 @@ class TodaySuggestion(BaseModel):
 
 
 async def suggest_tasks_for_today(
-    overdue_titles: list[str], today_titles: list[str], inbox_items: list[dict]
+    overdue_titles: list[str],
+    today_titles: list[str],
+    inbox_items: list[dict],
+    today: date | None = None,
+    profile_summary: str | None = None,
 ) -> list[int]:
     """Утренний совет (см. scheduler/jobs.py::_morning_digest) — смотрит,
     что не сделано со вчера, что уже стоит на сегодня, и что лежит в
     инбоксе, и с учётом графика 5/2 по 8 часов (в будни мало свободного
     времени, в выходные больше) предлагает, что из инбокса имеет смысл
-    подтянуть на сегодня. Список пустой, если день и так плотный."""
+    подтянуть на сегодня. Список пустой, если день и так плотный.
+    `today` — личная "сегодня" вызывающего (Phase 98, фикс: раньше здесь
+    было `date.today()` по серверному часовому поясу, не по часовому
+    поясу пользователя — для дня недели в промпте это могло быть не то
+    число, особенно у пользователей не в Москве). `profile_summary` —
+    персональный контекст (core/user_profile.py), опциональный."""
     if not inbox_items:
         return []
     inbox_text = "\n".join(f"{item['id']}: {item['title']}" for item in inbox_items)
-    today = date.today()
+    if today is None:
+        today = date.today()
     response = await client.messages.create(
         model=settings.claude_model_sonnet,
-        max_tokens=500,
-        system=prompts.suggest_tasks_for_today(today),
+        # 500 → 4000 (Phase 98) — то же нестабильное поведение прокси,
+        # что у generate_tasks_from_goals выше: живьём воспроизведено,
+        # что этот конкретный вызов (с profile_summary в промпте) то
+        # укладывался в 42 токена, то молча съедал весь лимит на
+        # невидимый reasoning без единого tool_use в ответе.
+        max_tokens=4000,
+        system=prompts.suggest_tasks_for_today(today, profile_summary),
         tools=[_SUGGEST_TODAY_TOOL],
         tool_choice={"type": "tool", "name": "suggest_today"},
         messages=[
@@ -1040,6 +1109,7 @@ async def suggest_tasks_for_entity(
     spheres: list[str],
     start_date: date | None,
     end_date: date | None,
+    profile_summary: str | None = None,
 ) -> list[str]:
     """ "Проанализировать задачи и добавить" (Phase 52, форма проекта/
     цели в Mini App) — придумывает конкретные НОВЫЕ задачи под этот
@@ -1049,7 +1119,8 @@ async def suggest_tasks_for_entity(
     экран ревью на фронтенде — см. index.html, ничего не создаётся
     напрямую отсюда). Без дат — как и у generate_tasks_from_goals,
     предложенные задачи уходят в инбокс, пользователь сам расставляет
-    их по дням."""
+    их по дням. `profile_summary` — персональный контекст (Phase 98),
+    опциональный."""
     period = ""
     if start_date or end_date:
         start_str = start_date.isoformat() if start_date else "?"
@@ -1058,8 +1129,12 @@ async def suggest_tasks_for_entity(
     spheres_text = ", ".join(spheres) if spheres else "не указана"
     response = await client.messages.create(
         model=settings.claude_model_sonnet,
-        max_tokens=1000,
-        system=prompts.SUGGEST_TASKS_FOR_ENTITY,
+        # 1000 → 4000 (Phase 98) — то же нестабильное поведение прокси,
+        # что у generate_tasks_from_goals/suggest_tasks_for_today выше,
+        # теперь что и этот промпт получает profile_summary и может
+        # удлиниться настолько же непредсказуемо.
+        max_tokens=4000,
+        system=prompts.suggest_tasks_for_entity_prompt(profile_summary),
         tools=[_SUGGEST_ENTITY_TASKS_TOOL],
         tool_choice={"type": "tool", "name": "suggest_tasks"},
         messages=[

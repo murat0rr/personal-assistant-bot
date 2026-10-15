@@ -43,6 +43,7 @@ from src.core.user_location import (
     set_morning_digest_enabled,
     user_today,
 )
+from src.core.user_profile import get_profile_summary
 from src.core.web_session import SESSION_COOKIE_NAME, verify_session_token
 from src.handlers.f8_habits import check_habit
 from src.handlers.f_set_day_task import refresh_day_task_message
@@ -1011,8 +1012,9 @@ async def suggest_project_tasks_endpoint(
         raise HTTPException(status_code=404, detail="project not found")
     start = date.fromisoformat(project["start_date"]) if project["start_date"] else None
     end = date.fromisoformat(project["end_date"]) if project["end_date"] else None
+    profile_summary = await get_profile_summary(uid)
     titles = await suggest_tasks_for_entity(
-        project["title"], project["description"], project["spheres"], start, end
+        project["title"], project["description"], project["spheres"], start, end, profile_summary
     )
     return {"tasks": titles}
 
@@ -1149,7 +1151,10 @@ async def suggest_goal_tasks_endpoint(
         raise HTTPException(status_code=404, detail="goal not found")
     start = date.fromisoformat(goal["start_date"]) if goal["start_date"] else None
     end = date.fromisoformat(goal["end_date"]) if goal["end_date"] else None
-    titles = await suggest_tasks_for_entity(goal["title"], None, goal["spheres"], start, end)
+    profile_summary = await get_profile_summary(uid)
+    titles = await suggest_tasks_for_entity(
+        goal["title"], None, goal["spheres"], start, end, profile_summary
+    )
     return {"tasks": titles}
 
 

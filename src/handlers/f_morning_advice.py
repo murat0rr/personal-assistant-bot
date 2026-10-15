@@ -11,6 +11,7 @@ from sqlalchemy import select
 from src.core.auth import is_authorized
 from src.core.db import async_session
 from src.core.user_location import user_today
+from src.core.user_profile import get_profile_summary
 from src.handlers.f_set_day_task import refresh_day_task_message
 from src.integrations.claude_client import suggest_tasks_for_today
 from src.models.task import Task
@@ -60,7 +61,10 @@ async def send_morning_advice(bot: Bot, storage: BaseStorage, user_id: int, toda
         return
 
     try:
-        suggested_ids = await suggest_tasks_for_today(overdue_titles, today_titles, inbox_items)
+        profile_summary = await get_profile_summary(user_id)
+        suggested_ids = await suggest_tasks_for_today(
+            overdue_titles, today_titles, inbox_items, today, profile_summary
+        )
     except Exception:
         logger.exception("Не удалось получить совет по задачам на сегодня")
         return

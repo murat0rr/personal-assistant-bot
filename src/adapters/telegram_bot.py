@@ -31,6 +31,7 @@ from src.handlers.f_feedback import router as feedback_router
 from src.handlers.f_goals import router as goals_router
 from src.handlers.f_google_calendar import router as google_calendar_router
 from src.handlers.f_morning_advice import router as morning_advice_router
+from src.handlers.f_profile import router as profile_router
 from src.handlers.f_reminders import router as reminders_router
 from src.handlers.f_schedule import router as schedule_router
 from src.handlers.f_set_day_task import router as set_day_task_router
@@ -58,6 +59,7 @@ dp.include_router(diary_router)
 dp.include_router(goals_router)
 dp.include_router(google_calendar_router)
 dp.include_router(morning_advice_router)
+dp.include_router(profile_router)
 dp.include_router(mode_buttons_router)
 dp.include_router(reminders_router)
 dp.include_router(finance_router)

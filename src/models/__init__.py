@@ -15,6 +15,7 @@ from src.models.screen_time import ScreenTime
 from src.models.task import Base, Task
 from src.models.task_nag import TaskNagSettings
 from src.models.task_template import TaskTemplate
+from src.models.user_profile import UserProfile
 
 __all__ = [
     "Base",
@@ -42,4 +43,5 @@ __all__ = [
     "BuildRequest",
     "WatchedChat",
     "WatchedMessage",
+    "UserProfile",
 ]
