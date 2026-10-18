@@ -86,6 +86,37 @@ client = AsyncAnthropic(
 )
 
 
+async def _call_with_tool(
+    *, model: str, max_tokens: int, system: str, tools: list[dict], messages: list
+):
+    """Временный обход (2026-10-18, см. TECHDEBT.md) — CLAUDE_BASE_URL
+    сейчас не держит forced tool_choice={"type": "tool", "name": ...}
+    надёжно: воспроизведено живьём и на проде, и локально, что он то
+    отбивает 400 ("upstream service rejected the request"), то молча
+    игнорирует forced tool_choice и отвечает обычным текстом вместо
+    вызова тула (стабильно, 4/4 попыток) — и то, и другое выглядит как
+    "AI ничего не предложил" для вызывающего кода (`if tool_use is None:
+    return [] / raise ...`), хотя на деле прокси сломан. Пока не
+    починят: tool_choice="auto" + явное требование вызвать тул в самом
+    системном промпте — единая точка, чтобы вернуть forced tool_choice
+    одной правкой здесь, когда прокси исправят. Каждый из ~16
+    call site'ов в этом файле зовёт именно эту обёртку, а не
+    client.messages.create напрямую, ровно по этой причине."""
+    tool_name = tools[0]["name"]
+    forced_system = (
+        f"{system}\n\nОбязательно вызови инструмент `{tool_name}` с "
+        "результатом в ответе — не отвечай обычным текстом."
+    )
+    return await client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=forced_system,
+        tools=tools,
+        tool_choice={"type": "auto"},
+        messages=messages,
+    )
+
+
 class TaskFields(BaseModel):
     title: str
     due_date: date | None = None
@@ -104,7 +135,7 @@ async def extract_tasks_fields(text: str, today: date) -> list[TaskFields]:
     сама решает, сколько отдельных задач в тексте, и возвращает список
     (Phase 49). Обычный однозадачный текст — список из одного элемента,
     поведение не меняется по сравнению с прежним extract_task_fields."""
-    response = await client.messages.create(
+    response = await _call_with_tool(
         model=settings.claude_model_haiku,
         # 1200, не 800 (Phase 65) — описание может добавить пару
         # предложений на каждую задачу, а сообщение может называть
@@ -112,7 +143,6 @@ async def extract_tasks_fields(text: str, today: date) -> list[TaskFields]:
         max_tokens=1200,
         system=prompts.extract_tasks_fields(today),
         tools=[_EXTRACT_TASKS_TOOL],
-        tool_choice={"type": "tool", "name": "extract_tasks"},
         messages=[{"role": "user", "content": text}],
     )
     tool_use = next((block for block in response.content if block.type == "tool_use"), None)
@@ -159,12 +189,11 @@ async def maybe_generate_task_description(title: str, due_date: date | None) -> 
     блокируя ответ. Sonnet, не Haiku — тут важнее качество совета, чем
     задержка, которую всё равно никто не увидит вживую."""
     due_text = f" Срок: {due_date.isoformat()}." if due_date else ""
-    response = await client.messages.create(
+    response = await _call_with_tool(
         model=settings.claude_model_sonnet,
         max_tokens=400,
         system=prompts.MAYBE_GENERATE_TASK_DESCRIPTION,
         tools=[_MAYBE_DESCRIPTION_TOOL],
-        tool_choice={"type": "tool", "name": "maybe_describe_task"},
         messages=[{"role": "user", "content": f"Задача: {title}.{due_text}"}],
     )
     tool_use = next((block for block in response.content if block.type == "tool_use"), None)
@@ -242,12 +271,11 @@ async def suggest_entity_spheres(
         start_str = start_date.isoformat() if start_date else "?"
         end_str = end_date.isoformat() if end_date else "?"
         period = f" Срок: {start_str} — {end_str}."
-    response = await client.messages.create(
+    response = await _call_with_tool(
         model=settings.claude_model_haiku,
         max_tokens=200,
         system=prompts.SUGGEST_ENTITY_SPHERES,
         tools=[_SUGGEST_SPHERES_TOOL],
-        tool_choice={"type": "tool", "name": "suggest_spheres"},
         messages=[
             {
                 "role": "user",
@@ -326,12 +354,11 @@ class ReminderPlan(BaseModel):
 
 
 async def parse_reminder(text: str, today: date) -> ReminderPlan:
-    response = await client.messages.create(
+    response = await _call_with_tool(
         model=settings.claude_model_haiku,
         max_tokens=300,
         system=prompts.parse_reminder(today),
         tools=[_PARSE_REMINDER_TOOL],
-        tool_choice={"type": "tool", "name": "parse_reminder"},
         messages=[{"role": "user", "content": text}],
     )
     tool_use = next((block for block in response.content if block.type == "tool_use"), None)
@@ -443,12 +470,11 @@ async def parse_recurring_task(conversation: str, today: date) -> RecurringTaskP
     без настоящего многоходового диалога через messages[] (усложнило бы
     tool_use/tool_result-протокол без реальной пользы: Claude и так
     видит всю историю в одном блоке текста)."""
-    response = await client.messages.create(
+    response = await _call_with_tool(
         model=settings.claude_model_haiku,
         max_tokens=400,
         system=prompts.parse_recurring_task(today),
         tools=[_PARSE_RECURRING_TASK_TOOL],
-        tool_choice={"type": "tool", "name": "parse_recurring_task"},
         messages=[{"role": "user", "content": conversation}],
     )
     tool_use = next((block for block in response.content if block.type == "tool_use"), None)
@@ -490,12 +516,11 @@ async def suggest_new_templates(recent_titles: list[str], existing_titles: list[
     """Раз в неделю (см. scheduler/jobs.py::_suggest_templates_job) — по
     заголовкам задач за неделю предлагает 0-3 новых частых формулировки,
     которых ещё нет среди существующих шаблонов."""
-    response = await client.messages.create(
+    response = await _call_with_tool(
         model=settings.claude_model_haiku,
         max_tokens=300,
         system=prompts.SUGGEST_NEW_TEMPLATES,
         tools=[_SUGGEST_TEMPLATES_TOOL],
-        tool_choice={"type": "tool", "name": "suggest_templates"},
         messages=[
             {
                 "role": "user",
@@ -577,12 +602,11 @@ async def answer_question_rich(content_blocks: list[dict]) -> QuestionAnswer:
     """Мультимодальный ответ на вопрос (текст/голос/фото/PDF, см. kнопку
     "Вопрос") — в отличие от простого answer_question в web_search.py,
     здесь forced tool-use, чтобы модель сама решала, нужен ли файл-приложение."""
-    response = await client.messages.create(
+    response = await _call_with_tool(
         model=settings.claude_model_sonnet,
         max_tokens=4096,
         system=prompts.ANSWER_QUESTION_RICH,
         tools=[_ANSWER_QUESTION_TOOL],
-        tool_choice={"type": "tool", "name": "answer_question"},
         messages=[{"role": "user", "content": content_blocks}],
     )
     tool_use = next((block for block in response.content if block.type == "tool_use"), None)
@@ -711,7 +735,7 @@ async def generate_tasks_from_goals(
         "\n".join(f"- {p['title']}: {p.get('description') or ''}" for p in projects)
         or "(активных проектов нет)"
     )
-    response = await client.messages.create(
+    response = await _call_with_tool(
         model=settings.claude_model_sonnet,
         # 1500 → 5000 (Phase 98): добавление profile_summary в систем-промпт
         # удлинило его настолько, что через CLAUDE_BASE_URL-прокси вызов
@@ -723,7 +747,6 @@ async def generate_tasks_from_goals(
         max_tokens=5000,
         system=prompts.generate_tasks_from_goals(period_start, period_end, profile_summary),
         tools=[_GENERATE_TASKS_FROM_GOALS_TOOL],
-        tool_choice={"type": "tool", "name": "generate_tasks"},
         messages=[
             {
                 "role": "user",
@@ -792,12 +815,11 @@ async def propose_projects_from_goals(goals: list[dict], today: date) -> list[Pr
     инициативу (см. handlers/f_goals.py), и если да — предлагает Project
     со сроками по контексту цели."""
     goals_text = "\n".join(f"[{', '.join(g['spheres'])}] {g['title']}" for g in goals)
-    response = await client.messages.create(
+    response = await _call_with_tool(
         model=settings.claude_model_sonnet,
         max_tokens=1000,
         system=prompts.propose_projects_from_goals(today),
         tools=[_PROPOSE_PROJECTS_TOOL],
-        tool_choice={"type": "tool", "name": "propose_projects"},
         messages=[{"role": "user", "content": f"Месячные цели:\n{goals_text}"}],
     )
     tool_use = next((block for block in response.content if block.type == "tool_use"), None)
@@ -860,12 +882,11 @@ async def tidy_task_titles(titles: list[str]) -> list[TidiedTask]:
     if not titles:
         return []
     numbered = "\n".join(f"{i}. {t}" for i, t in enumerate(titles))
-    response = await client.messages.create(
+    response = await _call_with_tool(
         model=settings.claude_model_haiku,
         max_tokens=1500,
         system=prompts.TIDY_TASK_TITLES,
         tools=[_TIDY_TASKS_TOOL],
-        tool_choice={"type": "tool", "name": "tidy_tasks"},
         messages=[{"role": "user", "content": numbered}],
     )
     tool_use = next((block for block in response.content if block.type == "tool_use"), None)
@@ -925,7 +946,7 @@ async def suggest_tasks_for_today(
     inbox_text = "\n".join(f"{item['id']}: {item['title']}" for item in inbox_items)
     if today is None:
         today = date.today()
-    response = await client.messages.create(
+    response = await _call_with_tool(
         model=settings.claude_model_sonnet,
         # 500 → 4000 (Phase 98) — то же нестабильное поведение прокси,
         # что у generate_tasks_from_goals выше: живьём воспроизведено,
@@ -935,7 +956,6 @@ async def suggest_tasks_for_today(
         max_tokens=4000,
         system=prompts.suggest_tasks_for_today(today, profile_summary),
         tools=[_SUGGEST_TODAY_TOOL],
-        tool_choice={"type": "tool", "name": "suggest_today"},
         messages=[
             {
                 "role": "user",
@@ -1031,12 +1051,11 @@ async def analyze_productivity(spheres: list[dict], month: dict, projects: list[
         or "(активных проектов нет)"
     )
     total_this_month = sum(month.get("all_counts", []))
-    response = await client.messages.create(
+    response = await _call_with_tool(
         model=settings.claude_model_sonnet,
         max_tokens=400,
         system=prompts.ANALYZE_PRODUCTIVITY,
         tools=[_ANALYZE_PRODUCTIVITY_TOOL],
-        tool_choice={"type": "tool", "name": "summarize_productivity"},
         messages=[
             {
                 "role": "user",
@@ -1127,7 +1146,7 @@ async def suggest_tasks_for_entity(
         end_str = end_date.isoformat() if end_date else "?"
         period = f" Срок: {start_str} — {end_str}."
     spheres_text = ", ".join(spheres) if spheres else "не указана"
-    response = await client.messages.create(
+    response = await _call_with_tool(
         model=settings.claude_model_sonnet,
         # 1000 → 4000 (Phase 98) — то же нестабильное поведение прокси,
         # что у generate_tasks_from_goals/suggest_tasks_for_today выше,
@@ -1136,7 +1155,6 @@ async def suggest_tasks_for_entity(
         max_tokens=4000,
         system=prompts.suggest_tasks_for_entity_prompt(profile_summary),
         tools=[_SUGGEST_ENTITY_TASKS_TOOL],
-        tool_choice={"type": "tool", "name": "suggest_tasks"},
         messages=[
             {
                 "role": "user",
@@ -1210,12 +1228,11 @@ async def suggest_note_tags(text: str, pool_tags: list[str], current_tags: list[
     не предлагать их повторно."""
     pool_text = ", ".join(f"#{t}" for t in pool_tags) if pool_tags else "(пока пусто)"
     current_text = ", ".join(f"#{t}" for t in current_tags) if current_tags else "(нет)"
-    response = await client.messages.create(
+    response = await _call_with_tool(
         model=settings.claude_model_haiku,
         max_tokens=200,
         system=prompts.SUGGEST_NOTE_TAGS,
         tools=[_SUGGEST_NOTE_TAGS_TOOL],
-        tool_choice={"type": "tool", "name": "suggest_tags"},
         messages=[
             {
                 "role": "user",
@@ -1286,12 +1303,11 @@ async def triage_feedback(text: str) -> FeedbackTriage:
     исполняется напрямую ни этим вызовом, ни периодическим агентом,
     который читает auto_applicable дальше (тот ещё и перепроверяет сам,
     не доверяя этому полю вслепую — см. хартию агента)."""
-    response = await client.messages.create(
+    response = await _call_with_tool(
         model=settings.claude_model_haiku,
         max_tokens=250,
         system=prompts.TRIAGE_FEEDBACK,
         tools=[_TRIAGE_FEEDBACK_TOOL],
-        tool_choice={"type": "tool", "name": "triage_feedback"},
         messages=[{"role": "user", "content": text}],
     )
     tool_use = next((block for block in response.content if block.type == "tool_use"), None)
@@ -1347,12 +1363,11 @@ async def analyze_chat_batch(
     max_tokens поднят с 2000 (Phase 87) до 4000 вместе с добавлением
     блока профиля в системный промпт — см. TECHDEBT.md про прокси
     CLAUDE_BASE_URL и невидимый расход токенов на reasoning (Phase 98)."""
-    response = await client.messages.create(
+    response = await _call_with_tool(
         model=settings.claude_model_haiku,
         max_tokens=4000,
         system=prompts.chat_watch_system_prompt(custom_prompt, profile_summary),
         tools=[_ANALYZE_CHAT_BATCH_TOOL],
-        tool_choice={"type": "tool", "name": "analyze_chat_batch"},
         messages=[{"role": "user", "content": transcript}],
     )
     tool_use = next((block for block in response.content if block.type == "tool_use"), None)
