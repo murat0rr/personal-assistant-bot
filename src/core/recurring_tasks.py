@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from src.core.db import async_session
 from src.core.tasks_cache import invalidate_tasks_cache
+from src.core.user_location import user_today
 from src.models.recurring_task_rule import RecurringTaskRule
 from src.models.task import Task
 
@@ -189,20 +190,29 @@ async def list_rules(user_id: int) -> list[dict]:
 async def archive_rule(rule_id: int, user_id: int) -> None:
     """Удаление ВСЕГО правила (Phase 74, фидбек — свайп в списке
     Mini App). Раньше не трогала уже материализованные Task-строки
-    вообще никак (не только прошлые — ни одной, ни будущих) — висели
-    осиротевшими навсегда. По фидбеку (2026-10-19) теперь архивирует и
-    их — тот же soft-delete, что у обычного удаления задачи свайпом
-    (Task.archived, не хард-DELETE), независимо от даты/статуса done:
-    правила больше нет — не должно остаться его occurrence-задач ни в
-    одном активном списке."""
+    вообще никак — висели осиротевшими будущими/сегодняшними задачами
+    без правила за ними. Первая попытка фикса (2026-10-19) архивировала
+    ВСЕ связанные Task независимо от даты — оказалось неверно прочитан
+    фидбек: владелец уточнил, что прошлые occurrence-задачи — это
+    история (выполнено/не выполнено), их удалять НЕЛЬЗЯ. Правильное
+    поведение: архивируются (soft-delete, не хард-DELETE) только
+    СЕГОДНЯШНИЕ и БУДУЩИЕ occurrence-задачи этого правила — прошлые
+    (due_date раньше сегодняшнего дня пользователя) не трогаются
+    вообще, остаются как были."""
     async with async_session() as session:
         rule = await session.get(RecurringTaskRule, rule_id)
         if rule is None or rule.user_id != user_id:
             raise ValueError("recurring rule not found")
         rule.archived = True
 
+        today = await user_today(user_id)
+        cutoff = datetime.combine(today, datetime.min.time())
         result = await session.execute(
-            select(Task).where(Task.recurring_rule_id == rule_id, Task.archived.is_(False))
+            select(Task).where(
+                Task.recurring_rule_id == rule_id,
+                Task.archived.is_(False),
+                Task.due_date >= cutoff,
+            )
         )
         for task in result.scalars().all():
             task.archived = True
