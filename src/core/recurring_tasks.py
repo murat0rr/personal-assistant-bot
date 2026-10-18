@@ -188,14 +188,27 @@ async def list_rules(user_id: int) -> list[dict]:
 
 async def archive_rule(rule_id: int, user_id: int) -> None:
     """Удаление ВСЕГО правила (Phase 74, фидбек — свайп в списке
-    Mini App) — не трогает уже материализованные Task-строки, они
-    независимы от правила (см. materialize_due_rules)."""
+    Mini App). Раньше не трогала уже материализованные Task-строки
+    вообще никак (не только прошлые — ни одной, ни будущих) — висели
+    осиротевшими навсегда. По фидбеку (2026-10-19) теперь архивирует и
+    их — тот же soft-delete, что у обычного удаления задачи свайпом
+    (Task.archived, не хард-DELETE), независимо от даты/статуса done:
+    правила больше нет — не должно остаться его occurrence-задач ни в
+    одном активном списке."""
     async with async_session() as session:
         rule = await session.get(RecurringTaskRule, rule_id)
         if rule is None or rule.user_id != user_id:
             raise ValueError("recurring rule not found")
         rule.archived = True
+
+        result = await session.execute(
+            select(Task).where(Task.recurring_rule_id == rule_id, Task.archived.is_(False))
+        )
+        for task in result.scalars().all():
+            task.archived = True
+
         await session.commit()
+    await invalidate_tasks_cache(user_id)
 
 
 async def update_rule(
