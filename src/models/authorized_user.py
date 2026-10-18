@@ -47,3 +47,12 @@ class AuthorizedUser(Base):
     # (открывает "Помощь"), либо крестиком — после этого не показывается
     # больше никогда никаким способом.
     guide_banner_shown: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Вечерний опрос дневника (фидбек, 2026-10-18) — раньше шёл
+    # безусловно каждый вечер (см. scheduler/jobs.py::_evening_diary),
+    # теперь можно выключить командой /diary_toggle в боте
+    # (handlers/f_schedule.py). По умолчанию True — сохраняет текущее
+    # поведение для владельца (единственный, у кого эта фича есть —
+    # дневник привязан к его личному Notion-воркспейсу).
+    evening_diary_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true"
+    )

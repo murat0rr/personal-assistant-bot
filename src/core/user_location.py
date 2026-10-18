@@ -130,6 +130,34 @@ async def set_morning_digest_enabled(user_id: int, enabled: bool) -> None:
         await session.commit()
 
 
+async def evening_diary_enabled(user_id: int) -> bool:
+    """/diary_toggle в боте (фидбек) — тот же принцип "отсутствие строки
+    = включено", что у morning_digest_enabled выше."""
+    location = await get_user_location(user_id)
+    return location.evening_diary_enabled if location else True
+
+
+async def set_evening_diary_enabled(user_id: int) -> bool:
+    """Переключает и возвращает новое значение — handlers/f_schedule.py
+    зовёт без промежуточного чтения (тот же приём, что toggle_nag в
+    f_task_nag.py)."""
+    async with async_session() as session:
+        existing = await session.get(AuthorizedUser, user_id)
+        if existing is None:
+            # Явный True здесь (не просто полагаться на default= колонки) —
+            # ниже сразу инвертируем значение в памяти, до commit, column
+            # default применился бы только при флуше.
+            existing = AuthorizedUser(
+                telegram_user_id=user_id,
+                added_at=datetime.now(await user_timezone(user_id)),
+                evening_diary_enabled=True,
+            )
+            session.add(existing)
+        existing.evening_diary_enabled = not existing.evening_diary_enabled
+        await session.commit()
+        return existing.evening_diary_enabled
+
+
 async def guide_banner_shown(user_id: int) -> bool:
     """Плашка "посмотреть гайд" в Mini App (Phase 69) — по умолчанию
     False у новых пользователей (см. AuthorizedUser.guide_banner_shown,

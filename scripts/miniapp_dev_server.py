@@ -847,7 +847,13 @@ def make_handler(
             # сюда же попадает css/app.css и js/core/icons.js.
             suffix = Path(self.path).suffix
             if suffix in _STATIC_CONTENT_TYPES:
-                requested = (_STATIC_DIR / self.path.lstrip("/")).resolve()
+                # index.html ссылается на статику абсолютным путём с
+                # прод-префиксом ("/miniapp/css/app.css" — см. api.py,
+                # StaticFiles смонтирован на /miniapp/), а этот харнесс
+                # сам и есть корень "/" — без снятия префикса 404
+                # (обнаружено при живой проверке фидбека 2026-10-18).
+                relative = self.path.removeprefix("/miniapp/").lstrip("/")
+                requested = (_STATIC_DIR / relative).resolve()
                 if _STATIC_DIR.resolve() in requested.parents and requested.is_file():
                     body = requested.read_bytes()
                     self.send_response(200)

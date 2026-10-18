@@ -136,6 +136,10 @@ async def main() -> None:
             BotCommand(command="nag", description="Намёки о незакрытых задачах — вкл/выкл"),
             BotCommand(command="morning", description="Час утренней рассылки"),
             BotCommand(command="evening", description="Час вечерней рефлексии"),
+            BotCommand(
+                command="diary_toggle",
+                description="[только владелец] Вечерний опрос дневника — вкл/выкл",
+            ),
             BotCommand(command="timezone", description="Определить часовой пояс по геопозиции"),
             BotCommand(command="google_calendar", description="Подключить Google Calendar"),
             BotCommand(command="google_calendar_off", description="Отключить Google Calendar"),

@@ -12,7 +12,7 @@
        смонтирован как StaticFiles на весь каталог — путь рабочий из
        любого входа. -->
   <link rel="manifest" href="/miniapp/manifest.json">
-  <meta name="theme-color" content="#4F46E5">
+  <meta name="theme-color" content="#ffffff">
   <link rel="icon" href="/miniapp/icons/favicon-32.png">
   <link rel="apple-touch-icon" href="/miniapp/icons/apple-touch-icon.png">
   <meta name="mobile-web-app-capable" content="yes">
@@ -336,8 +336,17 @@
         <button type="button" class="entity-form-toggle" id="tasks-deleted-toggle"></button>
       </div>
       <div id="tasks-screen-list" class="list"></div>
+      <!-- Фидбек: повторяющиеся occurrence-задачи раньше были вперемешку
+           с обычными в списке выше — теперь отдельная секция ниже, то же
+           место, где и раньше бейдж 🔁 в строке подсказывал, что это
+           повторяющаяся. Скрыта целиком, если ни одной нет (фильтры
+           могут выкосить все occurrence, не только обычные). -->
+      <div id="tasks-recurring-section" style="display:none">
+        <p class="section-label">🔁 Повторяющиеся задачи</p>
+        <div id="tasks-screen-recurring-list" class="list"></div>
+      </div>
       <button type="button" class="recurring-entry-btn" id="open-recurring-rules-btn">
-        <span>🔁 Повторяющиеся задачи</span>
+        <span>🔁 Правила повторения</span>
         <span class="drawer-link-chevron">›</span>
       </button>
       </div>
@@ -760,12 +769,23 @@
         return null;
       }
     }
+    // Шторки/статус-бар другого цвета, чем полотно (фидбек) — meta
+    // theme-color была статичным индиго и никогда не обновлялась, хотя
+    // --bg меняется по теме (см. css/app.css). Синхронизируем после
+    // каждого применения темы, не только при ручном переключении.
+    function syncThemeColorMeta() {
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (!meta) return;
+      const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+      if (bg) meta.setAttribute("content", bg);
+    }
     function applyTheme(theme) {
       if (theme === "dark" || theme === "light") {
         document.documentElement.setAttribute("data-theme", theme);
       } else {
         document.documentElement.removeAttribute("data-theme");
       }
+      syncThemeColorMeta();
     }
     function setTheme(theme) {
       applyTheme(theme);
@@ -1323,21 +1343,41 @@
         );
       }
       listEl.innerHTML = "";
-      if (!items.length && !archivedItems.length) {
+      const recurringSection = document.getElementById("tasks-recurring-section");
+      const recurringListEl = document.getElementById("tasks-screen-recurring-list");
+      const normalItems = items.filter((t) => t.source !== "recurring");
+      const recurringItems = items.filter((t) => t.source === "recurring");
+      if (!normalItems.length && !archivedItems.length) {
         renderEmpty(listEl);
-        return;
+      } else {
+        for (const t of normalItems) {
+          listEl.append(
+            renderTaskRow(t, {
+              showDateButton: true,
+              showTrashButton: true,
+              showGrip: false,
+              showMeta: true,
+            })
+          );
+        }
+        for (const t of archivedItems) listEl.append(renderArchivedTaskRow(t));
       }
-      for (const t of items) {
-        listEl.append(
-          renderTaskRow(t, {
-            showDateButton: true,
-            showTrashButton: true,
-            showGrip: false,
-            showMeta: true,
-          })
-        );
+      if (recurringListEl) recurringListEl.innerHTML = "";
+      if (recurringItems.length && recurringListEl && recurringSection) {
+        recurringSection.style.display = "";
+        for (const t of recurringItems) {
+          recurringListEl.append(
+            renderTaskRow(t, {
+              showDateButton: true,
+              showTrashButton: true,
+              showGrip: false,
+              showMeta: true,
+            })
+          );
+        }
+      } else if (recurringSection) {
+        recurringSection.style.display = "none";
       }
-      for (const t of archivedItems) listEl.append(renderArchivedTaskRow(t));
     }
 
     function renderArchivedTaskRow(task) {
@@ -6286,6 +6326,31 @@
           null,
           "Графики идут один за другим: задачи по сферам, выполнено за месяц, по проектам, три графика выполнения целей (неделя/месяц/год), текстовый разбор от ИИ (кнопка ↻ сверху — перегенерировать)."
         ) +
+        "</div>" +
+        '<div class="help-section"><h4>Задачи (расширенный экран)</h4>' +
+        helpRow(
+          tapGestureIcon(),
+          "Плоский список всех задач, не по дням. Тап по заголовку «Задачи» разворачивает фильтры (дата/статус/сфера) и сортировку по дате."
+        ) +
+        helpRow(
+          null,
+          "«Удалённые» в фильтре статуса — изолированный режим, показывает только архив; тумблер «Показать удалённые» ниже, наоборот, подмешивает архив к обычному списку."
+        ) +
+        helpRow(
+          null,
+          "Повторяющиеся задачи — отдельной секцией 🔁 под основным списком, не вперемешку с обычными. «Правила повторения» ниже — отдельный экран, где сами правила создаются/редактируются (не конкретные дни)."
+        ) +
+        "</div>" +
+        '<div class="help-section"><h4>Заметки</h4>' +
+        helpRow(
+          tapGestureIcon(),
+          "Тап по карточке открывает заметку. «Список»/«Граф» сверху — переключение между обычным списком и картой связей [[заметка]]."
+        ) +
+        helpRow(
+          null,
+          "Название придумывает ИИ, если не ввёл своё (значок ✨, кнопка «другое» — перегенерировать). Теги — #слово прямо в тексте или кнопка «✨ Предложить теги»."
+        ) +
+        helpRow(null, "Фильтры сверху — по сфере, по проекту/цели, по тегам.") +
         "</div>" +
         '<div class="help-section"><h4>Проекты и цели</h4>' +
         helpRow(null, "Тот же принцип, что у задач — тап по кружку отмечает выполненным.") +

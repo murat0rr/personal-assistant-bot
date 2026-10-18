@@ -3,7 +3,12 @@
 жёстко зашитых 8:00/21:00 (см. src/scheduler/jobs.py::_job_specs).
 Тот же паттерн, что /nag (Phase 59) — без FSM, команда → инлайн-
 клавиатура часов → callback_query сохраняет и пересобирает джобы через
-reschedule_user_jobs (тот же пересборщик, что у /timezone)."""
+reschedule_user_jobs (тот же пересборщик, что у /timezone).
+
+/diary_toggle (фидбек, 2026-10-18) — вкл/выкл самого вечернего опроса
+дневника, отдельно от часа; owner-only (settings.telegram_user_id
+напрямую, не is_authorized — дневник в принципе есть только у
+владельца, см. scheduler/jobs.py::_evening_diary)."""
 
 import logging
 
@@ -14,7 +19,8 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src.core.auth import is_authorized
-from src.core.user_location import save_schedule_hour
+from src.core.config import settings
+from src.core.user_location import save_schedule_hour, set_evening_diary_enabled
 from src.scheduler.jobs import reschedule_user_jobs
 
 logger = logging.getLogger(__name__)
@@ -102,3 +108,13 @@ async def set_evening_hour(
     await callback.answer("Готово")
     if isinstance(callback.message, Message):
         await callback.message.edit_text(f"Вечерняя рефлексия теперь в {hour}:00.")
+
+
+@router.message(Command("diary_toggle"))
+async def toggle_evening_diary(message: Message) -> None:
+    if not message.from_user or message.from_user.id != settings.telegram_user_id:
+        await message.answer("Извините, этот бот вам недоступен.")
+        return
+    enabled = await set_evening_diary_enabled(message.from_user.id)
+    status = "включён" if enabled else "выключен"
+    await message.answer(f"Вечерний опрос дневника теперь {status}.")

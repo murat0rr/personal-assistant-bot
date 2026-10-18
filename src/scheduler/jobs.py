@@ -23,6 +23,7 @@ from src.core.recurring_tasks import materialize_due_rules
 from src.core.task_templates import create_ai_template, list_templates
 from src.core.tasks_cache import invalidate_tasks_cache
 from src.core.user_location import (
+    evening_diary_enabled,
     morning_digest_enabled,
     user_schedule_hours,
     user_timezone,
@@ -148,7 +149,11 @@ async def _google_calendar_sync_job(bot: Bot, user_id: int) -> None:
 
 async def _evening_diary(bot: Bot, storage: BaseStorage) -> None:
     # Только владелец (см. _OWNER_ONLY_JOB_NAMES) — дневник в Notion,
-    # один воркспейс.
+    # один воркспейс. Опционально (фидбек, 2026-10-18) — /diary_toggle
+    # в боте, тот же приём, что morning_digest_enabled у _morning_digest.
+    if not await evening_diary_enabled(settings.telegram_user_id):
+        logger.info("Вечерний опрос дневника выключен настройкой")
+        return
     logger.info("Запускаю вечерний опрос дневника")
     key = StorageKey(
         bot_id=bot.id,
