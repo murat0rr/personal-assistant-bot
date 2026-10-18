@@ -701,18 +701,19 @@
       flex-shrink: 0;
       white-space: nowrap;
     }
-    /* Значок "повторяющаяся" (Phase 74) — у задачи, материализованной
-       из правила повторения, показывается везде, где обычно виден
-       .title (список "Задачи", в будущем — и остальные списки). */
+    /* Значок повторяющейся (Phase 74; без подписи — фидбек 2026-10-19,
+       только иконка) — у задачи, материализованной из правила
+       повторения, показывается везде, где обычно виден .title (список
+       "Задачи", в будущем — и остальные списки). Симметричный паддинг
+       под круглый значок без текста (раньше был асимметричный под пилюлю). */
     .recurring-badge {
-      font-size: 10.5px;
       color: var(--accent);
       background: color-mix(in srgb, var(--accent) 14%, transparent);
       border-radius: 999px;
-      padding: 1px 7px 1px 5px;
+      padding: 3px;
       display: inline-flex;
       align-items: center;
-      gap: 3px;
+      justify-content: center;
       flex-shrink: 0;
     }
     .recurring-badge svg { width: 9px; height: 9px; }

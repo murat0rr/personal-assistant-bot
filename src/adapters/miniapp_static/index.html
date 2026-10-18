@@ -1127,14 +1127,15 @@
 
       row.append(checkbox, title);
 
-      // Значок "повторяющаяся" (Phase 74, фидбек) — задача, материализованная
+      // Значок повторяющейся (Phase 74, фидбек; текст убран по фидбеку
+      // 2026-10-19 — один значок без подписи) — задача, материализованная
       // из правила (core/recurring_tasks.py), у обычных задач source
       // другой ("MiniApp"/"google_calendar"/т.п.), поле уже приходит с
       // бэкенда (см. handlers/miniapp_tasks.py::serialize_task).
       if (task.source === "recurring") {
         const badge = document.createElement("span");
         badge.className = "recurring-badge";
-        badge.innerHTML = repeatIcon() + "<span>повторяющаяся</span>";
+        badge.innerHTML = repeatIcon();
         row.append(badge);
       }
 
