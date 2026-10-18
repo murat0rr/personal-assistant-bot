@@ -2,7 +2,12 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- viewport-fit=cover (фидбек, 2026-10-19) — без него env(safe-area-inset-*)
+       в css/app.css всегда возвращает 0: страница не залезает под
+       чёлку/home indicator на iOS вообще, та полоса остаётся нативным
+       системным хромом (нейтрального цвета, не --bg), сколько ни меняй
+       theme-color — на iOS этот meta-тег вообще не используется. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Ассистент</title>
   <!-- Абсолютные пути (не относительные) — этот же index.html отдаётся
        и по /miniapp/ (внутри Telegram), и по /app/ (вне Telegram,
@@ -336,19 +341,27 @@
         <button type="button" class="entity-form-toggle" id="tasks-deleted-toggle"></button>
       </div>
       <div id="tasks-screen-list" class="list"></div>
-      <!-- Фидбек: повторяющиеся occurrence-задачи раньше были вперемешку
-           с обычными в списке выше — теперь отдельная секция ниже, то же
-           место, где и раньше бейдж 🔁 в строке подсказывал, что это
-           повторяющаяся. Скрыта целиком, если ни одной нет (фильтры
-           могут выкосить все occurrence, не только обычные). -->
-      <div id="tasks-recurring-section" style="display:none">
-        <p class="section-label">🔁 Повторяющиеся задачи</p>
-        <div id="tasks-screen-recurring-list" class="list"></div>
       </div>
-      <button type="button" class="recurring-entry-btn" id="open-recurring-rules-btn">
-        <span>🔁 Правила повторения</span>
-        <span class="drawer-link-chevron">›</span>
-      </button>
+    </div>
+    <!-- Повторяющиеся occurrence-задачи (фидбек, 2026-10-18→19) — раньше
+         были вперемешку с обычными в списке выше, потом (неправильно)
+         спрятаны ВНУТРИ той же раскрывашки "Задачи" как пассивный
+         подсписок. По факту нужна была отдельная, независимо
+         сворачиваемая раскрывашка, ровно как у "Задачи"/"Инбокс" —
+         свой заголовок, свой шеврон, своё состояние. Фильтры
+         (дата/статус/сфера) в разделе "Задачи" выше общие для обоих
+         списков — своего набора фильтров здесь нет. -->
+    <div class="section">
+      <p class="section-label section-header" id="tasks-recurring-header">
+        <span id="tasks-recurring-header-title">🔁 Повторяющиеся задачи</span>
+        <span class="chevron" id="tasks-recurring-chevron"></span>
+      </p>
+      <div id="tasks-recurring-body" style="display: none;">
+        <div id="tasks-screen-recurring-list" class="list"></div>
+        <button type="button" class="recurring-entry-btn" id="open-recurring-rules-btn">
+          <span>🔁 Правила повторения</span>
+          <span class="drawer-link-chevron">›</span>
+        </button>
       </div>
     </div>
   </div>
@@ -1304,17 +1317,27 @@
     }
 
     // Заголовок раскрывашки (Phase 77) — счётчик всех неархивированных
-    // задач, тот же принцип, что у "Инбокс (N)" — общее число, не
-    // зависящее от текущих фильтров (те не видны, пока свёрнуто).
+    // ОБЫЧНЫХ задач (не считая повторяющихся — у тех с Phase 100
+    // (фидбек) своя раскрывашка и свой счётчик ниже), тот же принцип,
+    // что у "Инбокс (N)" — общее число, не зависящее от текущих
+    // фильтров (те не видны, пока свёрнуто).
     function renderTasksScreenHeader() {
       const el = document.getElementById("tasks-header-title");
       if (!el) return;
-      const count = allNonArchivedTasksFlat().length;
+      const count = allNonArchivedTasksFlat().filter((t) => t.source !== "recurring").length;
       el.textContent = count ? `Задачи (${count})` : "Задачи";
+    }
+
+    function renderTasksRecurringHeader() {
+      const el = document.getElementById("tasks-recurring-header-title");
+      if (!el) return;
+      const count = allNonArchivedTasksFlat().filter((t) => t.source === "recurring").length;
+      el.textContent = count ? `🔁 Повторяющиеся задачи (${count})` : "🔁 Повторяющиеся задачи";
     }
 
     function renderTasksScreen() {
       renderTasksScreenHeader();
+      renderTasksRecurringHeader();
       const listEl = document.getElementById("tasks-screen-list");
       if (!listEl) return; // разметка экрана ещё не отрендерилась (не должно случаться)
       // "Удалённые" в фильтре статуса (Phase 75, фидбек: "фильтр только
@@ -1343,8 +1366,6 @@
         );
       }
       listEl.innerHTML = "";
-      const recurringSection = document.getElementById("tasks-recurring-section");
-      const recurringListEl = document.getElementById("tasks-screen-recurring-list");
       const normalItems = items.filter((t) => t.source !== "recurring");
       const recurringItems = items.filter((t) => t.source === "recurring");
       if (!normalItems.length && !archivedItems.length) {
@@ -1362,21 +1383,28 @@
         }
         for (const t of archivedItems) listEl.append(renderArchivedTaskRow(t));
       }
-      if (recurringListEl) recurringListEl.innerHTML = "";
-      if (recurringItems.length && recurringListEl && recurringSection) {
-        recurringSection.style.display = "";
-        for (const t of recurringItems) {
-          recurringListEl.append(
-            renderTaskRow(t, {
-              showDateButton: true,
-              showTrashButton: true,
-              showGrip: false,
-              showMeta: true,
-            })
-          );
+
+      // Повторяющиеся — своя раскрывашка (#tasks-recurring-header/-body),
+      // всегда видна как заголовок, как и "Задачи"/"Инбокс" — не
+      // прячется целиком при нуле, просто показывает пустой список
+      // (тот же renderEmpty, что у обычного списка).
+      const recurringListEl = document.getElementById("tasks-screen-recurring-list");
+      if (recurringListEl) {
+        recurringListEl.innerHTML = "";
+        if (!recurringItems.length) {
+          renderEmpty(recurringListEl);
+        } else {
+          for (const t of recurringItems) {
+            recurringListEl.append(
+              renderTaskRow(t, {
+                showDateButton: true,
+                showTrashButton: true,
+                showGrip: false,
+                showMeta: true,
+              })
+            );
+          }
         }
-      } else if (recurringSection) {
-        recurringSection.style.display = "none";
       }
     }
 
@@ -7143,6 +7171,23 @@
       tasksExpanded = !tasksExpanded;
       document.getElementById("tasks-body").style.display = tasksExpanded ? "" : "none";
       document.getElementById("tasks-chevron").classList.toggle("expanded", tasksExpanded);
+    };
+
+    // Повторяющиеся задачи (Phase 100, фидбек) — своя независимая
+    // раскрывашка рядом с "Задачи" выше, не вложена в неё (первая
+    // попытка спрятать их внутрь #tasks-body оказалась не тем, что
+    // просили — нужна была ровно такая же отдельная сворачиваемая
+    // секция, как у "Задачи"/"Инбокс").
+    let tasksRecurringExpanded = false;
+    document.getElementById("tasks-recurring-chevron").innerHTML = chevronIcon();
+    document.getElementById("tasks-recurring-header").onclick = () => {
+      tasksRecurringExpanded = !tasksRecurringExpanded;
+      document.getElementById("tasks-recurring-body").style.display = tasksRecurringExpanded
+        ? ""
+        : "none";
+      document
+        .getElementById("tasks-recurring-chevron")
+        .classList.toggle("expanded", tasksRecurringExpanded);
     };
 
     attachSheetOverswipeClose(

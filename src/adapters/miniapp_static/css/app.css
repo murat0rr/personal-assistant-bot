@@ -61,6 +61,11 @@
       margin: 0;
       height: 100%;
       overflow: hidden; /* скроллит каждый .app-screen сам по себе, не body */
+      /* Фон и на html тоже (фидбек, 2026-10-19) — вместе с
+         viewport-fit=cover в index.html это гарантирует, что safe-area
+         (чёлка/home indicator на iOS) закрашена темой приложения, а не
+         дефолтным белым/чёрным html-канвасом под body. */
+      background: var(--bg);
     }
     body {
       font-family: -apple-system, "Segoe UI", sans-serif;
