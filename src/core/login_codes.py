@@ -57,13 +57,17 @@ async def generate_code(user_id: int) -> str:
 async def verify_code(code: str) -> int | None:
     """Возвращает user_id при совпадении кода — иначе None. Код
     одноразовый: удаляется сразу после успешного чтения (TTL в Redis
-    сам убирает протухшие записи, отдельная проверка не нужна)."""
-    r = _get_redis()
-    key = f"webcode:code:{code}"
-    value = await r.get(key)
+    сам убирает протухшие записи, отдельная проверка не нужна).
+
+    GETDEL (не раздельные get+delete, см. TECHDEBT.md) — атомарная
+    команда Redis, читает и сразу удаляет ключ одной операцией. Раньше
+    между get и delete была точка ожидания: два параллельных
+    POST /auth/verify с одним кодом могли оба прочитать значение до
+    того, как первый успеет удалить — код, объявленный одноразовым,
+    аутентифицировал двоих."""
+    value = await _get_redis().getdel(f"webcode:code:{code}")
     if value is None:
         return None
-    await r.delete(key)
     return int(value)
 
 
@@ -73,8 +77,23 @@ async def can_attempt_verify(ip: str) -> bool:
 
 
 async def record_verify_attempt(ip: str) -> None:
+    """INCR и EXPIRE в одной атомарной транзакции (Redis MULTI/EXEC —
+    redis-py пайплайн транзакционный по умолчанию), не раздельными
+    вызовами (см. TECHDEBT.md). Раньше TTL ставился отдельной командой
+    только при new_count == 1 — если процесс падал/рвал соединение
+    между INCR и EXPIRE, ключ оставался в Redis без TTL НАВСЕГДА
+    (условие "new_count == 1" больше никогда не истинно), и IP был
+    заблокирован безвозвратно после 20 попыток.
+
+    EXPIRE ... NX (ставит TTL, только если его ещё нет) вместо условия
+    на new_count — тот же эффект (TTL ставится ровно один раз, на
+    первой попытке), но в одной атомарной операции с INCR, и
+    самовосстанавливается: если ключ каким-то образом уже остался без
+    TTL (старый баг/ручное вмешательство), ближайший же вызов поставит
+    TTL сам, а не продлит поломку."""
     r = _get_redis()
     key = f"webcode:verify_attempts:{ip}"
-    new_count = await r.incr(key)
-    if new_count == 1:
-        await r.expire(key, _VERIFY_WINDOW_SECONDS)
+    async with r.pipeline(transaction=True) as pipe:
+        pipe.incr(key)
+        pipe.expire(key, _VERIFY_WINDOW_SECONDS, nx=True)
+        await pipe.execute()

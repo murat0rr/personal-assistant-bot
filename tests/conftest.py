@@ -62,11 +62,72 @@ class FakeRedis:
         self.store[key] = (str(new_value), expire_at)
         return new_value
 
-    async def expire(self, key: str, seconds: int) -> bool:
-        if key in self.store:
-            value, _ = self.store[key]
-            self.store[key] = (value, time.time() + seconds)
+    async def expire(
+        self,
+        key: str,
+        seconds: int,
+        nx: bool = False,
+        xx: bool = False,
+        gt: bool = False,
+        lt: bool = False,
+    ) -> bool:
+        """nx поддержан (единственный флаг, которым реально пользуется
+        login_codes.py::record_verify_attempt — атомарная фикс-правка
+        2026-10-20, см. TECHDEBT.md) — xx/gt/lt не реализованы, никто
+        в проекте их не зовёт."""
+        if key not in self.store:
+            return False
+        value, current_expire_at = self.store[key]
+        if nx and current_expire_at is not None:
+            return False
+        self.store[key] = (value, time.time() + seconds)
         return True
+
+    async def getdel(self, key: str) -> str | None:
+        """Атомарный get+delete (login_codes.py::verify_code, фикс
+        2026-10-20) — в тестовом дабле атомарность бесплатна, нет
+        настоящей конкурентности внутри одного event loop без await
+        между чтением и удалением."""
+        if self._expired(key):
+            return None
+        value, _ = self.store[key]
+        del self.store[key]
+        return value
+
+    def pipeline(self, transaction: bool = True) -> "_FakePipeline":
+        return _FakePipeline(self)
+
+
+class _FakePipeline:
+    """Минимальная эмуляция транзакционного пайплайна redis-py —
+    команды копятся без await (как и в настоящем клиенте), выполняются
+    по порядку при execute(). Поддержаны только incr/expire — всё, что
+    сейчас реально собирают в пайплайн (login_codes.py::record_verify_attempt)."""
+
+    def __init__(self, redis: "FakeRedis") -> None:
+        self._redis = redis
+        self._ops: list[tuple[str, tuple, dict]] = []
+
+    def incr(self, key: str) -> "_FakePipeline":
+        self._ops.append(("incr", (key,), {}))
+        return self
+
+    def expire(self, key: str, seconds: int, **kwargs: object) -> "_FakePipeline":
+        self._ops.append(("expire", (key, seconds), kwargs))
+        return self
+
+    async def execute(self) -> list:
+        results = [
+            await getattr(self._redis, name)(*args, **kwargs) for name, args, kwargs in self._ops
+        ]
+        self._ops = []
+        return results
+
+    async def __aenter__(self) -> "_FakePipeline":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
 
 
 @pytest.fixture(autouse=True)

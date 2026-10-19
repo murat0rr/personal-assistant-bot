@@ -52,3 +52,26 @@ async def test_verify_rate_limit_per_ip():
     assert await login_codes.can_attempt_verify("1.2.3.4") is False
     # Другой IP не задет чужим лимитом.
     assert await login_codes.can_attempt_verify("5.6.7.8") is True
+
+
+async def test_verify_attempt_counter_gets_ttl_on_first_call():
+    # Регрессия на фикс 2026-10-20 (TECHDEBT.md) — раньше TTL ставился
+    # отдельной командой только при new_count == 1 и мог вообще не
+    # выполниться, если процесс падал между INCR и EXPIRE; теперь
+    # INCR+EXPIRE NX идут одной атомарной транзакцией.
+    key = "webcode:verify_attempts:9.9.9.9"
+    await login_codes.record_verify_attempt("9.9.9.9")
+    _, expire_at = login_codes._redis.store[key]
+    assert expire_at is not None
+
+
+async def test_verify_attempt_counter_self_heals_if_ttl_missing():
+    # Симулируем унаследованное от старого бага состояние — счётчик
+    # уже существует, но без TTL (раньше это означало "заблокирован
+    # навсегда", т.к. new_count больше никогда не равнялось 1).
+    key = "webcode:verify_attempts:8.8.8.8"
+    login_codes._redis.store[key] = ("5", None)
+    await login_codes.record_verify_attempt("8.8.8.8")
+    value, expire_at = login_codes._redis.store[key]
+    assert value == "6"
+    assert expire_at is not None
