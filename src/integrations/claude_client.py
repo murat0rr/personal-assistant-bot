@@ -615,11 +615,11 @@ async def answer_question_rich(content_blocks: list[dict]) -> QuestionAnswer:
     return QuestionAnswer.model_validate(tool_use.input)
 
 
-async def summarize_diary(answers_text: str) -> str:
+async def summarize_diary(answers_text: str, past_entries_text: str | None = None) -> str:
     response = await client.messages.create(
         model=settings.claude_model_haiku,
         max_tokens=300,
-        system=prompts.SUMMARIZE_DIARY,
+        system=prompts.summarize_diary_prompt(past_entries_text),
         messages=[{"role": "user", "content": answers_text}],
     )
     return "".join(block.text for block in response.content if block.type == "text")

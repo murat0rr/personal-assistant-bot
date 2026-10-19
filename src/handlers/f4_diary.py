@@ -1,4 +1,5 @@
 import logging
+from datetime import date, timedelta
 
 from aiogram import Bot, F, Router
 from aiogram.filters import StateFilter
@@ -8,9 +9,27 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from src.core.auth import is_authorized
 from src.core.config import settings
-from src.core.day_reviews import save_diary_entry
+from src.core.day_reviews import entries_since, save_diary_entry
 from src.core.user_location import user_today
 from src.integrations.claude_client import summarize_diary
+
+# Окно "недавнего прошлого" для summarize_diary (ТЕХДОЛГ, 2026-10-20) —
+# неделя назад от сегодня, тот же порядок величины, что у недельного
+# ревью (f11_weekly_review.py). Только уже готовые саммари (не сырые
+# ответы) — дешевле по токенам, и этого достаточно, чтобы заметить
+# повторяющийся паттерн за несколько дней.
+_DIARY_HISTORY_DAYS = 7
+
+
+async def _recent_diary_summaries_text(user_id: int, today: date) -> str | None:
+    entries = await entries_since(user_id, today - timedelta(days=_DIARY_HISTORY_DAYS))
+    lines = [
+        f"{e['entry_date'].strftime('%d.%m')}: {e['summary']}"
+        for e in sorted(entries, key=lambda e: e["entry_date"])
+        if e["summary"]
+    ]
+    return "\n".join(lines) or None
+
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +133,8 @@ async def _finish(bot: Bot, state: FSMContext) -> None:
         summary = None
         if highlight or reflection:
             text_for_summary = "\n".join(part for part in (highlight, reflection) if part)
-            summary = await summarize_diary(text_for_summary)
+            past_entries_text = await _recent_diary_summaries_text(settings.telegram_user_id, today)
+            summary = await summarize_diary(text_for_summary, past_entries_text)
         # Один апсерт разом на все поля (Phase 62 — раньше запись
         # уходила в Notion, а Postgres дублировал только саммари
         # отдельным вызовом; теперь Postgres — единственный источник
