@@ -37,7 +37,7 @@ from src.handlers.f12_briefing import build_morning_briefing
 from src.handlers.f_goals import start_goal_flow
 from src.handlers.f_morning_advice import send_morning_advice
 from src.handlers.f_reminders import check_reminders
-from src.handlers.f_set_day_task import refresh_day_task_message
+from src.handlers.f_set_day_task import advance_day_task_date, refresh_day_task_message
 from src.handlers.f_task_nag import check_and_nudge
 from src.handlers.miniapp_tasks import build_task_board
 from src.integrations.claude_client import suggest_new_templates, tidy_task_titles
@@ -121,6 +121,14 @@ async def _morning_digest(bot: Bot, storage: BaseStorage, user_id: int) -> None:
         await send_morning_advice(bot, storage, user_id, today)
     except Exception:
         logger.exception("Не удалось отправить совет по задачам на сегодня")
+    # Закреплённое /set_day_task (фидбек, 2026-10-20) — единственное
+    # место, которое сдвигает показанный в нём день; тихий no-op, если
+    # пользователь ни разу не вызывал команду (см. докстринг
+    # f_set_day_task.py).
+    try:
+        await advance_day_task_date(bot, user_id, today)
+    except Exception:
+        logger.exception("Не удалось сдвинуть закреплённое /set_day_task на новый день")
 
 
 async def _reminders_job(bot: Bot, user_id: int) -> None:
