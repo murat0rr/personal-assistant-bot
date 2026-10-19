@@ -606,6 +606,24 @@
     </div>
   </div>
 
+  <!-- Подтверждение удаления повторяющейся задачи (фидбек, 2026-10-20) —
+       баг, найденный по живой записи пользователя: удаление ОДНОЙ
+       occurrence-задачи каждую неделю не останавливает само правило
+       (см. core/recurring_tasks.py::archive_rule) — пользователь думал,
+       что удаляет "повторение", а на деле только текущую неделю, и
+       правило честно рожало новую задачу дальше. Теперь явный выбор. -->
+  <div id="recurring-delete-sheet" class="entity-window">
+    <div class="entity-window-head">
+      <span class="entity-window-title">Это повторяющаяся задача</span>
+      <button type="button" class="entity-window-close" id="recurring-delete-close" aria-label="Закрыть">✕</button>
+    </div>
+    <div class="entity-window-body">
+      <p class="section-label" style="margin-top:0">«<span id="recurring-delete-task-title"></span>»</p>
+      <button type="button" class="entity-form-submit" id="recurring-delete-only-this">Удалить только эту неделю</button>
+      <button type="button" class="entity-form-submit task-edit-delete" id="recurring-delete-stop">Удалить и остановить повторение</button>
+    </div>
+  </div>
+
   <!-- Окно создания/правки проекта/цели (Phase 33) — плавающая карточка
        по центру экрана вместо шторки снизу (см. .entity-window в CSS):
        макет обсуждали и утвердили отдельно (интерактивный прототип). -->
@@ -1555,6 +1573,10 @@
     // ввод, без ИИ вообще.
     let recurringRulesData = [];
     let recurringRulesSheetOpen = false;
+    // Подтверждение удаления occurrence-задачи (фидбек, 2026-10-20) —
+    // задача, для которой сейчас открыт выбор "только эту неделю" vs
+    // "остановить повторение", null — сейчас не открыто.
+    let recurringDeleteTask = null;
     let recurringRuleFormOpen = false;
     // Правка уже существующего правила (Phase 77) — null значит форма в
     // режиме создания, тот же принцип, что createEntityEditingId у
@@ -1883,6 +1905,22 @@
     document.getElementById("recurring-rule-form-close").onclick = () => closeRecurringRuleForm();
     document.getElementById("open-recurring-rules-btn").onclick = () => openRecurringRulesSheet();
     document.getElementById("recurring-rules-close").onclick = () => closeRecurringRulesSheet();
+    document.getElementById("recurring-delete-close").onclick = () => {
+      recurringDeleteTask = null;
+      render();
+    };
+    document.getElementById("recurring-delete-only-this").onclick = async () => {
+      const task = recurringDeleteTask;
+      recurringDeleteTask = null;
+      render();
+      if (task) await doArchiveTask(task);
+    };
+    document.getElementById("recurring-delete-stop").onclick = async () => {
+      const task = recurringDeleteTask;
+      recurringDeleteTask = null;
+      render();
+      if (task) await archiveTaskAndStopRecurrence(task);
+    };
 
     // Ручной порядок, только внутри режима переноса (Phase 14) — палец
     // двигает саму строку (translateY) через ручку слева, а её DOM-соседи
@@ -4255,7 +4293,8 @@
         editingTaskId != null ||
         editingTemplateId != null ||
         recurringRulesSheetOpen ||
-        recurringRuleFormOpen;
+        recurringRuleFormOpen ||
+        recurringDeleteTask !== null;
       document.getElementById("reorder-scrim").classList.toggle("visible", anySheetOpen);
       document.getElementById("templates-sheet").classList.toggle("visible", templatesPickerOpen);
       document
@@ -4275,6 +4314,13 @@
       document
         .getElementById("recurring-rule-form-sheet")
         .classList.toggle("visible", recurringRuleFormOpen);
+      document
+        .getElementById("recurring-delete-sheet")
+        .classList.toggle("visible", recurringDeleteTask !== null);
+      if (recurringDeleteTask) {
+        document.getElementById("recurring-delete-task-title").textContent =
+          recurringDeleteTask.title;
+      }
       document.getElementById("date-picker-sheet").classList.toggle("visible", datePickerOpen);
       document.getElementById("side-drawer").classList.toggle("visible", sideDrawerOpen);
       document.getElementById("help-sheet").classList.toggle("visible", helpSheetOpen);
@@ -4593,7 +4639,22 @@
       }
     }
 
+    // Повторяющаяся — сначала спросить, что именно удаляем (фидбек,
+    // 2026-10-20): реальный баг на живых данных показал, что
+    // пользователи удаляют occurrence-задачу каждую неделю заново,
+    // думая, что это остановит повторение — а правило (core/
+    // recurring_tasks.py) оставалось активным и честно рожало
+    // следующую. Обычные задачи — без изменений, сразу удаляются.
     async function archiveTask(task) {
+      if (task.source === "recurring") {
+        recurringDeleteTask = task;
+        render();
+        return;
+      }
+      await doArchiveTask(task);
+    }
+
+    async function doArchiveTask(task) {
       const id = task.id;
       pendingIds.add(id);
       render();
@@ -4604,6 +4665,32 @@
         alert("Не удалось удалить задачу.");
       } finally {
         pendingIds.delete(id);
+        render();
+      }
+    }
+
+    // "Удалить и остановить повторение" — архивирует само правило
+    // (новых occurrence больше не будет, см. archive_rule) И явно эту
+    // конкретную задачу отдельным вызовом — archive_rule трогает только
+    // due_date >= сегодня, а эта задача может быть и просроченной
+    // (сознательное решение владельца: прошлые occurrence не трогать
+    // при обычном удалении правила, но тут явный выбор пользователя
+    // убрать именно эту задачу тоже).
+    async function archiveTaskAndStopRecurrence(task) {
+      const ruleId = task.recurring_rule_id;
+      pendingIds.add(task.id);
+      render();
+      try {
+        if (ruleId != null) {
+          await api(`/miniapp/api/recurring-rules/${ruleId}/archive`, { method: "POST" });
+          recurringRulesData = recurringRulesData.filter((r) => r.id !== ruleId);
+        }
+        await api(`/miniapp/api/tasks/${encodeURIComponent(task.id)}/archive`, { method: "POST" });
+        removeTaskEverywhere(task.id);
+      } catch (e) {
+        alert("Не удалось остановить повторение.");
+      } finally {
+        pendingIds.delete(task.id);
         render();
       }
     }
