@@ -144,7 +144,8 @@ async def main() -> None:
             BotCommand(command="google_calendar", description="Подключить Google Calendar"),
             BotCommand(command="google_calendar_off", description="Отключить Google Calendar"),
             BotCommand(
-                command="set_day_task", description="Закреплённые задачи на день одним сообщением"
+                command="day_tasks",
+                description="Включить ежедневный список задач одним закреплённым сообщением",
             ),
             BotCommand(command="staging", description="Открыть staging Mini App"),
             BotCommand(command="feedback", description="Баг, идея или пожелание по боту"),

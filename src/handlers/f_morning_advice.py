@@ -126,7 +126,7 @@ async def handle_advice_button(callback: CallbackQuery, state: FSMContext) -> No
     try:
         await refresh_day_task_message(callback.bot, callback.from_user.id)
     except Exception:
-        logger.exception("Не удалось обновить /set_day_task после принятия совета")
+        logger.exception("Не удалось обновить /day_tasks после принятия совета")
 
     await callback.answer("Добавил на сегодня")
     await callback.message.answer("Готово, добавил в сегодняшний список.")

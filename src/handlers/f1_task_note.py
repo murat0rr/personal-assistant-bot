@@ -74,7 +74,7 @@ async def handle_task_note(message: Message, text: str) -> None:
         await message.answer("Не получилось создать задачу, попробуй ещё раз.")
         return
 
-    # Живое обновление /set_day_task (Phase 80, фидбек живой проверки) —
+    # Живое обновление /day_tasks (Phase 80, фидбек живой проверки) —
     # если новая задача попала на сегодня, а у пользователя уже открыто
     # это сообщение, оно должно увидеть её сразу, не только по
     # следующему тапу/повторной команде. Не должно ронять уже успешное
@@ -82,7 +82,7 @@ async def handle_task_note(message: Message, text: str) -> None:
     try:
         await refresh_day_task_message(message.bot, message.from_user.id)
     except Exception:
-        logger.exception("Не удалось обновить /set_day_task после создания задачи")
+        logger.exception("Не удалось обновить /day_tasks после создания задачи")
 
     if fallback_used:
         await message.answer(

@@ -95,13 +95,13 @@ async def _materialize_recurring_tasks_job(bot: Bot, user_id: int) -> None:
     created = await materialize_due_rules(user_id, today)
     if created:
         logger.info("Создано повторяющихся задач: %s", len(created))
-        # Живое обновление /set_day_task (Phase 80) — свежесозданный
+        # Живое обновление /day_tasks (Phase 80) — свежесозданный
         # occurrence должен появиться в уже отправленном сообщении, не
         # только по следующему тапу.
         try:
             await refresh_day_task_message(bot, user_id)
         except Exception:
-            logger.exception("Не удалось обновить /set_day_task после материализации")
+            logger.exception("Не удалось обновить /day_tasks после материализации")
 
 
 async def _morning_digest(bot: Bot, storage: BaseStorage, user_id: int) -> None:
@@ -121,14 +121,14 @@ async def _morning_digest(bot: Bot, storage: BaseStorage, user_id: int) -> None:
         await send_morning_advice(bot, storage, user_id, today)
     except Exception:
         logger.exception("Не удалось отправить совет по задачам на сегодня")
-    # Закреплённое /set_day_task (фидбек, 2026-10-20) — единственное
-    # место, которое сдвигает показанный в нём день; тихий no-op, если
-    # пользователь ни разу не вызывал команду (см. докстринг
-    # f_set_day_task.py).
+    # Закреплённое /day_tasks (фидбек, 2026-10-20, переименовано
+    # 2026-10-22) — единственное место, которое сдвигает показанный в
+    # нём день; тихий no-op, если пользователь ни разу не вызывал
+    # команду (см. докстринг f_set_day_task.py).
     try:
         await advance_day_task_date(bot, user_id, today)
     except Exception:
-        logger.exception("Не удалось сдвинуть закреплённое /set_day_task на новый день")
+        logger.exception("Не удалось сдвинуть закреплённое /day_tasks на новый день")
 
 
 async def _reminders_job(bot: Bot, user_id: int) -> None:

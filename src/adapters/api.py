@@ -424,13 +424,13 @@ async def create_task_endpoint(
     _background_tasks.add(bg_task)
     bg_task.add_done_callback(_background_tasks.discard)
 
-    # Живое обновление /set_day_task (Phase 80, тот же принцип, что
+    # Живое обновление /day_tasks (Phase 80, тот же принцип, что
     # f1_task_note.py на стороне бота) — no-op, если этой фичей не
     # пользовались; не должно ронять успешный ответ Mini App.
     try:
         await refresh_day_task_message(get_bot(), user["id"])
     except Exception:
-        logger.exception("Не удалось обновить /set_day_task после создания задачи")
+        logger.exception("Не удалось обновить /day_tasks после создания задачи")
 
     return {"status": "ok", "id": task.id}
 
@@ -474,7 +474,7 @@ async def mark_task_done(
     try:
         await refresh_day_task_message(get_bot(), user["id"])
     except Exception:
-        logger.exception("Не удалось обновить /set_day_task после смены статуса задачи")
+        logger.exception("Не удалось обновить /day_tasks после смены статуса задачи")
 
     return {"status": "ok"}
 
@@ -502,7 +502,7 @@ async def set_task_due_date(
     try:
         await refresh_day_task_message(get_bot(), user["id"])
     except Exception:
-        logger.exception("Не удалось обновить /set_day_task после смены даты задачи")
+        logger.exception("Не удалось обновить /day_tasks после смены даты задачи")
 
     return {"status": "ok"}
 
@@ -673,7 +673,7 @@ async def archive_task_endpoint(
     try:
         await refresh_day_task_message(get_bot(), user["id"])
     except Exception:
-        logger.exception("Не удалось обновить /set_day_task после удаления задачи")
+        logger.exception("Не удалось обновить /day_tasks после удаления задачи")
 
     return {"status": "ok"}
 
