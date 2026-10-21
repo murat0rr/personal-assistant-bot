@@ -8,6 +8,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import select
 
+from src.core.ack import reply
 from src.core.auth import is_authorized
 from src.core.config import settings
 from src.core.db import async_session
@@ -116,7 +117,7 @@ async def handle_new_reminder(message: Message, text: str) -> None:
         plan = await parse_reminder(text, today)
     except Exception:
         logger.exception("Не удалось разобрать напоминание: %r", text)
-        await message.answer("Не получилось разобрать напоминание, попробуй ещё раз.")
+        await reply(message, "Не получилось разобрать напоминание, попробуй ещё раз.")
         return
 
     value = _plan_to_value(plan)
@@ -124,7 +125,7 @@ async def handle_new_reminder(message: Message, text: str) -> None:
     if plan.schedule_kind == "location":
         coords = await geocode(plan.place_name or "")
         if coords is None:
-            await message.answer("Не нашёл такое место, опиши точнее (адрес, район, город).")
+            await reply(message, "Не нашёл такое место, опиши точнее (адрес, район, город).")
             return
         lat, lon = coords
         value = {**value, "lat": lat, "lon": lon, "radius_m": _DEFAULT_RADIUS_M}
@@ -141,8 +142,9 @@ async def handle_new_reminder(message: Message, text: str) -> None:
         )
         await session.commit()
 
-    await message.answer(
-        f"Готово, буду напоминать: «{plan.text}» ({_describe_schedule(plan.schedule_kind, value)})"
+    await reply(
+        message,
+        f"Готово, буду напоминать: «{plan.text}» ({_describe_schedule(plan.schedule_kind, value)})",
     )
 
 

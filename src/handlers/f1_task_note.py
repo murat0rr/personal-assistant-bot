@@ -3,6 +3,7 @@ from datetime import datetime
 
 from aiogram.types import Message
 
+from src.core.ack import reply
 from src.core.db import async_session
 from src.core.tasks_cache import invalidate_tasks_cache
 from src.core.user_location import user_today
@@ -71,7 +72,7 @@ async def handle_task_note(message: Message, text: str) -> None:
         # Сбой здесь — уже не про ИИ (тот случай обработан выше), а про
         # саму БД — фолбеком не лечится, честно сообщаем об ошибке.
         logger.exception("Не удалось сохранить задачу(-и) в БД: %r", text)
-        await message.answer("Не получилось создать задачу, попробуй ещё раз.")
+        await reply(message, "Не получилось создать задачу, попробуй ещё раз.")
         return
 
     # Живое обновление /day_tasks (Phase 80, фидбек живой проверки) —
@@ -85,9 +86,10 @@ async def handle_task_note(message: Message, text: str) -> None:
         logger.exception("Не удалось обновить /day_tasks после создания задачи")
 
     if fallback_used:
-        await message.answer(
+        await reply(
+            message,
             f"ИИ сейчас недоступен — сохранил как есть: «{tasks_fields[0].title}» "
-            "(без срока, приоритет: средний). Поправь вручную, если нужно."
+            "(без срока, приоритет: средний). Поправь вручную, если нужно.",
         )
         return
 
@@ -96,7 +98,7 @@ async def handle_task_note(message: Message, text: str) -> None:
         return f"«{fields.title}» ({due_str}, приоритет: {fields.priority})"
 
     if len(tasks_fields) == 1:
-        await message.answer(f"Готово: {_line(tasks_fields[0])}")
+        await reply(message, f"Готово: {_line(tasks_fields[0])}")
     else:
         lines = "\n".join(f"— {_line(f)}" for f in tasks_fields)
-        await message.answer(f"Готово, создал {len(tasks_fields)} задачи:\n{lines}")
+        await reply(message, f"Готово, создал {len(tasks_fields)} задачи:\n{lines}")

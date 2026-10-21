@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 
+from src.core.ack import reply
 from src.core.auth import is_authorized
 from src.core.feedback import create_feedback
 from src.core.message_text import extract_text
@@ -34,13 +35,14 @@ async def submit_feedback(message: Message, text: str) -> None:
         await create_feedback(message.from_user.id, text)
     except Exception:
         logger.exception("Не удалось сохранить отзыв: %r", text)
-        await message.answer("Не получилось записать отзыв, попробуй ещё раз.")
+        await reply(message, "Не получилось записать отзыв, попробуй ещё раз.")
         return
 
-    await message.answer(
+    await reply(
+        message,
         "Спасибо, записал! Если это явный баг без влияния на дизайн — "
         "возможно, починится само в ближайшей проверке. Идею или что-то "
-        "неоднозначное посмотрю и решу сам."
+        "неоднозначное посмотрю и решу сам.",
     )
 
 

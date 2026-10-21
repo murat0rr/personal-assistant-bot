@@ -4,6 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 
+from src.core.ack import working
 from src.core.auth import is_authorized
 from src.core.message_text import extract_text
 from src.handlers.f1_task_note import handle_task_note
@@ -95,10 +96,11 @@ async def handle_mode_content(message: Message, state: FSMContext) -> None:
     if handler is None:
         return
 
-    text = await extract_text(message)
-    if not text:
-        return
-    await handler(message, text)
+    async with working(message):
+        text = await extract_text(message)
+        if not text:
+            return
+        await handler(message, text)
 
 
 @router.message(StateFilter(ModeStates.question), F.text | F.voice | F.photo | F.document)
@@ -108,7 +110,8 @@ async def handle_question_button(message: Message, state: FSMContext) -> None:
         return
 
     await state.clear()
-    await handle_question_input(message)
+    async with working(message):
+        await handle_question_input(message)
 
 
 # Повторяющиеся задачи (Phase 73) — свои два хендлера, не через
@@ -123,10 +126,11 @@ async def handle_recurring_button(message: Message, state: FSMContext) -> None:
         await message.answer("Извините, этот бот вам недоступен.")
         return
 
-    text = await extract_text(message)
-    if not text:
-        return
-    await handle_new_recurring_task(message, text, state)
+    async with working(message):
+        text = await extract_text(message)
+        if not text:
+            return
+        await handle_new_recurring_task(message, text, state)
 
 
 @router.message(StateFilter(RecurringClarificationStates.awaiting_answer), F.voice | F.text)
@@ -135,7 +139,8 @@ async def handle_recurring_clarification_button(message: Message, state: FSMCont
         await message.answer("Извините, этот бот вам недоступен.")
         return
 
-    text = await extract_text(message)
-    if not text:
-        return
-    await handle_recurring_clarification_answer(message, text, state)
+    async with working(message):
+        text = await extract_text(message)
+        if not text:
+            return
+        await handle_recurring_clarification_answer(message, text, state)

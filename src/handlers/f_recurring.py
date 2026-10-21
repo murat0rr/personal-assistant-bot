@@ -4,6 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 
+from src.core.ack import reply
 from src.core.recurring_tasks import create_rule
 from src.core.user_location import user_today
 from src.integrations.claude_client import RecurringTaskPlan, parse_recurring_task
@@ -72,7 +73,7 @@ async def _run_plan(message: Message, state: FSMContext, conversation: str) -> N
         plan = await parse_recurring_task(conversation, today)
     except Exception:
         logger.exception("Не удалось разобрать повторяющуюся задачу: %r", conversation)
-        await message.answer("Не получилось разобрать, попробуй ещё раз с самого начала.")
+        await reply(message, "Не получилось разобрать, попробуй ещё раз с самого начала.")
         await state.clear()
         return
 
@@ -80,9 +81,10 @@ async def _run_plan(message: Message, state: FSMContext, conversation: str) -> N
         data = await state.get_data()
         rounds = data.get("recurring_rounds", 0) + 1
         if rounds > _MAX_CLARIFICATION_ROUNDS or not plan.clarification_question:
-            await message.answer(
+            await reply(
+                message,
                 "Не получается разобрать — опиши, пожалуйста, задачу и как часто "
-                "её делать одним сообщением с самого начала."
+                "её делать одним сообщением с самого начала.",
             )
             await state.clear()
             return
@@ -92,14 +94,15 @@ async def _run_plan(message: Message, state: FSMContext, conversation: str) -> N
             recurring_question=plan.clarification_question,
             recurring_rounds=rounds,
         )
-        await message.answer(plan.clarification_question)
+        await reply(message, plan.clarification_question)
         return
 
     if not plan.schedule_kind or not plan.title:
-        await message.answer(
+        await reply(
+            message,
             "Это не похоже на повторяющуюся задачу — опиши, как часто её "
             "делать (например «каждый понедельник разгрести почту», «по "
-            "будням зарядка», «5 числа каждого месяца»)."
+            "будням зарядка», «5 числа каждого месяца»).",
         )
         await state.clear()
         return
@@ -116,8 +119,8 @@ async def _run_plan(message: Message, state: FSMContext, conversation: str) -> N
     )
     schedule_desc = _describe_schedule(plan.schedule_kind, value)
     period_desc = _describe_period(plan)
-    await message.answer(
-        f"Готово, буду создавать задачу: «{plan.title}» ({schedule_desc}{period_desc})"
+    await reply(
+        message, f"Готово, буду создавать задачу: «{plan.title}» ({schedule_desc}{period_desc})"
     )
     await state.clear()
 

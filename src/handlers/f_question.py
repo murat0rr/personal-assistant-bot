@@ -3,6 +3,7 @@ import logging
 
 from aiogram.types import BufferedInputFile, Message
 
+from src.core.ack import reply
 from src.core.message_text import extract_text
 from src.integrations.claude_client import answer_question_rich
 from src.integrations.web_search import answer_question
@@ -26,10 +27,10 @@ async def handle_question(message: Message, text: str) -> None:
         answer = await answer_question(text)
     except Exception:
         logger.exception("Не удалось ответить на вопрос: %r", text)
-        await message.answer("Не получилось ответить, попробуй ещё раз.")
+        await reply(message, "Не получилось ответить, попробуй ещё раз.")
         return
 
-    await message.answer(answer or "Не нашёл, что ответить.")
+    await reply(message, answer or "Не нашёл, что ответить.")
 
 
 async def _build_content_blocks(message: Message) -> list[dict] | None:
@@ -71,23 +72,21 @@ async def _build_content_blocks(message: Message) -> list[dict] | None:
 
 async def handle_question_input(message: Message) -> None:
     """Кнопка "Вопрос" — принимает текст/голос/фото/PDF, отвечает текстом
-    и опциональным файлом-приложением. Обработка фото/PDF может занять
-    время, поэтому сразу шлём подтверждение."""
-    await message.answer("🔍 Вопрос взят в работу, отвечу через минуту-другую.")
-
+    и опциональным файлом-приложением. "Взял в работу" шлёт общая обёртка
+    core/ack.py::working (вызывающий хендлер), ответ правит то сообщение."""
     content_blocks = await _build_content_blocks(message)
     if content_blocks is None:
-        await message.answer("Не смог обработать сообщение — поддерживаю текст, голос, фото и PDF.")
+        await reply(message, "Не смог обработать сообщение — поддерживаю текст, голос, фото и PDF.")
         return
 
     try:
         result = await answer_question_rich(content_blocks)
     except Exception:
         logger.exception("Не удалось ответить на вопрос (кнопка, мультимодальный ввод)")
-        await message.answer("Не получилось ответить, попробуй ещё раз.")
+        await reply(message, "Не получилось ответить, попробуй ещё раз.")
         return
 
-    await message.answer(result.reply_text or "Не нашёл, что ответить.")
+    await reply(message, result.reply_text or "Не нашёл, что ответить.")
     if result.attachment is not None:
         file = BufferedInputFile(
             result.attachment.content.encode("utf-8"), filename=result.attachment.filename

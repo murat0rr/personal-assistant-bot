@@ -3,6 +3,7 @@ import logging
 from aiogram import F, Router
 from aiogram.types import Message
 
+from src.core.ack import working
 from src.core.auth import is_authorized
 from src.core.llm_router import classify_intent
 from src.core.message_text import extract_text
@@ -26,20 +27,21 @@ async def route_message(message: Message) -> None:
         await message.answer("Извините, этот бот вам недоступен.")
         return
 
-    text = await extract_text(message)
-    if not text:
-        return
+    async with working(message):
+        text = await extract_text(message)
+        if not text:
+            return
 
-    intent = await classify_intent(text)
-    logger.info("intent=%s text=%r", intent, text)
+        intent = await classify_intent(text)
+        logger.info("intent=%s text=%r", intent, text)
 
-    if intent == "note":
-        await handle_note(message, text)
-    elif intent == "question":
-        await handle_question(message, text)
-    elif intent == "reminder":
-        await handle_new_reminder(message, text)
-    elif intent == "feedback":
-        await submit_feedback(message, text)
-    else:
-        await handle_task_note(message, text)
+        if intent == "note":
+            await handle_note(message, text)
+        elif intent == "question":
+            await handle_question(message, text)
+        elif intent == "reminder":
+            await handle_new_reminder(message, text)
+        elif intent == "feedback":
+            await submit_feedback(message, text)
+        else:
+            await handle_task_note(message, text)
