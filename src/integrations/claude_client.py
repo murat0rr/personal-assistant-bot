@@ -83,6 +83,13 @@ _EXTRACT_TASKS_TOOL = {
 client = AsyncAnthropic(
     api_key=settings.claude_api_key,
     base_url=settings.claude_base_url or None,
+    # ТЕХДОЛГ, 2026-10-22: anthropic-python 2.0.0 сменил дефолтное
+    # значение заголовка anthropic-version на более новое — наш
+    # CLAUDE_BASE_URL-прокси (limitdeckai.ru) его не знает и отбивает
+    # 400 ("Unsupported anthropic-version") на КАЖДОМ вызове. Фиксируем
+    # версию явно, раз прокси требует конкретную строку — не зависит от
+    # того, что сочтёт "дефолтом" будущая версия SDK.
+    default_headers={"anthropic-version": "2023-06-01"},
 )
 
 
