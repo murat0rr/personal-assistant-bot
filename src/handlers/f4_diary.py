@@ -2,10 +2,21 @@ import logging
 from datetime import date, timedelta
 
 from aiogram import Bot, F, Router
+from aiogram.enums import ButtonStyle
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputRichBlockButtons,
+    InputRichBlockParagraph,
+    InputRichBlockSectionHeading,
+    InputRichMessage,
+    Message,
+    RichMessageButton,
+)
 
 from src.core.auth import is_authorized
 from src.core.config import settings
@@ -36,28 +47,32 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 _RATING_FIELDS = ("physical", "social", "productivity", "happiness")
+_RATING_LABELS = {
+    "physical": "Физическая активность",
+    "social": "Социальная активность",
+    "productivity": "Продуктивность",
+    "happiness": "Общее счастье",
+}
 
 
 class DiaryStates(StatesGroup):
-    physical = State()
-    social = State()
-    productivity = State()
-    happiness = State()
+    # Четыре оценки — ОДНО Rich Message сообщение (фидбек, 2026-10-22:
+    # "возьми логику кнопок из /set_day_task" — тот же приём, тап по
+    # кнопке правит сообщение на месте, а не шлёт новое на каждый
+    # вопрос), см. _build_ratings_rich_message/handle_rating_button
+    # ниже. highlight/reflection остаются отдельными текстовыми
+    # вопросами — Rich Message кнопки физически не могут принять
+    # свободный текст, только callback, этим двум ответ нужен реальным
+    # сообщением от пользователя.
+    ratings = State()
     highlight = State()
     reflection = State()
 
 
 # (состояние, текст вопроса, тип, следующее состояние или None — конец опроса)
+# — только текстовые вопросы, оценки через _QUESTIONS больше не идут,
+# см. DiaryStates.ratings выше.
 _QUESTIONS: list[tuple[State, str, str, State | None]] = [
-    (DiaryStates.physical, "Физическая активность сегодня (1-3)?", "rating", DiaryStates.social),
-    (
-        DiaryStates.social,
-        "Социальная активность сегодня (1-3)?",
-        "rating",
-        DiaryStates.productivity,
-    ),
-    (DiaryStates.productivity, "Продуктивность сегодня (1-3)?", "rating", DiaryStates.happiness),
-    (DiaryStates.happiness, "Общее счастье сегодня (1-3)?", "rating", DiaryStates.highlight),
     (
         DiaryStates.highlight,
         "Была ли сегодня какая-то особенность?",
@@ -73,25 +88,10 @@ _QUESTIONS: list[tuple[State, str, str, State | None]] = [
 ]
 _QUESTIONS_BY_STATE = {q[0]: q for q in _QUESTIONS}
 _FIELD_NAMES = {
-    DiaryStates.physical: "physical",
-    DiaryStates.social: "social",
-    DiaryStates.productivity: "productivity",
-    DiaryStates.happiness: "happiness",
     DiaryStates.highlight: "highlight",
     DiaryStates.reflection: "reflection",
 }
 _STATE_BY_FIELD = {name: state for state, name in _FIELD_NAMES.items()}
-
-
-def _rating_keyboard(field: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text=str(v), callback_data=f"diary:rate:{field}:{v}")
-                for v in (1, 2, 3)
-            ]
-        ]
-    )
 
 
 def _skip_keyboard(field: str) -> InlineKeyboardMarkup:
@@ -102,11 +102,44 @@ def _skip_keyboard(field: str) -> InlineKeyboardMarkup:
     )
 
 
+def _build_ratings_rich_message(ratings: dict[str, int | None]) -> InputRichMessage:
+    """Четыре оценки одним сообщением (см. DiaryStates.ratings) — по
+    строке на оценку: подпись + ряд кнопок 1/2/3, выбранное значение
+    подсвечено (тот же приём SUCCESS/PRIMARY, что у done-кнопки в
+    f_set_day_task.py). Можно менять любую оценку в любом порядке,
+    сколько угодно раз, пока не выставлены все четыре."""
+    blocks: list = [InputRichBlockSectionHeading(text="Как прошёл день? (1-3)", size=2)]
+    for field in _RATING_FIELDS:
+        value = ratings.get(field)
+        blocks.append(InputRichBlockParagraph(text=_RATING_LABELS[field]))
+        buttons = [
+            RichMessageButton(
+                text=str(v),
+                style=ButtonStyle.SUCCESS if value == v else ButtonStyle.PRIMARY,
+                callback_data=f"diaryrating:{field}:{v}",
+            )
+            for v in (1, 2, 3)
+        ]
+        blocks.append(InputRichBlockButtons(buttons=buttons))
+    return InputRichMessage(blocks=blocks)
+
+
+async def ask_ratings(bot: Bot, state: FSMContext) -> None:
+    """Точка входа вечернего опроса (сменила ask_question(..., physical)
+    — см. scheduler/jobs.py::_evening_diary) — шлёт ОДНО сообщение с
+    четырьмя оценками сразу, без отдельного вопроса на каждую."""
+    rich_message = _build_ratings_rich_message({})
+    sent = await bot.send_rich_message(chat_id=settings.telegram_user_id, rich_message=rich_message)
+    await state.update_data(_ratings_chat_id=sent.chat.id, _ratings_message_id=sent.message_id)
+    await state.set_state(DiaryStates.ratings)
+
+
 async def ask_question(bot: Bot, state: FSMContext, target: State) -> None:
-    _, text, kind, _ = _QUESTIONS_BY_STATE[target]
+    _, text, _, _ = _QUESTIONS_BY_STATE[target]
     field = _FIELD_NAMES[target]
-    reply_markup = _rating_keyboard(field) if kind == "rating" else _skip_keyboard(field)
-    await bot.send_message(chat_id=settings.telegram_user_id, text=text, reply_markup=reply_markup)
+    await bot.send_message(
+        chat_id=settings.telegram_user_id, text=text, reply_markup=_skip_keyboard(field)
+    )
     await state.set_state(target)
 
 
@@ -158,8 +191,50 @@ async def _finish(bot: Bot, state: FSMContext) -> None:
     await state.clear()
 
 
+@router.callback_query(F.data.startswith("diaryrating:"))
+async def handle_rating_button(callback: CallbackQuery, state: FSMContext) -> None:
+    """Тап по одной из 1/2/3 кнопок в консолидированном сообщении
+    (_build_ratings_rich_message) — правит СВОЁ же сообщение на месте
+    (тот же приём, что toggle в f_set_day_task.py), можно переставлять
+    оценку сколько угодно раз. Как только выставлены все четыре —
+    переходит к текстовым вопросам (highlight)."""
+    if not callback.from_user or not await is_authorized(callback.from_user.id):
+        await callback.answer("Недоступно", show_alert=True)
+        return
+    if (
+        not callback.data
+        or not isinstance(callback.message, Message)
+        or callback.message.bot is None
+    ):
+        return
+
+    if await state.get_state() != DiaryStates.ratings.state:
+        await callback.answer("Этот вопрос уже неактуален", show_alert=True)
+        return
+
+    _, field, value_str = callback.data.split(":")
+    value = int(value_str)
+    await state.update_data(**{field: value})
+    await callback.answer(f"Отмечено: {value}")
+
+    data = await state.get_data()
+    ratings = {f: data.get(f) for f in _RATING_FIELDS}
+    rich_message = _build_ratings_rich_message(ratings)
+    await callback.message.bot.edit_message_text(
+        chat_id=callback.message.chat.id,
+        message_id=callback.message.message_id,
+        rich_message=rich_message,
+    )
+
+    if all(ratings[f] is not None for f in _RATING_FIELDS):
+        await ask_question(callback.message.bot, state, DiaryStates.highlight)
+
+
 @router.callback_query(F.data.startswith("diary:"))
 async def handle_button(callback: CallbackQuery, state: FSMContext) -> None:
+    """Теперь только "Пропустить" у текстовых вопросов (highlight/
+    reflection) — оценки больше не идут этим путём, см.
+    handle_rating_button выше."""
     if not callback.from_user or not await is_authorized(callback.from_user.id):
         await callback.answer("Недоступно", show_alert=True)
         return
@@ -171,7 +246,7 @@ async def handle_button(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     parts = callback.data.split(":")
-    action, field = parts[1], parts[2]
+    field = parts[2]
     current = await state.get_state()
     current_state_obj = _STATE_BY_FIELD.get(field)
 
@@ -179,13 +254,8 @@ async def handle_button(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer("Этот вопрос уже неактуален", show_alert=True)
         return
 
-    if action == "rate":
-        value = int(parts[3])
-        await state.update_data(**{field: value})
-        await callback.answer(f"Отмечено: {value}")
-    else:
-        await state.update_data(**{field: ""})
-        await callback.answer("Пропущено")
+    await state.update_data(**{field: ""})
+    await callback.answer("Пропущено")
 
     await callback.message.edit_reply_markup(reply_markup=None)
     await _advance(callback.message.bot, state, current_state_obj)

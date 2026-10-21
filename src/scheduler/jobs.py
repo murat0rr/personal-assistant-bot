@@ -30,7 +30,7 @@ from src.core.user_location import (
     user_today,
 )
 from src.core.user_profile import maybe_update_profile
-from src.handlers.f4_diary import DiaryStates, ask_question
+from src.handlers.f4_diary import ask_ratings
 from src.handlers.f9_finance import FINANCE_GUIDE
 from src.handlers.f11_weekly_review import build_weekly_review
 from src.handlers.f12_briefing import build_morning_briefing
@@ -170,7 +170,7 @@ async def _evening_diary(bot: Bot, storage: BaseStorage) -> None:
     )
     state = FSMContext(storage=storage, key=key)
     await state.set_data({})
-    await ask_question(bot, state, DiaryStates.physical)
+    await ask_ratings(bot, state)
 
 
 async def _tidy_inbox_job(bot: Bot, user_id: int) -> None:
