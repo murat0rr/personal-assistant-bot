@@ -1082,3 +1082,46 @@ allowlist агента не подходит в принципе.
 `src/adapters/miniapp_static/css/app.css` (стили, если решим делать
 CSS-анимацию, а не статичную картинку).
 
+---
+
+## Нет замеров времени создания задачи — непонятно, где именно тормозит
+
+**Что не так.** Владелец спросил (2026-10-22), сколько времени создаются
+задачи, — ответить нечем: в коде нет ни одного замера длительности
+(`perf_counter`/`monotonic` в `src/` не используются), в логах нет строк
+с таймингами, а из облачной сессии нет доступа к серверу (SSH-ключа нет),
+чтобы замерить вживую. Известна только структура пути запроса, не
+цифры.
+
+**Что выяснено при разборе (по коду, не замеру):**
+- Свободный текст: `classify_intent` (Claude Haiku, `max_tokens=50`) →
+  `extract_tasks_fields` (Claude Haiku, `max_tokens=1200`) → INSERT в
+  Postgres → `invalidate_tasks_cache` (Redis) → `refresh_day_task_message`.
+  Два последовательных вызова Claude через сторонний прокси
+  `CLAUDE_BASE_URL`. Голос добавляет Groq Whisper (`extract_text`) в самое
+  начало.
+- Кнопка «📝 Задача» (`mode_buttons.py`) пропускает `classify_intent` —
+  на один вызов Claude короче.
+- БД, Redis и обновление `/day_tasks` — быстрые операции, основное время,
+  судя по структуре, уходит на два вызова Claude (и Whisper у голоса).
+- Прокси нестабилен по времени ответа (см. записи выше про невидимый
+  расход токенов на reasoning) — разброс может быть заметным.
+- Phase 101 (`core/ack.py`) не ускоряет создание, а только показывает
+  «⏳ Взял в работу…» сразу.
+
+**Что делать, когда дойдут руки:** добавить замеры по шагам
+(`time.perf_counter()` вокруг STT, `classify_intent`,
+`extract_tasks_fields`, записи в БД; одна `logger.info` со всеми
+цифрами на запрос) в `core/orchestrator.py::route_message` и
+`handlers/f1_task_note.py::handle_task_note`. После деплоя создать
+несколько задач (текстом, кнопкой, голосом) и посмотреть
+`docker compose logs bot` — станет видно, какой шаг тормозит. Если это
+Claude/прокси: рассмотреть слить `classify_intent` и извлечение полей в
+один вызов либо делать `classify_intent` эвристикой для очевидных
+случаев.
+
+**Где искать в коде:** `src/core/orchestrator.py::route_message`,
+`src/handlers/f1_task_note.py::handle_task_note`,
+`src/core/llm_router.py::classify_intent`,
+`src/integrations/claude_client.py::extract_tasks_fields`,
+`src/core/message_text.py::extract_text`.
