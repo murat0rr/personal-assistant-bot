@@ -37,6 +37,7 @@ from src.handlers.f_set_day_task import router as set_day_task_router
 from src.handlers.f_task_nag import router as task_nag_router
 from src.handlers.f_timezone import router as timezone_router
 from src.handlers.f_web_login import router as web_login_router
+from src.handlers.f_widget import router as widget_router
 from src.handlers.mode_buttons import MAIN_KEYBOARD
 from src.handlers.mode_buttons import router as mode_buttons_router
 from src.scheduler.jobs import setup_scheduler
@@ -66,6 +67,7 @@ dp.include_router(schedule_router)
 dp.include_router(set_day_task_router)
 dp.include_router(timezone_router)
 dp.include_router(web_login_router)
+dp.include_router(widget_router)
 dp.include_router(feedback_router)
 dp.include_router(build_router)
 dp.include_router(chat_watch_router)
@@ -146,6 +148,10 @@ async def main() -> None:
             BotCommand(
                 command="day_tasks",
                 description="Включить ежедневный список задач одним закреплённым сообщением",
+            ),
+            BotCommand(
+                command="widget_token",
+                description="Токен для виджета на главном экране телефона",
             ),
             BotCommand(command="staging", description="Открыть staging Mini App"),
             BotCommand(command="feedback", description="Баг, идея или пожелание по боту"),

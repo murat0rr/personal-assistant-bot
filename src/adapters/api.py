@@ -19,6 +19,7 @@ from src.adapters.miniapp_assets import get_asset_version, version_asset_refs
 from src.adapters.public_pages import router as public_pages_router
 from src.adapters.tasker_webhook import router as tasker_webhook_router
 from src.adapters.web_auth import router as web_auth_router
+from src.adapters.widget_api import router as widget_api_router
 from src.core import ai_analytics, calendar_view
 from src.core import analytics as analytics_repo
 from src.core import day_reviews as day_reviews_repo
@@ -147,6 +148,7 @@ app.include_router(web_auth_router)
 app.include_router(google_oauth_router)
 app.include_router(public_pages_router)
 app.include_router(internal_api_router)
+app.include_router(widget_api_router)
 
 
 _VERSIONED_STATIC_PREFIXES = ("/miniapp/css/", "/miniapp/js/")
