@@ -60,6 +60,9 @@ async def handle_task_note(message: Message, text: str) -> None:
                     else None,
                     priority=fields.priority,
                     sphere=fields.sphere,
+                    physical_load=fields.physical_load,
+                    mental_load=fields.mental_load,
+                    emotional_load=fields.emotional_load,
                     description=fields.description,
                     source="F1_fallback" if fallback_used else "F1",
                 )

@@ -51,11 +51,27 @@ async def send_morning_advice(bot: Bot, storage: BaseStorage, user_id: int, toda
         )
         tasks = result.scalars().all()
 
-    overdue_titles = [
-        t.title for t in tasks if t.due_date is not None and t.due_date.date() == yesterday
+    # Веса сложности (фидбек 2026-10-24) — тащим вместе с title, чтобы
+    # suggest_tasks_for_today мог балансировать нагрузку не только по
+    # объёму, но и по типу усилия; у задач без весов (весь бэклог до
+    # этой фазы) все три ключа будут None — деградация без данных
+    # внутри suggest_tasks_for_today (_format_load_suffix).
+    def _to_item(t: Task) -> dict:
+        return {
+            "id": t.id,
+            "title": t.title,
+            "physical_load": t.physical_load,
+            "mental_load": t.mental_load,
+            "emotional_load": t.emotional_load,
+        }
+
+    overdue_items = [
+        _to_item(t) for t in tasks if t.due_date is not None and t.due_date.date() == yesterday
     ]
-    today_titles = [t.title for t in tasks if t.due_date is not None and t.due_date.date() == today]
-    inbox_items = [{"id": t.id, "title": t.title} for t in tasks if t.due_date is None]
+    today_items = [
+        _to_item(t) for t in tasks if t.due_date is not None and t.due_date.date() == today
+    ]
+    inbox_items = [_to_item(t) for t in tasks if t.due_date is None]
 
     if not inbox_items:
         return
@@ -63,7 +79,7 @@ async def send_morning_advice(bot: Bot, storage: BaseStorage, user_id: int, toda
     try:
         profile_summary = await get_profile_summary(user_id)
         suggested_ids = await suggest_tasks_for_today(
-            overdue_titles, today_titles, inbox_items, today, profile_summary
+            overdue_items, today_items, inbox_items, today, profile_summary
         )
     except Exception:
         logger.exception("Не удалось получить совет по задачам на сегодня")

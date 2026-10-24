@@ -58,6 +58,36 @@ _EXTRACT_TASKS_TOOL = {
                                 "уверен, иначе null. Не гадай ради заполнения поля."
                             ),
                         },
+                        "physical_load": {
+                            "type": ["integer", "null"],
+                            "enum": [1, 2, 3, None],
+                            "description": (
+                                "Физическая нагрузка задачи (1 — низкая, 3 — высокая), "
+                                "только если задача ощутимо нагружает тело (спорт, переезд, "
+                                "долгая дорога) и ты уверен в оценке, иначе null. Не гадай "
+                                "ради заполнения поля."
+                            ),
+                        },
+                        "mental_load": {
+                            "type": ["integer", "null"],
+                            "enum": [1, 2, 3, None],
+                            "description": (
+                                "Умственная нагрузка задачи (1 — низкая, 3 — высокая), "
+                                "только если задача требует заметной концентрации/анализа "
+                                "(сложный отчёт, изучение темы) и ты уверен в оценке, иначе "
+                                "null. Не гадай ради заполнения поля."
+                            ),
+                        },
+                        "emotional_load": {
+                            "type": ["integer", "null"],
+                            "enum": [1, 2, 3, None],
+                            "description": (
+                                "Эмоциональная нагрузка задачи (1 — низкая, 3 — высокая), "
+                                "только если задача эмоционально тяжёлая/напряжённая "
+                                "(сложный разговор, конфликт, тревожное ожидание) и ты уверен "
+                                "в оценке, иначе null. Не гадай ради заполнения поля."
+                            ),
+                        },
                         "description": {
                             "type": ["string", "null"],
                             "description": (
@@ -129,6 +159,9 @@ class TaskFields(BaseModel):
     due_date: date | None = None
     priority: Literal["низкий", "средний", "высокий"]
     sphere: Literal["учёба", "работа", "спорт", "развитие", "отношения"] | None = None
+    physical_load: Literal[1, 2, 3] | None = None
+    mental_load: Literal[1, 2, 3] | None = None
+    emotional_load: Literal[1, 2, 3] | None = None
     description: str | None = None
 
 
@@ -906,7 +939,8 @@ _SUGGEST_TODAY_TOOL = {
     "name": "suggest_today",
     "description": (
         "Выбрать, какие задачи из инбокса желательно сделать сегодня, "
-        "с учётом уже имеющейся нагрузки на день."
+        "с учётом уже имеющейся нагрузки на день — по объёму и, если "
+        "известно, по типу усилия (физическая/умственная/эмоциональная)."
     ),
     "input_schema": {
         "type": "object",
@@ -931,9 +965,26 @@ class TodaySuggestion(BaseModel):
     task_ids: list[int]
 
 
+def _format_load_suffix(item: dict) -> str:
+    """Веса сложности (фидбек 2026-10-24) — рендерим в текст промпта
+    только те оси, что реально проставлены (обычно ИИ-инференсом при
+    создании, см. claude_client.py::_EXTRACT_TASKS_TOOL); для задачи без
+    ни одного веса (весь бэклог до этой фазы) — пустая строка, голый
+    заголовок как раньше, деградация без данных, тот же приём, что у
+    _profile_context_block."""
+    parts = []
+    if item.get("physical_load") is not None:
+        parts.append(f"физ:{item['physical_load']}")
+    if item.get("mental_load") is not None:
+        parts.append(f"умств:{item['mental_load']}")
+    if item.get("emotional_load") is not None:
+        parts.append(f"эмоц:{item['emotional_load']}")
+    return f" ({', '.join(parts)})" if parts else ""
+
+
 async def suggest_tasks_for_today(
-    overdue_titles: list[str],
-    today_titles: list[str],
+    overdue_items: list[dict],
+    today_items: list[dict],
     inbox_items: list[dict],
     today: date | None = None,
     profile_summary: str | None = None,
@@ -947,10 +998,20 @@ async def suggest_tasks_for_today(
     было `date.today()` по серверному часовому поясу, не по часовому
     поясу пользователя — для дня недели в промпте это могло быть не то
     число, особенно у пользователей не в Москве). `profile_summary` —
-    персональный контекст (core/user_profile.py), опциональный."""
+    персональный контекст (core/user_profile.py), опциональный.
+    `overdue_items`/`today_items`/`inbox_items` — словари с `title` и,
+    опционально, `physical_load`/`mental_load`/`emotional_load` (фидбек
+    2026-10-24, см. _format_load_suffix) — `inbox_items` дополнительно
+    несёт `id`, остальные два — только для текста промпта, id не нужен."""
     if not inbox_items:
         return []
-    inbox_text = "\n".join(f"{item['id']}: {item['title']}" for item in inbox_items)
+    inbox_text = "\n".join(
+        f"{item['id']}: {item['title']}{_format_load_suffix(item)}" for item in inbox_items
+    )
+    overdue_text = "\n".join(
+        f"{item['title']}{_format_load_suffix(item)}" for item in overdue_items
+    )
+    today_text = "\n".join(f"{item['title']}{_format_load_suffix(item)}" for item in today_items)
     if today is None:
         today = date.today()
     response = await call_with_tool(
@@ -967,8 +1028,8 @@ async def suggest_tasks_for_today(
             {
                 "role": "user",
                 "content": (
-                    f"Не сделано со вчера:\n{chr(10).join(overdue_titles) or '(нет)'}\n\n"
-                    f"Уже стоит на сегодня:\n{chr(10).join(today_titles) or '(нет)'}\n\n"
+                    f"Не сделано со вчера:\n{overdue_text or '(нет)'}\n\n"
+                    f"Уже стоит на сегодня:\n{today_text or '(нет)'}\n\n"
                     f"Инбокс:\n{inbox_text}"
                 ),
             }

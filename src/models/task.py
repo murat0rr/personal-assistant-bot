@@ -60,6 +60,17 @@ class Task(Base):
     # project_id — необязательная привязка к Project (Phase 19), задача
     # без проекта — обычный случай, не исключение.
     sphere: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Веса сложности по типу усилия (фидбек 2026-10-24) — отдельная ось
+    # от priority (priority = "насколько срочно/важно", эти три поля =
+    # "чего это будет стоить сделать"). Шкала 1-3, тот же масштаб, что у
+    # приоритета/оценок дневника, но НЕ enum на уровне БД — список осей
+    # сам может уточниться позже, та же причина, что у sphere. NULL —
+    # "не оценено/не применимо" (весь бэклог до этой фазы, бытовые дела,
+    # которым ни одна ось не подходит), не 0 — тот же принцип "не
+    # выдумывай ради галочки", что у description/sphere.
+    physical_load: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    mental_load: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    emotional_load: Mapped[int | None] = mapped_column(Integer, nullable=True)
     project_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("projects.id"), nullable=True, index=True
     )
