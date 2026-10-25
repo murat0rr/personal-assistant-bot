@@ -5,7 +5,9 @@ from aiogram.types import BufferedInputFile, Message
 
 from src.core.ack import reply
 from src.core.message_text import extract_text
+from src.handlers.f_video import handle_video
 from src.integrations.claude_client import answer_question_rich
+from src.integrations.video import extract_video_request
 from src.integrations.web_search import answer_question
 
 logger = logging.getLogger(__name__)
@@ -78,6 +80,14 @@ async def handle_question_input(message: Message) -> None:
     if content_blocks is None:
         await reply(message, "Не смог обработать сообщение — поддерживаю текст, голос, фото и PDF.")
         return
+
+    # Только текст/голос (без фото и PDF) со ссылкой на видео (Phase 102) —
+    # это разбор видео, а не обычный вопрос.
+    if len(content_blocks) == 1 and content_blocks[0]["type"] == "text":
+        video_request = extract_video_request(content_blocks[0]["text"])
+        if video_request:
+            await handle_video(message, video_request)
+            return
 
     try:
         result = await answer_question_rich(content_blocks)

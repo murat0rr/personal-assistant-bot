@@ -12,6 +12,8 @@ from src.handlers.f_feedback import submit_feedback
 from src.handlers.f_notes import handle_note
 from src.handlers.f_question import handle_question
 from src.handlers.f_reminders import handle_new_reminder
+from src.handlers.f_video import handle_video
+from src.integrations.video import extract_video_request
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,13 @@ async def route_message(message: Message) -> None:
     async with working(message):
         text = await extract_text(message)
         if not text:
+            return
+
+        # Ссылка на видео + промпт (Phase 102) — до классификации intent'а:
+        # это отдельный сценарий, классификатору его угадывать незачем.
+        video_request = extract_video_request(text)
+        if video_request:
+            await handle_video(message, video_request)
             return
 
         intent = await classify_intent(text)
