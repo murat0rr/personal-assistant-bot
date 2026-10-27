@@ -14,5 +14,5 @@ Postgres (`status='triaged' AND auto_applicable=true`), через
 уходит отсюда, попадает в git-историю коммитом с префиксом
 `[feedback]`. Не подошло по факту — уходит в `FEEDBACK_INBOX.md`.
 
-_Пусто на 2026-10-25 — в очереди `status=triaged&auto_applicable=true`_
+_Пусто на 2026-10-27 — в очереди `status=triaged&auto_applicable=true`_
 _ничего нет, кандидатов на автофикс в этом прогоне не было._
