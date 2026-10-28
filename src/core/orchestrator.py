@@ -1,4 +1,5 @@
 import logging
+import time
 
 from aiogram import F, Router
 from aiogram.types import Message
@@ -30,7 +31,14 @@ async def route_message(message: Message) -> None:
         return
 
     async with working(message):
+        # Замеры по шагам (тех-долг, владелец спросил 2026-10-22, сколько
+        # времени создаются задачи — ответить было нечем, таймингов не
+        # было вообще). t_text включает STT для голоса (extract_text сама
+        # зовёт Whisper) — отдельно время STT не выделяем, голос и так
+        # заметно дольше текста уже по этой сумме.
+        t0 = time.perf_counter()
         text = await extract_text(message)
+        t_text = time.perf_counter() - t0
         if not text:
             return
 
@@ -41,9 +49,12 @@ async def route_message(message: Message) -> None:
             await handle_video(message, video_request)
             return
 
+        t1 = time.perf_counter()
         intent = await classify_intent(text)
+        t_intent = time.perf_counter() - t1
         logger.info("intent=%s text=%r", intent, text)
 
+        t2 = time.perf_counter()
         if intent == "note":
             await handle_note(message, text)
         elif intent == "question":
@@ -54,3 +65,14 @@ async def route_message(message: Message) -> None:
             await submit_feedback(message, text)
         else:
             await handle_task_note(message, text)
+        t_handler = time.perf_counter() - t2
+
+        logger.info(
+            "timing route_message: text_extract=%.2fs classify_intent=%.2fs "
+            "handler(%s)=%.2fs total=%.2fs",
+            t_text,
+            t_intent,
+            intent,
+            t_handler,
+            t_text + t_intent + t_handler,
+        )

@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime
 
 from aiogram.types import Message
@@ -36,16 +37,36 @@ async def handle_task_note(message: Message, text: str) -> None:
     today = await user_today(message.from_user.id)
 
     fallback_used = False
+    # Два РАЗНЫХ случая здесь ранее показывали пользователю один и тот же
+    # текст "ИИ сейчас недоступен" (фидбек #15, 2026-10-26: "если ии не
+    # распознал что-то, то выдается ответ что ии недоступен, хотя он
+    # просто не дал ответ") — не различая их:
+    # - ValueError из extract_tasks_fields — Claude РЕАЛЬНО ответил, просто
+    #   не вызвал тул или вызвал его с пустым списком задач (см. ValueError
+    #   там же) — не "недоступен", а "не понял"/"не нашёл задачу".
+    # - любая другая Exception — настоящий сбой похода в Claude (прокси
+    #   недоступен/таймаут/ошибка API) — здесь "недоступен" уместно.
+    fallback_unavailable = False
+    t0 = time.perf_counter()
     try:
         # Одно сообщение может называть несколько задач сразу (Phase 49) —
         # extract_tasks_fields всегда возвращает список, даже для обычного
         # однозадачного текста (тогда просто из одного элемента).
         tasks_fields = await extract_tasks_fields(text, today)
-    except Exception:
-        logger.exception("ИИ не разобрал сообщение — создаю задачу без деталей (фолбек): %r", text)
+    except ValueError:
+        logger.exception(
+            "ИИ не нашёл задачу в сообщении — создаю задачу без деталей (фолбек): %r", text
+        )
         tasks_fields = [_fallback_task_fields(text)]
         fallback_used = True
+    except Exception:
+        logger.exception("ИИ недоступен — создаю задачу без деталей (фолбек): %r", text)
+        tasks_fields = [_fallback_task_fields(text)]
+        fallback_used = True
+        fallback_unavailable = True
+    t_ai = time.perf_counter() - t0
 
+    t1 = time.perf_counter()
     try:
         async with async_session() as session:
             for fields in tasks_fields:
@@ -77,6 +98,14 @@ async def handle_task_note(message: Message, text: str) -> None:
         logger.exception("Не удалось сохранить задачу(-и) в БД: %r", text)
         await reply(message, "Не получилось создать задачу, попробуй ещё раз.")
         return
+    t_db = time.perf_counter() - t1
+
+    logger.info(
+        "timing handle_task_note: extract_tasks_fields=%.2fs db=%.2fs fallback=%s",
+        t_ai,
+        t_db,
+        fallback_used,
+    )
 
     # Живое обновление /day_tasks (Phase 80, фидбек живой проверки) —
     # если новая задача попала на сегодня, а у пользователя уже открыто
@@ -89,9 +118,10 @@ async def handle_task_note(message: Message, text: str) -> None:
         logger.exception("Не удалось обновить /day_tasks после создания задачи")
 
     if fallback_used:
+        reason = "ИИ сейчас недоступен" if fallback_unavailable else "Не разобрал запрос"
         await reply(
             message,
-            f"ИИ сейчас недоступен — сохранил как есть: «{tasks_fields[0].title}» "
+            f"{reason} — сохранил как есть: «{tasks_fields[0].title}» "
             "(без срока, приоритет: средний). Поправь вручную, если нужно.",
         )
         return
