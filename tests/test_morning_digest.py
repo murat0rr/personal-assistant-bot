@@ -41,7 +41,9 @@ def test_no_due_date_ignored():
     )
 
 
-def test_overdue_and_today_grouped():
+def test_overdue_hidden_today_shown():
+    # Фидбек #18/#19 (2026-10-28) — просроченное больше не попадает в
+    # утреннее сообщение вообще, только сегодняшнее.
     tasks = [
         _task("вчерашняя", date(2026, 8, 28)),
         _task("сегодняшняя", _TODAY),
@@ -49,21 +51,20 @@ def test_overdue_and_today_grouped():
     ]
     text = build_morning_digest_text(tasks, _TODAY)
 
-    assert "⚠️ Просрочено:" in text
-    assert "— вчерашняя (28.08)" in text
+    assert "Просрочено" not in text
+    assert "вчерашняя" not in text
     assert "📌 На сегодня:" in text
     assert "— сегодняшняя" in text
     assert "будущая" not in text
 
 
-def test_overdue_sorted_oldest_first():
-    tasks = [
-        _task("свежая просрочка", date(2026, 8, 28)),
-        _task("старая просрочка", date(2026, 8, 20)),
-    ]
-    text = build_morning_digest_text(tasks, _TODAY)
-
-    assert text.index("старая просрочка") < text.index("свежая просрочка")
+def test_only_overdue_reads_as_no_active_tasks():
+    # Если на сегодня ничего нет, а есть только просроченное — сообщение
+    # всё равно говорит "активных задач нет" (просроченное не считается).
+    tasks = [_task("вчерашняя", date(2026, 8, 28))]
+    assert (
+        build_morning_digest_text(tasks, _TODAY) == "🌅 Доброе утро! На сегодня активных задач нет."
+    )
 
 
 def test_event_today_goes_to_separate_section_with_time():
@@ -101,11 +102,13 @@ def test_recurring_task_with_time_shows_both():
     assert "— 07:30 🔁 утренняя пробежка" in text
 
 
-def test_overdue_event_shows_time_and_date():
+def test_overdue_event_not_shown():
+    # Тот же принцип, что у обычных просроченных задач — событие вчера
+    # тоже не попадает в утреннее сообщение.
     tasks = [_task("пропущенная встреча", date(2026, 8, 28), due_time=(9, 0), is_event=True)]
-    text = build_morning_digest_text(tasks, _TODAY)
-
-    assert "— 09:00 пропущенная встреча (28.08)" in text
+    assert (
+        build_morning_digest_text(tasks, _TODAY) == "🌅 Доброе утро! На сегодня активных задач нет."
+    )
 
 
 def test_events_today_sorted_by_time():

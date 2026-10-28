@@ -16,7 +16,7 @@ def _task_time(task: Task) -> str | None:
     return task.due_date.strftime("%H:%M")
 
 
-def _format_item(task: Task, *, with_date: bool = False) -> str:
+def _format_item(task: Task) -> str:
     # Phase 98, фидбек по дайджесту — время (если есть) и значок 🔁 у
     # повторяющихся задач (source="recurring", проставляется
     # материализацией, см. core/recurring_tasks.py) — раньше оба
@@ -28,10 +28,7 @@ def _format_item(task: Task, *, with_date: bool = False) -> str:
     if task.source == "recurring":
         bits.append("🔁")
     prefix = (" ".join(bits) + " ") if bits else ""
-    line = f"— {prefix}{task.title}"
-    if with_date and task.due_date is not None:
-        line += f" ({task.due_date.strftime('%d.%m')})"
-    return line
+    return f"— {prefix}{task.title}"
 
 
 def build_morning_digest_text(tasks: list[Task], today: date) -> str:
@@ -43,20 +40,21 @@ def build_morning_digest_text(tasks: list[Task], today: date) -> str:
     попадают и ручные события, и всё из Google Calendar, см.
     core/google_calendar_sync.py) и обычные задачи: раньше оба вида были
     в одном неразличимом списке по одному заголовку, хотя у событий уже
-    есть осмысленное время начала в due_date."""
-    active = [t for t in tasks if t.due_date is not None and t.due_date.date() <= today]
-    overdue = sorted((t for t in active if t.due_date.date() < today), key=lambda t: t.due_date)
-    due_today = [t for t in active if t.due_date.date() == today]
+    есть осмысленное время начала в due_date.
+
+    Фидбек #18/#19 (2026-10-28, дубликат — просьба повторена дважды) —
+    просроченные задачи больше НЕ показываются в утреннем сообщении
+    вообще, только сегодняшние. Данные никуда не пропадают (просроченное
+    всё ещё видно в Инбоксе Mini App, см. miniapp_tasks.py) — убрана
+    только эта секция конкретно из утреннего текста."""
+    due_today = [t for t in tasks if t.due_date is not None and t.due_date.date() == today]
     events_today = sorted((t for t in due_today if t.is_event), key=lambda t: t.due_date)
     tasks_today = [t for t in due_today if not t.is_event]
 
-    if not overdue and not due_today:
+    if not due_today:
         return "🌅 Доброе утро! На сегодня активных задач нет."
 
     lines = ["🌅 Доброе утро!"]
-    if overdue:
-        lines.append("\n⚠️ Просрочено:")
-        lines += [_format_item(t, with_date=True) for t in overdue]
     if events_today:
         lines.append("\n🗓 События:")
         lines += [_format_item(t) for t in events_today]

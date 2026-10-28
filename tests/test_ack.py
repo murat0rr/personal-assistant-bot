@@ -27,8 +27,8 @@ def no_real_typing(monkeypatch):
 def _message() -> MagicMock:
     sent = MagicMock()
     sent.message_id = 1
-    sent.edit_text = AsyncMock()
     sent.delete = AsyncMock()
+    sent.answer = AsyncMock()
     message = MagicMock()
     message.chat.id = 7
     message.answer = AsyncMock(return_value=sent)
@@ -41,19 +41,23 @@ async def test_reply_without_working_just_answers():
     message.answer.assert_awaited_once_with("привет")
 
 
-async def test_working_sends_ack_and_first_reply_edits_it(no_real_typing):
+async def test_working_sends_ack_and_first_reply_removes_it_and_sends_new(no_real_typing):
+    """Фидбек #20 (2026-10-28) — edit_text не шлёт уведомление в
+    Telegram, только новое сообщение; первый ответ теперь удаляет
+    ack и отвечает новым сообщением, а не правит ack на месте."""
     message = _message()
     sent = message.answer.return_value
 
     async with working(message):
         await reply(message, "готово")
 
-    message.answer.assert_awaited_once_with(ACK_TEXT)
-    sent.edit_text.assert_awaited_once_with("готово")
+    assert message.answer.await_args_list[0].args == (ACK_TEXT,)
+    sent.delete.assert_awaited_once()
+    assert message.answer.await_args_list[-1].args == ("готово",)
     no_real_typing.assert_called_once()
 
 
-async def test_second_reply_is_a_new_message():
+async def test_second_reply_is_also_a_new_message():
     message = _message()
     sent = message.answer.return_value
 
@@ -61,14 +65,15 @@ async def test_second_reply_is_a_new_message():
         await reply(message, "первый")
         await reply(message, "второй")
 
-    sent.edit_text.assert_awaited_once_with("первый")
-    assert message.answer.await_args_list[-1].args == ("второй",)
+    sent.delete.assert_awaited_once()
+    texts = [c.args[0] for c in message.answer.await_args_list]
+    assert texts == [ACK_TEXT, "первый", "второй"]
 
 
-async def test_failed_edit_falls_back_to_new_message_and_removes_ack():
+async def test_failed_ack_delete_still_sends_new_message():
     message = _message()
     sent = message.answer.return_value
-    sent.edit_text.side_effect = RuntimeError("message to edit not found")
+    sent.delete.side_effect = RuntimeError("message to delete not found")
 
     async with working(message):
         await reply(message, "ответ")
@@ -77,18 +82,19 @@ async def test_failed_edit_falls_back_to_new_message_and_removes_ack():
     assert message.answer.await_args_list[-1].args == ("ответ",)
 
 
-async def test_handler_without_reply_replaces_ack():
+async def test_handler_without_reply_removes_ack_and_sends_new():
     message = _message()
     sent = message.answer.return_value
 
     async with working(message):
         pass
 
-    sent.edit_text.assert_awaited_once()
-    assert "Не смог разобрать" in sent.edit_text.await_args.args[0]
+    sent.delete.assert_awaited_once()
+    sent.answer.assert_awaited_once()
+    assert "Не смог разобрать" in sent.answer.await_args.args[0]
 
 
-async def test_exception_edits_ack_and_propagates():
+async def test_exception_removes_ack_sends_new_and_propagates():
     message = _message()
     sent = message.answer.return_value
 
@@ -96,7 +102,8 @@ async def test_exception_edits_ack_and_propagates():
         async with working(message):
             raise ValueError("boom")
 
-    assert "Что-то пошло не так" in sent.edit_text.await_args.args[0]
+    sent.delete.assert_awaited_once()
+    assert "Что-то пошло не так" in sent.answer.await_args.args[0]
 
 
 async def test_ack_send_failure_does_not_break_handler():

@@ -31,14 +31,19 @@ _current: ContextVar[_Ack | None] = ContextVar("current_ack", default=None)
 
 async def _finish_unused(ack: _Ack, text: str) -> None:
     """Хендлер закончил, не ответив (или упал) — не оставляем «⏳ Взял в
-    работу…» висеть вечно."""
+    работу…» висеть вечно. Удаляем и шлём новое, не правим на месте (см.
+    reply ниже — та же причина, фидбек #20)."""
     if ack.used:
         return
     ack.used = True
     try:
-        await ack.sent.edit_text(text)
+        await ack.sent.delete()
     except Exception:
-        logger.info("Не удалось поправить ack-сообщение (%s)", ack.sent.message_id)
+        logger.info("Не удалось удалить ack-сообщение (%s)", ack.sent.message_id)
+    try:
+        await ack.sent.answer(text)
+    except Exception:
+        logger.exception("Не удалось отправить сообщение после сбоя/непонятого запроса")
 
 
 @asynccontextmanager
@@ -70,22 +75,19 @@ async def working(message: Message) -> AsyncIterator[None]:
 
 
 async def reply(message: Message, text: str, **kwargs: Any) -> Message | bool:
-    """Ответ хендлера: первый за запрос правит ack-сообщение, остальные (и
-    любой вызов вне working) — обычный message.answer. Если правка не
-    удалась (сообщение удалили, слишком длинный текст, reply_markup,
-    который edit_text не принимает) — ответ всё равно доходит новым
-    сообщением, а ack убирается, чтобы не висел «⏳»."""
+    """Ответ хендлера: первый за запрос удаляет ack-сообщение и шлёт
+    результат НОВЫМ сообщением (остальные — и любой вызов вне working —
+    тоже обычный message.answer, иначе без изменений). Раньше правили
+    ack на месте (edit_text) — фидбек #20 (2026-10-28): Telegram не
+    присылает уведомление на правку существующего сообщения, только на
+    новое — при текущей медленности прокси (десятки секунд на ответ, см.
+    TECHDEBT.md) это означало, что готовый ответ мог тихо появиться в
+    чате без уведомления, и пользователь не узнавал, что бот ответил."""
     ack = _current.get()
     if ack is not None and not ack.used:
         ack.used = True
         try:
-            return await ack.sent.edit_text(text, **kwargs)
+            await ack.sent.delete()
         except Exception:
-            logger.info(
-                "Не удалось поправить ack-сообщение (%s) — отвечаю новым", ack.sent.message_id
-            )
-            try:
-                await ack.sent.delete()
-            except Exception:
-                pass
+            logger.info("Не удалось удалить ack-сообщение (%s)", ack.sent.message_id)
     return await message.answer(text, **kwargs)
