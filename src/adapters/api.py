@@ -30,7 +30,7 @@ from src.core import projects as projects_repo
 from src.core import recurring_tasks as recurring_tasks_repo
 from src.core import task_templates as templates_repo
 from src.core.auth import is_authorized
-from src.core.bot_client import get_bot
+from src.core.bot_client import get_bot, get_storage
 from src.core.config import settings
 from src.core.db import async_session
 from src.core.google_calendar_sync import maybe_sync_now
@@ -47,6 +47,7 @@ from src.core.user_location import (
 from src.core.user_profile import get_profile_summary
 from src.core.web_session import SESSION_COOKIE_NAME, verify_session_token
 from src.handlers.f8_habits import check_habit
+from src.handlers.f_morning_advice import maybe_praise_closed_day
 from src.handlers.f_set_day_task import refresh_day_task_message
 from src.handlers.f_task_nag import record_task_completion
 from src.handlers.miniapp_tasks import build_task_board, serialize_task
@@ -463,6 +464,7 @@ async def mark_task_done(
     async with async_session() as session:
         task = await _get_owned_task(session, task_id, user["id"])
         task.done = payload.done
+        toggled_due_date = task.due_date.date() if task.due_date else None
         await session.commit()
 
     await invalidate_tasks_cache(user["id"])
@@ -477,6 +479,15 @@ async def mark_task_done(
         await refresh_day_task_message(get_bot(), user["id"])
     except Exception:
         logger.exception("Не удалось обновить /day_tasks после смены статуса задачи")
+
+    if payload.done:
+        # Похвала при закрытии дня (фидбек 2026-10-24) — тот же триггер,
+        # что у f_set_day_task.py::handle_toggle_task, только со стороны
+        # Mini App; не должен ронять уже успешный ответ.
+        try:
+            await maybe_praise_closed_day(get_bot(), get_storage(), user["id"], toggled_due_date)
+        except Exception:
+            logger.exception("Не удалось проверить похвалу за закрытый день (%s)", user["id"])
 
     return {"status": "ok"}
 

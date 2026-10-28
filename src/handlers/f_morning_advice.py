@@ -1,7 +1,9 @@
 import logging
+import random
 import time
 from datetime import date, datetime, timedelta
 
+import redis.asyncio as redis
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import BaseStorage, StorageKey
@@ -9,6 +11,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy import select
 
 from src.core.auth import is_authorized
+from src.core.config import settings
 from src.core.db import async_session
 from src.core.user_location import user_today
 from src.core.user_profile import get_profile_summary
@@ -99,6 +102,73 @@ async def send_morning_advice(bot: Bot, storage: BaseStorage, user_id: int, toda
         text=f"💡 Из инбокса на сегодня стоит подтянуть:\n{lines}",
         reply_markup=_ADVICE_KEYBOARD,
     )
+
+
+# Похвала при закрытии дня (фидбек 2026-10-24) — несколько вариантов,
+# чтобы не повторялось буква в букву каждый раз (тот же мотив, что у
+# вариативных подтверждений в других фичах проекта).
+_PRAISE_TEXTS = (
+    "Все задачи на сегодня закрыты — отличная работа! 🎉",
+    "День закрыт, всё сделано. Красота! 👏",
+    "Чисто — ни одной незакрытой задачи на сегодня. Молодец!",
+    "Сегодняшний список пуст — ты справился со всем. 🙌",
+)
+# Anti-спам guard — максимум одна похвала в день на пользователя, тот же
+# приём по духу, что daytask:message:{user_id} в f_set_day_task.py, но
+# про сам факт похвалы, не про сообщение; ключ несёт дату — завтрашний
+# день естественно получит новый ключ, TTL с запасом, не точно до
+# полуночи (не критично, какая-то лишняя минута-другая не страшна).
+_PRAISE_GUARD_TTL_SECONDS = 36 * 60 * 60
+_praise_redis: redis.Redis | None = None
+
+
+def _get_praise_redis() -> redis.Redis:
+    global _praise_redis
+    if _praise_redis is None:
+        _praise_redis = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    return _praise_redis
+
+
+async def maybe_praise_closed_day(
+    bot: Bot, storage: BaseStorage, user_id: int, toggled_due_date: date | None
+) -> None:
+    """Вызывается из ЛЮБОГО места, где задача переходит в done=True
+    (сейчас — f_set_day_task.py::handle_toggle_task и
+    adapters/api.py::mark_task_done, единственные два места, где
+    Task.done меняется) — если это закрыло ВЕСЬ список на СЕГОДНЯ
+    (переход "было хоть что-то невыполненное -> стало 0", не просто
+    "пусто с утра" — для этого нужна хотя бы одна toggled-в-done задача
+    с due_date сегодня, что уже гарантирует вызывающая сторона), хвалит
+    и сразу переиспользует send_morning_advice (тот же механизм, что у
+    утренней рассылки, просто с другим триггером) — не дублирует его
+    логику. Тихий no-op, если закрытая задача не на сегодня, или
+    сегодня уже хвалили (anti-спам guard)."""
+    if toggled_due_date is None:
+        return
+    today = await user_today(user_id)
+    if toggled_due_date != today:
+        return
+
+    guard_key = f"praise:shown:{user_id}:{today.isoformat()}"
+    if await _get_praise_redis().get(guard_key):
+        return
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Task.due_date).where(
+                Task.user_id == user_id, Task.archived.is_(False), Task.done.is_(False)
+            )
+        )
+        remaining_dates = result.scalars().all()
+    if any(d is not None and d.date() == today for d in remaining_dates):
+        return  # на сегодня остались другие невыполненные задачи — день не закрыт
+
+    await _get_praise_redis().set(guard_key, "1", ex=_PRAISE_GUARD_TTL_SECONDS)
+    await bot.send_message(chat_id=user_id, text=random.choice(_PRAISE_TEXTS))
+    try:
+        await send_morning_advice(bot, storage, user_id, today)
+    except Exception:
+        logger.exception("Не удалось предложить что-то ещё после похвалы за закрытый день")
 
 
 @router.callback_query(F.data.startswith("advice:"))

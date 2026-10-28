@@ -50,6 +50,7 @@ import redis.asyncio as redis
 from aiogram import Bot, F, Router
 from aiogram.enums import ButtonStyle
 from aiogram.filters import Command
+from aiogram.fsm.storage.base import BaseStorage
 from aiogram.types import (
     CallbackQuery,
     InputRichBlockButtons,
@@ -266,7 +267,7 @@ async def handle_set_day_task(message: Message) -> None:
 
 
 @router.callback_query(F.data.startswith("daytask_toggle:"))
-async def handle_toggle_task(callback: CallbackQuery) -> None:
+async def handle_toggle_task(callback: CallbackQuery, storage: BaseStorage) -> None:
     if not callback.from_user or not await is_authorized(callback.from_user.id):
         await callback.answer("Недоступно", show_alert=True)
         return
@@ -282,6 +283,8 @@ async def handle_toggle_task(callback: CallbackQuery) -> None:
             await callback.answer("Задача не найдена — возможно, уже удалена", show_alert=True)
             return
         task.done = not task.done
+        now_done = task.done
+        toggled_due_date = task.due_date.date() if task.due_date else None
         await session.commit()
 
     await invalidate_tasks_cache(user_id)
@@ -301,3 +304,15 @@ async def handle_toggle_task(callback: CallbackQuery) -> None:
         rich_message=rich_message,
     )
     await callback.answer()
+
+    if now_done:
+        # Похвала при закрытии дня (фидбек 2026-10-24) — импорт внутри
+        # функции: f_morning_advice.py сам импортирует
+        # refresh_day_task_message ИЗ этого модуля, импорт на уровне
+        # модуля в обе стороны дал бы цикл.
+        from src.handlers.f_morning_advice import maybe_praise_closed_day
+
+        try:
+            await maybe_praise_closed_day(callback.bot, storage, user_id, toggled_due_date)
+        except Exception:
+            logger.exception("Не удалось проверить похвалу за закрытый день (%s)", user_id)
